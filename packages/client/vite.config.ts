@@ -6,6 +6,8 @@ import path from 'node:path';
 // traffic to the backend on 3001 so the tunnel needs a single origin.
 export default defineConfig({
   plugins: [react()],
+  // Read VITE_* vars from the repo-root .env (single source of truth).
+  envDir: path.resolve(__dirname, '../..'),
   resolve: {
     alias: {
       '@poker/shared': path.resolve(__dirname, '../shared/src/index.ts'),

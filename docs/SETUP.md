@@ -137,27 +137,29 @@ CREATE DATABASE poker OWNER poker;
 
 ### 3. Configure environment variables
 
-Config is loaded per workspace, so create **two** `.env` files (both gitignored).
-See [`.env.example`](../.env.example) for the full template.
-
-**`packages/server/.env`**
+Create a single **`.env` at the repo root** (gitignored). Both the server and the
+Vite client read it. Copy the template and fill in the values:
 
 ```bash
+cp .env.example .env    # then edit .env
+```
+
+```bash
+# Server
 DATABASE_URL=postgresql://poker:poker@localhost:5432/poker
 DISCORD_CLIENT_ID=your_client_id
 DISCORD_CLIENT_SECRET=your_client_secret
 DISCORD_BOT_TOKEN=your_bot_token
 JWT_SECRET=any-long-random-string
 PORT=3001
+
+# Client (Vite — must be prefixed with VITE_)
+VITE_DISCORD_CLIENT_ID=your_client_id   # same value as DISCORD_CLIENT_ID
+VITE_SERVER_URL=                         # leave empty in dev (Vite proxies to :3001)
 ```
 
-**`packages/client/.env`**
-
-```bash
-VITE_DISCORD_CLIENT_ID=your_client_id
-# Leave VITE_SERVER_URL empty in dev — the Vite proxy forwards to :3001.
-VITE_SERVER_URL=
-```
+> The `DATABASE_URL` password must match the password you set for the `poker`
+> role in step 2b. If you change one, change the other.
 
 ### 4. Create the database schema
 

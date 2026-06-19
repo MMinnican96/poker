@@ -59,8 +59,10 @@ After any change, verify with `npm test` and `npm run build` before claiming don
 ## Conventions & gotchas
 
 - **No Docker for local Postgres** — install Postgres natively (user preference).
-- **Env is per-package**: server vars in `packages/server/.env`, client vars in
-  `packages/client/.env` (both gitignored). `.env.example` at root is the template.
+- **Env**: a single **root `.env`** (gitignored) is the source of truth. The
+  server loads it via `packages/server/src/env.ts` (resolves `../../.env` from the
+  workspace cwd); the Vite client reads it via `envDir` → repo root. `.env.example`
+  is the template.
 - **Chip model**: bankroll persists in `players.chip_balance`; chips move via
   `adjustChips()` in a single transaction with a **unique `idempotency_key`**.
   Buy-in deducted at game start (`${gameId}:buyin:${id}`), remaining stack cashed

@@ -1,4 +1,4 @@
-import 'dotenv/config';
+import './env.js';
 import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
