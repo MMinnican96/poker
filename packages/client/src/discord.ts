@@ -41,6 +41,20 @@ function mockSession(): DiscordSession {
 }
 
 /**
+/**
+ * The handshake must run exactly once per page load. React StrictMode and Vite
+ * HMR re-run the mount effect, and a second `authorize()` while the first is
+ * pending makes the SDK reject with "Already authing". Caching the promise makes
+ * repeat callers share the single in-flight handshake.
+ */
+let sessionPromise: Promise<DiscordSession> | null = null;
+
+export function setupDiscord(): Promise<DiscordSession> {
+  if (!sessionPromise) sessionPromise = runSetup();
+  return sessionPromise;
+}
+
+/**
  * Full Discord Activity handshake:
  *  1. wait for the SDK to be ready inside the Discord iframe
  *  2. authorize → receive an OAuth code
@@ -48,7 +62,7 @@ function mockSession(): DiscordSession {
  *     nickname/avatar, and returns the access token + trusted identity
  *  4. authenticate the SDK with that access token
  */
-export async function setupDiscord(): Promise<DiscordSession> {
+async function runSetup(): Promise<DiscordSession> {
   if (isMockMode()) return mockSession();
   if (!CLIENT_ID) throw new Error('VITE_DISCORD_CLIENT_ID is not set');
 
