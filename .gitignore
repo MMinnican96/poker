@@ -1,0 +1,14 @@
+node_modules/
+dist/
+build/
+.env
+.env.local
+*.log
+.DS_Store
+Thumbs.db
+
+# Local Claude Code settings (personal, not shared)
+.claude/settings.local.json
+
+# Drizzle generated migrations output (use db:push in dev)
+packages/server/drizzle/

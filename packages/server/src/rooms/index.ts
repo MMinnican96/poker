@@ -1,0 +1,121 @@
+import type { Server, Socket } from 'socket.io';
+import type {
+  ClientToServerEvents,
+  InterServerEvents,
+  ServerToClientEvents,
+  SocketData,
+} from '@poker/shared';
+import { LobbyManager, type LobbyRoom, type LobbyManagerOptions } from './lobby.js';
+import { GameRoom, type ChipService, type GameTiming } from './game.js';
+
+type LobbyIo = Server<
+  ClientToServerEvents,
+  ServerToClientEvents,
+  InterServerEvents,
+  SocketData
+>;
+type LobbySocket = Socket<
+  ClientToServerEvents,
+  ServerToClientEvents,
+  InterServerEvents,
+  SocketData
+>;
+
+export { LobbyManager, LobbyRoom } from './lobby.js';
+export { GameRoom, type ChipService, noopChipService } from './game.js';
+
+export interface SocketHandlerOptions extends LobbyManagerOptions {
+  /** Chip ledger for buy-ins/cash-outs. Production binds this to the DB. */
+  chips?: ChipService;
+  /** Turn/tick/hand-delay timing (short in tests). */
+  gameTiming?: GameTiming;
+}
+
+/**
+ * Wire the full socket protocol (lobby + game) onto an io server. Returns the
+ * LobbyManager for inspection. Game sessions are created when a lobby countdown
+ * completes, and player actions are routed to the matching GameRoom.
+ */
+export function registerSocketHandlers(io: LobbyIo, options: SocketHandlerOptions = {}): LobbyManager {
+  const games = new Map<string, GameRoom>();
+
+  const lobbies = new LobbyManager(io, {
+    ...options,
+    onGameStart: (room, players, gameId) => {
+      const game = new GameRoom({
+        io,
+        gameId,
+        instanceId: room.instanceId,
+        config: room.toState().config,
+        players: players.map((p) => ({
+          discordUserId: p.discordUserId,
+          displayName: p.displayName,
+          avatarUrl: p.avatarUrl,
+          socketId: p.socketId,
+        })),
+        chips: options.chips,
+        timing: options.gameTiming,
+        onEnd: (id) => {
+          if (games.get(room.instanceId)?.gameId === id) games.delete(room.instanceId);
+        },
+      });
+      games.set(room.instanceId, game);
+      void game.start();
+      options.onGameStart?.(room, players, gameId);
+    },
+  });
+
+  io.on('connection', (socket: LobbySocket) => {
+    socket.on('join_lobby', ({ instanceId, identity }) => {
+      if (!instanceId || !identity?.discordUserId) return;
+      socket.data.instanceId = instanceId;
+      socket.data.discordUserId = identity.discordUserId;
+      socket.data.displayName = identity.displayName;
+      socket.data.avatarUrl = identity.avatarUrl;
+
+      void socket.join(instanceId);
+      lobbies.getOrCreate(instanceId).addPlayer(identity, socket.id);
+
+      // If a game is already running, treat this as a reconnect to that seat.
+      games.get(instanceId)?.reconnect(identity.discordUserId, socket.id);
+    });
+
+    socket.on('player_ready', () => withLobby(socket, (room) => room.setReady(socket.id, true)));
+    socket.on('player_unready', () => withLobby(socket, (room) => room.setReady(socket.id, false)));
+    socket.on('start_countdown', () => withLobby(socket, (room) => room.startCountdown(socket.id)));
+    socket.on('cancel_countdown', () =>
+      withLobby(socket, (room) => room.cancelCountdown(socket.id)),
+    );
+    socket.on('update_config', (patch) =>
+      withLobby(socket, (room) => room.updateConfig(socket.id, patch)),
+    );
+
+    socket.on('player_action', (action) => {
+      const game = gameFor(socket);
+      if (game && socket.data.discordUserId) game.handleAction(socket.data.discordUserId, action);
+    });
+    socket.on('leave_table', () => {
+      const game = gameFor(socket);
+      if (game && socket.data.discordUserId) game.leave(socket.data.discordUserId);
+    });
+
+    socket.on('disconnect', () => {
+      withLobby(socket, (room) => room.removeBySocket(socket.id));
+      gameFor(socket)?.handleDisconnect(socket.id);
+    });
+  });
+
+  function withLobby(socket: LobbySocket, fn: (room: LobbyRoom) => void) {
+    const instanceId = socket.data.instanceId;
+    if (!instanceId) return;
+    const room = lobbies.get(instanceId);
+    if (room) fn(room);
+  }
+
+  function gameFor(socket: LobbySocket): GameRoom | undefined {
+    const instanceId = socket.data.instanceId;
+    return instanceId ? games.get(instanceId) : undefined;
+  }
+
+  return lobbies;
+}
