@@ -75,21 +75,30 @@ Both land in the same lobby (`dev-room`) with 10,000 chips. Ready up in both →
    **Client ID** and **Client Secret** (reset the secret if needed). The client
    requests these scopes at runtime (already wired in code, nothing to set here):
    `identify`, `guilds.members.read`, `rpc.activities.write`.
-3. **Bot + token.** Open **Bot** → **Add Bot**. Click **Reset Token** and copy the
+3. **OAuth2 redirect.** Still under **OAuth2 → Redirects**, add `https://127.0.0.1`
+   and **Save Changes**. The Embedded App SDK needs a redirect configured or
+   `authorize()` fails at launch.
+4. **Installation contexts.** Open the **Installation** tab and enable **both
+   "User Install" and "Guild Install"**. Without these the app can't be launched
+   as an Activity (it won't appear in the picker).
+5. **Enable the Activity.** Open **Activities → Settings** and toggle on
+   **`Enable Activities`**. This auto-creates a default **"Launch" Entry Point
+   command** — the mechanism that makes the Activity launchable.
+6. **URL mapping.** Under **Activities → URL Mappings**, set the **root (`/`)
+   mapping** target to your tunnel URL (you'll have it after §5). A single root
+   mapping is enough for local dev — the Vite dev server proxies `/api` and
+   `/socket.io` to the backend on :3001. (In production you'd add a `/api` prefix
+   mapping pointing at the Railway URL.)
+7. **Bot + token.** Open **Bot** → **Add Bot**. Click **Reset Token** and copy the
    **Bot Token** (used server-side to read each player's server nickname + guild
-   avatar). You don't need any privileged gateway intents — the app reads members
-   over REST, which only requires the bot to be in the server.
-4. **Invite the bot to your test server.** Go to **OAuth2 → URL Generator**, tick
-   the **`bot`** scope, leave permissions empty (default is fine), open the
-   generated URL, and add the bot to a server you can test in.
-5. **Enable the Activity.** Open **Activities** (sidebar) → enable / set up the
-   activity. Under **Activities → URL Mappings** you'll set the **root (`/`)
-   mapping** to your tunnel URL in step 5 (once you have it). A single root mapping
-   is enough for local dev — the Vite dev server proxies `/api` and `/socket.io`
-   to the backend on :3001, so you don't need a separate `/api` mapping in dev.
-   (In production you'd add a `/api` prefix mapping pointing at the Railway URL.)
+   avatar). No privileged gateway intents are needed — the app reads members over
+   REST, which only requires the bot to be in the server.
+8. **Invite the bot to your test server.** Go to **OAuth2 → URL Generator**, tick
+   the **`bot`** scope, leave permissions empty, open the generated URL, and add
+   the bot to a **server with fewer than 25 members** (unverified Activities only
+   launch in small servers).
 
-Keep the **Client ID**, **Client Secret**, and **Bot Token** handy for step 3.
+Keep the **Client ID**, **Client Secret**, and **Bot Token** handy for §3.
 
 ### 2. Install and set up local PostgreSQL (no Docker)
 
@@ -193,9 +202,22 @@ the tunnel only needs to expose port 5173.
 
 ### 6. Launch in Discord
 
-In a server where your bot is present, join a voice channel → **Activities** →
-launch your app. It authenticates you, shows your server nickname + avatar, and
-drops you into the lobby.
+First, enable test visibility for your in-development (unverified) Activity:
+
+1. **User Settings → Advanced** → turn on **Developer Mode**.
+2. In the same **Advanced** page, toggle on **Application Test Mode**, paste your
+   **Application ID** (same as your `DISCORD_CLIENT_ID`), and click **Activate**.
+3. Use a **server with fewer than 25 members** (unverified Activities are
+   restricted to small servers).
+
+Then join a **voice channel** → click the **Activities (rocket) icon** → find your
+app (**search by its name** if it's not at the top of the list) → launch. It
+authenticates you, shows your server nickname + avatar, and drops you into the
+lobby.
+
+> If it still doesn't appear: restart Discord (Ctrl+R), and double-check
+> **Installation** (User + Guild install) and **Activities → Settings**
+> (`Enable Activities`) from §1 are both on.
 
 ---
 
