@@ -69,27 +69,71 @@ Both land in the same lobby (`dev-room`) with 10,000 chips. Ready up in both →
 
 ### 1. Create the Discord application
 
-1. Go to <https://discord.com/developers/applications> → **New Application**.
-2. Under **Settings → Activities**, enable Activities.
-3. **OAuth2**: note the **Client ID** and **Client Secret**. The app requests these
-   scopes at runtime: `identify`, `guilds.members.read`, `rpc.activities.write`.
-4. **Bot**: add a bot, copy the **Bot Token** (used server-side to read the
-   player's server nickname + guild avatar). Invite the bot to your test server.
-5. **Activities → URL Mappings**: add a mapping
-   - Prefix `/api` → Target `localhost:3001` (dev) — later your Railway URL in prod.
-6. Leave the **Activity URL override** for after you start the tunnel (step 5).
+1. **New application.** Go to <https://discord.com/developers/applications> →
+   **New Application**, name it, accept the terms.
+2. **Client credentials.** Open **OAuth2** in the sidebar and copy the
+   **Client ID** and **Client Secret** (reset the secret if needed). The client
+   requests these scopes at runtime (already wired in code, nothing to set here):
+   `identify`, `guilds.members.read`, `rpc.activities.write`.
+3. **Bot + token.** Open **Bot** → **Add Bot**. Click **Reset Token** and copy the
+   **Bot Token** (used server-side to read each player's server nickname + guild
+   avatar). You don't need any privileged gateway intents — the app reads members
+   over REST, which only requires the bot to be in the server.
+4. **Invite the bot to your test server.** Go to **OAuth2 → URL Generator**, tick
+   the **`bot`** scope, leave permissions empty (default is fine), open the
+   generated URL, and add the bot to a server you can test in.
+5. **Enable the Activity.** Open **Activities** (sidebar) → enable / set up the
+   activity. Under **Activities → URL Mappings** you'll set the **root (`/`)
+   mapping** to your tunnel URL in step 5 (once you have it). A single root mapping
+   is enough for local dev — the Vite dev server proxies `/api` and `/socket.io`
+   to the backend on :3001, so you don't need a separate `/api` mapping in dev.
+   (In production you'd add a `/api` prefix mapping pointing at the Railway URL.)
 
-### 2. Set up local PostgreSQL (no Docker)
+Keep the **Client ID**, **Client Secret**, and **Bot Token** handy for step 3.
 
-Install Postgres 16 natively, then create the role and database. Using `psql`:
+### 2. Install and set up local PostgreSQL (no Docker)
+
+#### 2a. Install PostgreSQL 16
+
+**Windows (winget):**
+
+```powershell
+winget install PostgreSQL.PostgreSQL.16
+```
+
+Approve the UAC prompt. The installer registers a Windows **service** (auto-starts
+on boot), creates a `postgres` superuser, and listens on port **5432**. If it asks,
+set a superuser password you'll remember and keep the default port 5432. You can
+skip Stack Builder at the end.
+
+> Alternatively, download the EDB installer from
+> <https://www.postgresql.org/download/windows/> and run it.
+
+**macOS:** `brew install postgresql@16 && brew services start postgresql@16`
+**Linux (Debian/Ubuntu):** `sudo apt install postgresql-16 && sudo systemctl enable --now postgresql`
+
+Confirm it's running — something should be listening on 5432:
+
+```powershell
+Get-NetTCPConnection -LocalPort 5432 -State Listen
+```
+
+#### 2b. Create the role and database
+
+Open a SQL shell as the superuser. On Windows the installer adds **"SQL Shell
+(psql)"** to the Start menu (press Enter through the prompts, then enter the
+`postgres` password). Alternatively use **pgAdmin**, or `psql -U postgres` if
+`psql` is on your PATH (it's under
+`C:\Program Files\PostgreSQL\16\bin`). Then run:
 
 ```sql
 CREATE ROLE poker WITH LOGIN PASSWORD 'poker';
 CREATE DATABASE poker OWNER poker;
 ```
 
-(On Windows you can run these in the `psql` shell or pgAdmin; on macOS:
-`brew install postgresql@16 && brew services start postgresql@16`.)
+> You only need `psql`/pgAdmin to run these two statements. `npm run db:push`
+> (step 4) connects through the Node `pg` driver using `DATABASE_URL`, so `psql`
+> does **not** need to be on your PATH for the app itself.
 
 ### 3. Configure environment variables
 
@@ -136,9 +180,14 @@ cloudflared tunnel --url http://localhost:5173
 ```
 
 Copy the `https://<random>.trycloudflare.com` URL into the Discord Developer
-Portal as the **Activity URL override**. (The Vite dev server already allows
+Portal under **Activities → URL Mappings** as the **root (`/`) mapping** target
+(some portal versions also expose a per-developer **Activity URL override** for
+local testing — set that too if present). The Vite dev server already allows
 `*.trycloudflare.com` hosts and proxies `/api` + `/socket.io` to the backend, so
-the tunnel only needs to expose port 5173.)
+the tunnel only needs to expose port 5173.
+
+> The free `trycloudflare.com` URL changes every time you restart the tunnel —
+> update the mapping whenever it changes.
 
 ### 6. Launch in Discord
 
