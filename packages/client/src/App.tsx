@@ -24,9 +24,8 @@ export function App() {
         setStatus({ phase: 'ready', identity, instanceId });
       })
       .catch((err: unknown) => {
-        if (!cancelled) {
-          setStatus({ phase: 'error', message: err instanceof Error ? err.message : String(err) });
-        }
+        console.error('[poker] setup failed:', err);
+        if (!cancelled) setStatus({ phase: 'error', message: formatError(err) });
       });
     return () => {
       cancelled = true;
@@ -63,6 +62,23 @@ export function App() {
       onGameStart={setGameId}
     />
   );
+}
+
+/** Turn any thrown value (incl. Discord SDK error objects) into readable text. */
+function formatError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === 'string') return err;
+  if (err && typeof err === 'object') {
+    const o = err as Record<string, unknown>;
+    const detail = o.message ?? o.error ?? o.code;
+    if (detail != null) return String(detail);
+    try {
+      return JSON.stringify(err);
+    } catch {
+      return 'Unknown error';
+    }
+  }
+  return String(err);
 }
 
 function Centered({ children }: { children: React.ReactNode }) {

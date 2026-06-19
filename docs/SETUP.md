@@ -73,8 +73,9 @@ Both land in the same lobby (`dev-room`) with 10,000 chips. Ready up in both →
    **New Application**, name it, accept the terms.
 2. **Client credentials.** Open **OAuth2** in the sidebar and copy the
    **Client ID** and **Client Secret** (reset the secret if needed). The client
-   requests these scopes at runtime (already wired in code, nothing to set here):
-   `identify`, `guilds.members.read`, `rpc.activities.write`.
+   requests only the `identify` scope at runtime (already wired in code) — server
+   nicknames/avatars are read with the bot token, so no extra user scopes are
+   needed.
 3. **OAuth2 redirect.** Still under **OAuth2 → Redirects**, add `https://127.0.0.1`
    and **Save Changes**. The Embedded App SDK needs a redirect configured or
    `authorize()` fails at launch.

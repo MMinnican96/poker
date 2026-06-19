@@ -55,12 +55,17 @@ export async function setupDiscord(): Promise<DiscordSession> {
   const sdk = new DiscordSDK(CLIENT_ID);
   await sdk.ready();
 
+  // Minimal scope: we only need the user's identity here. The server reads each
+  // player's server nickname + guild avatar with the BOT token (REST), so the
+  // user does not need to grant `guilds.members.read`. We also avoid
+  // `rpc.activities.write`, which requires allowlisting and otherwise makes
+  // authorize() reject.
   const { code } = await sdk.commands.authorize({
     client_id: CLIENT_ID,
     response_type: 'code',
     state: '',
     prompt: 'none',
-    scope: ['identify', 'guilds.members.read', 'rpc.activities.write'],
+    scope: ['identify'],
   });
 
   const res = await fetch('/api/auth/token', {
