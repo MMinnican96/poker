@@ -12,7 +12,8 @@
     "test:watch": "vitest",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "stats:recompute": "tsx src/db/stats-recompute.ts"
   },
   "dependencies": {
     "@poker/shared": "*",
