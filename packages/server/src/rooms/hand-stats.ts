@@ -1,6 +1,7 @@
-import type { ActionType, GamePhase, WonHandCategory } from '@poker/shared';
+import type { ActionType, GamePhase, WonHandCategory, GameState, PlayerHandStat } from '@poker/shared';
 import { rankValue } from '../engine/cards.js';
 import type { HandRank } from '../engine/hand-evaluator.js';
+import type { ShowdownResult } from '../engine/showdown.js';
 
 interface RecordedAction {
   playerId: string;
@@ -71,4 +72,71 @@ export function royalAwareCategory(rank: HandRank): WonHandCategory {
     if (values[0] === 10 && values[values.length - 1] === 14) return 'royal-flush';
   }
   return rank.category;
+}
+
+/** Map a completed board's card count to the street it reached. */
+function streetFromBoard(cardCount: number): GamePhase {
+  if (cardCount >= 5) return 'river';
+  if (cardCount === 4) return 'turn';
+  if (cardCount === 3) return 'flop';
+  return 'pre-flop';
+}
+
+/**
+ * Assemble one PlayerHandStat per dealt-in player from the final state, the
+ * showdown result, and the per-hand action tracker. Pure: `now` is injected.
+ */
+export function buildHandFacts(input: {
+  state: GameState;
+  result: ShowdownResult;
+  tracker: HandStatsTracker;
+  gameId: string;
+  handNumber: number;
+  now: number;
+}): PlayerHandStat[] {
+  const { state, result, tracker, gameId, handNumber, now } = input;
+  const seatCount = state.players.length;
+  const potTotal = result.awards.reduce((sum, a) => sum + a.amount, 0);
+  const facts: PlayerHandStat[] = [];
+
+  for (const p of state.players) {
+    if (p.status === 'sitting-out') continue;
+
+    const chipsWon = result.winningsByPlayer[p.discordUserId] ?? 0;
+    const chipsContributed = p.totalBetThisHand;
+    const folded = p.status === 'folded';
+    const wentToShowdown = p.discordUserId in result.hands;
+    const resultKind: PlayerHandStat['result'] = chipsWon > 0 ? 'won' : folded ? 'folded' : 'lost';
+    const handCategory = wentToShowdown ? royalAwareCategory(result.hands[p.discordUserId]) : null;
+
+    const foldStreet = tracker.foldStreet(p.discordUserId);
+    const finalStreet: GamePhase =
+      folded && foldStreet ? foldStreet
+      : wentToShowdown ? 'showdown'
+      : streetFromBoard(state.communityCards.length);
+
+    facts.push({
+      gameId,
+      playerId: p.discordUserId,
+      handNumber,
+      seatIndex: p.seatIndex,
+      position: (p.seatIndex - state.dealerIndex + seatCount) % seatCount,
+      chipsContributed,
+      chipsWon,
+      netResult: chipsWon - chipsContributed,
+      result: resultKind,
+      handCategory,
+      potTotal,
+      wentToShowdown,
+      vpip: tracker.vpip(p.discordUserId),
+      pfr: tracker.pfr(p.discordUserId),
+      aggressiveActions: tracker.aggressiveActions(p.discordUserId),
+      passiveActions: tracker.passiveActions(p.discordUserId),
+      wasAllIn: tracker.wasAllIn(p.discordUserId) || p.status === 'all-in',
+      finalStreet,
+      durationMs: now - tracker.startedAt,
+    });
+  }
+
+  return facts;
 }
