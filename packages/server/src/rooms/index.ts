@@ -6,7 +6,7 @@ import type {
   SocketData,
 } from '@poker/shared';
 import { LobbyManager, type LobbyRoom, type LobbyManagerOptions } from './lobby.js';
-import { GameRoom, type ChipService, type GameTiming } from './game.js';
+import { GameRoom, type ChipService, type StatsService, type GameTiming } from './game.js';
 
 type LobbyIo = Server<
   ClientToServerEvents,
@@ -22,11 +22,13 @@ type LobbySocket = Socket<
 >;
 
 export { LobbyManager, LobbyRoom } from './lobby.js';
-export { GameRoom, type ChipService, noopChipService } from './game.js';
+export { GameRoom, type ChipService, type StatsService, noopChipService, noopStatsService } from './game.js';
 
 export interface SocketHandlerOptions extends LobbyManagerOptions {
   /** Chip ledger for buy-ins/cash-outs. Production binds this to the DB. */
   chips?: ChipService;
+  /** Stats writer for per-hand facts + aggregates. Production binds this to the DB. */
+  stats?: StatsService;
   /** Turn/tick/hand-delay timing (short in tests). */
   gameTiming?: GameTiming;
 }
@@ -54,6 +56,7 @@ export function registerSocketHandlers(io: LobbyIo, options: SocketHandlerOption
           socketId: p.socketId,
         })),
         chips: options.chips,
+        stats: options.stats,
         timing: options.gameTiming,
         onEnd: (id) => {
           if (games.get(room.instanceId)?.gameId === id) games.delete(room.instanceId);
