@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import type { GameState, TableConfig } from '@poker/shared';
-import { GameRoom, type ChipService, type GameRoomPlayer } from './game.js';
+import type { GameState, TableConfig, PlayerHandStat } from '@poker/shared';
+import { GameRoom, type ChipService, type GameRoomPlayer, type StatsService } from './game.js';
 
 const CONFIG: TableConfig = { buyIn: 3000, smallBlind: 25, bigBlind: 50, maxPlayers: 9 };
 
@@ -53,12 +53,28 @@ function makeFakeChips() {
   return { calls, service };
 }
 
+/** Fake stats service recording every recordHand/recordSession call. */
+function makeFakeStats() {
+  const hands: PlayerHandStat[][] = [];
+  const sessions: { gameId: string; players: { playerId: string; playMs: number }[] }[] = [];
+  const service: StatsService = {
+    async recordHand(facts) { hands.push(facts); },
+    async recordSession(input) { sessions.push(input); },
+  };
+  return { hands, sessions, service };
+}
+
 const players: GameRoomPlayer[] = [
   { discordUserId: 'a', displayName: 'A', avatarUrl: '', socketId: 'sa' },
   { discordUserId: 'b', displayName: 'B', avatarUrl: '', socketId: 'sb' },
 ];
 
-function makeRoom(io: ReturnType<typeof makeFakeIo>, chips: ChipService, timing = {}) {
+function makeRoom(
+  io: ReturnType<typeof makeFakeIo>,
+  chips: ChipService,
+  timing = {},
+  stats: StatsService | undefined = undefined,
+) {
   return new GameRoom({
     io: io.io as never,
     gameId: 'G',
@@ -66,6 +82,7 @@ function makeRoom(io: ReturnType<typeof makeFakeIo>, chips: ChipService, timing 
     config: CONFIG,
     players,
     chips,
+    stats,
     // Huge timers by default so nothing auto-fires; tests drive actions directly.
     timing: { turnMs: 1e9, tickMs: 1e9, handDelayMs: 1e9, ...timing },
   });
@@ -207,6 +224,56 @@ describe('GameRoom', () => {
 
     room.leave('a'); // hand is live -> must be a no-op
     expect(chips.calls.some((c) => c.type === 'cash-out')).toBe(false);
+    room.stop();
+  });
+});
+
+describe('GameRoom stats', () => {
+  it('records one fact per player on a fold-out', async () => {
+    const io = makeFakeIo();
+    const stats = makeFakeStats();
+    const room = makeRoom(io, makeFakeChips().service, {}, stats.service);
+    await room.start();
+
+    const concluded = io.waitFor('hand_result');
+    room.handleAction('a', { type: 'fold' });
+    await concluded;
+
+    expect(stats.hands).toHaveLength(1);
+    const facts = stats.hands[0];
+    expect(facts.map((f) => f.playerId).sort()).toEqual(['a', 'b']);
+    const winner = facts.find((f) => f.result === 'won')!;
+    expect(winner.playerId).toBe('b');
+    expect(winner.handNumber).toBe(1);
+    expect(winner.gameId).toBe('G');
+    room.stop();
+  });
+
+  it('records a session with positive play time when the game ends', async () => {
+    const io = makeFakeIo();
+    const stats = makeFakeStats();
+    const room = makeRoom(io, makeFakeChips().service, {}, stats.service);
+    await room.start();
+
+    const concluded = io.waitFor('hand_result');
+    room.handleAction('a', { type: 'fold' });
+    await concluded;
+    room.leave('a'); // drops below 2 players -> endGame
+
+    expect(stats.sessions).toHaveLength(1);
+    expect(stats.sessions[0].gameId).toBe('G');
+    expect(stats.sessions[0].players.map((p) => p.playerId).sort()).toEqual(['a', 'b']);
+    expect(stats.sessions[0].players.every((p) => p.playMs >= 0)).toBe(true);
+    room.stop();
+  });
+
+  it('works without a stats service (no-op default)', async () => {
+    const io = makeFakeIo();
+    const room = makeRoom(io, makeFakeChips().service);
+    await room.start();
+    const concluded = io.waitFor('hand_result');
+    room.handleAction('a', { type: 'fold' });
+    await expect(concluded).resolves.toBeDefined();
     room.stop();
   });
 });

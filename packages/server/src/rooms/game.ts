@@ -3,6 +3,7 @@ import type {
   ClientToServerEvents,
   InterServerEvents,
   PlayerAction,
+  PlayerHandStat,
   ServerToClientEvents,
   SocketData,
   TableConfig,
@@ -16,6 +17,7 @@ import {
   type PlayerSeed,
 } from '../engine/index.js';
 import { viewFor } from './state-view.js';
+import { HandStatsTracker, buildHandFacts } from './hand-stats.js';
 
 type GameIo = Server<
   ClientToServerEvents,
@@ -41,6 +43,21 @@ export const noopChipService: ChipService = {
   },
 };
 
+/** Atomic, idempotent stats writer. Production binds this to the DB; tests fake it. */
+export interface StatsService {
+  recordHand(facts: PlayerHandStat[]): Promise<void>;
+  recordSession(input: {
+    gameId: string;
+    players: { playerId: string; playMs: number }[];
+  }): Promise<void>;
+}
+
+/** No-op stats writer (dev/mock mode, lobby-only tests). */
+export const noopStatsService: StatsService = {
+  async recordHand() {},
+  async recordSession() {},
+};
+
 export interface GameTiming {
   /** Time a player has to act before auto-fold/check. */
   turnMs?: number;
@@ -64,6 +81,7 @@ export interface GameRoomOptions {
   config: TableConfig;
   players: GameRoomPlayer[];
   chips?: ChipService;
+  stats?: StatsService;
   timing?: GameTiming;
   onEnd?: (gameId: string) => void;
 }
@@ -76,6 +94,8 @@ interface Seat {
   chipStack: number;
   left: boolean;
   disconnected: boolean;
+  joinedAt: number;
+  playMs?: number;
 }
 
 /**
@@ -89,6 +109,8 @@ export class GameRoom {
   readonly instanceId: string;
   private readonly config: TableConfig;
   private readonly chips: ChipService;
+  private readonly stats: StatsService;
+  private tracker: HandStatsTracker | null = null;
   private readonly turnMs: number;
   private readonly tickMs: number;
   private readonly handDelayMs: number;
@@ -111,15 +133,18 @@ export class GameRoom {
     this.instanceId = opts.instanceId;
     this.config = opts.config;
     this.chips = opts.chips ?? noopChipService;
+    this.stats = opts.stats ?? noopStatsService;
     this.turnMs = opts.timing?.turnMs ?? 10_000;
     this.tickMs = opts.timing?.tickMs ?? 500;
     this.handDelayMs = opts.timing?.handDelayMs ?? 3_000;
     this.onEnd = opts.onEnd;
+    const now = Date.now();
     this.seats = opts.players.map((p) => ({
       ...p,
       chipStack: 0,
       left: false,
       disconnected: false,
+      joinedAt: now,
     }));
   }
 
@@ -166,6 +191,7 @@ export class GameRoom {
       config: this.config,
     });
     this.handInProgress = true;
+    this.tracker = new HandStatsTracker(Date.now());
 
     // A player who is already disconnected should be folded immediately.
     this.broadcastState();
@@ -175,11 +201,13 @@ export class GameRoom {
   /** Validate + apply a player action, then progress the hand. */
   handleAction(playerId: string, action: PlayerAction): void {
     if (!this.ctx || !this.handInProgress) return;
+    const street = this.ctx.state.phase;
     const result = act(this.ctx, playerId, action);
     if (!result.ok) {
       this.emitToPlayer(playerId, 'action_rejected', { reason: result.reason });
       return;
     }
+    this.tracker?.record(playerId, street, action.type);
     this.clearTurnTimer();
     this.afterAction();
   }
@@ -251,6 +279,20 @@ export class GameRoom {
       finalState: viewFor(state, null),
     });
 
+    if (this.tracker) {
+      const facts = buildHandFacts({
+        state,
+        result,
+        tracker: this.tracker,
+        gameId: this.gameId,
+        handNumber: this.handNumber,
+        now: Date.now(),
+      });
+      void this.stats.recordHand(facts).catch((err) =>
+        console.error('[stats] recordHand failed:', err),
+      );
+    }
+
     this.scheduleNextHand();
   }
 
@@ -281,6 +323,7 @@ export class GameRoom {
     const seat = this.seats.find((s) => s.discordUserId === playerId);
     if (!seat || seat.left) return;
     void this.cashOut(seat);
+    seat.playMs = Date.now() - seat.joinedAt;
     seat.left = true;
     const live = this.seats.filter((s) => !s.left && s.chipStack > 0);
     if (live.length < 2) void this.endGame();
@@ -320,7 +363,17 @@ export class GameRoom {
     this.stopped = true;
     this.clearTurnTimer();
     if (this.nextHandTimeout) clearTimeout(this.nextHandTimeout);
+
+    const now = Date.now();
+    const sessionPlayers = this.seats.map((s) => ({
+      playerId: s.discordUserId,
+      playMs: s.playMs ?? now - s.joinedAt,
+    }));
+    void this.stats
+      .recordSession({ gameId: this.gameId, players: sessionPlayers })
+      .catch((err) => console.error('[stats] recordSession failed:', err));
     await Promise.all(this.seats.filter((s) => !s.left && s.chipStack > 0).map((s) => this.cashOut(s)));
+
     this.onEnd?.(this.gameId);
   }
 
