@@ -98,3 +98,97 @@ export interface HandResult {
   handName?: string;
   cards?: Card[];
 }
+
+/** All winning hand tiers, including Royal Flush (an ace-high straight flush). */
+export type WonHandCategory =
+  | 'high-card'
+  | 'pair'
+  | 'two-pair'
+  | 'three-of-a-kind'
+  | 'straight'
+  | 'flush'
+  | 'full-house'
+  | 'four-of-a-kind'
+  | 'straight-flush'
+  | 'royal-flush';
+
+/**
+ * One player's outcome for one hand — the append-only "fact" and the retrospective
+ * source of truth. Produced by the server at hand end; also the shape returned by
+ * the hand-history read API. `createdAt` is assigned by the DB on insert.
+ */
+export interface PlayerHandStat {
+  gameId: string;
+  playerId: string;
+  handNumber: number;
+  seatIndex: number;
+  /** Seats clockwise from the button (0 = button). */
+  position: number;
+  chipsContributed: number;
+  chipsWon: number;
+  netResult: number;
+  result: 'won' | 'lost' | 'folded';
+  /** Hand shown at showdown; null if the player folded before showdown. */
+  handCategory: WonHandCategory | null;
+  potTotal: number;
+  wentToShowdown: boolean;
+  /** Voluntarily put money in pot (non-blind call/raise/all-in) pre-flop. */
+  vpip: boolean;
+  /** Put in a raise pre-flop. */
+  pfr: boolean;
+  aggressiveActions: number;
+  passiveActions: number;
+  wasAllIn: boolean;
+  /** Last street the player was live on. */
+  finalStreet: GamePhase;
+  durationMs: number;
+  createdAt?: string;
+}
+
+/** Metrics a leaderboard can rank by (maps to aggregate columns). */
+export type LeaderboardMetric =
+  | 'net_profit'
+  | 'chips_won'
+  | 'hands_won'
+  | 'biggest_pot_won'
+  | 'hands_played';
+
+/** One ranked row of a leaderboard. */
+export interface LeaderboardEntry {
+  playerId: string;
+  displayName: string | null;
+  metric: LeaderboardMetric;
+  value: number;
+  rank: number;
+}
+
+/**
+ * A player's lifetime stats with derived ratios computed at read time
+ * (never persisted). Raw counters mirror the `player_stats` aggregate row.
+ */
+export interface PlayerStatsSummary {
+  playerId: string;
+  handsPlayed: number;
+  handsWon: number;
+  handsLost: number;
+  chipsBet: number;
+  chipsWon: number;
+  chipsLost: number;
+  netProfit: number;
+  biggestPotWon: number;
+  showdownsWon: number;
+  showdownsSeen: number;
+  vpipCount: number;
+  pfrCount: number;
+  aggressiveActions: number;
+  passiveActions: number;
+  categoryCounts: Partial<Record<WonHandCategory, number>>;
+  totalPlayMs: number;
+  gamesPlayed: number;
+  // Derived ratios:
+  winRate: number;
+  vpip: number;
+  pfr: number;
+  aggressionFactor: number;
+  showdownWinRate: number;
+}
