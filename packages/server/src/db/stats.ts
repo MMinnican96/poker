@@ -1,4 +1,4 @@
-import { eq, inArray } from 'drizzle-orm';
+import { inArray } from 'drizzle-orm';
 import type { PlayerHandStat } from '@poker/shared';
 import type { StatsService } from '../rooms/game.js';
 import { getDb, schema } from './index.js';
@@ -102,16 +102,18 @@ export const dbStatsService: StatsService = {
           ],
         })
         .returning({
+          gameId: schema.playerHandStats.gameId,
           playerId: schema.playerHandStats.playerId,
           handNumber: schema.playerHandStats.handNumber,
         });
 
       if (inserted.length === 0) return; // entire batch was a replay
 
-      const insertedKeys = new Set(inserted.map((r) => `${r.playerId}:${r.handNumber}`));
-      const freshFacts = facts.filter((f) => insertedKeys.has(`${f.playerId}:${f.handNumber}`));
+      const insertedKeys = new Set(inserted.map((r) => `${r.gameId}:${r.playerId}:${r.handNumber}`));
+      const freshFacts = facts.filter((f) => insertedKeys.has(`${f.gameId}:${f.playerId}:${f.handNumber}`));
 
       const playerIds = [...new Set(freshFacts.map((f) => f.playerId))];
+      if (playerIds.length === 0) return; // safety: never hit given the guards above, but keeps inArray well-formed
       const existing = await tx
         .select()
         .from(schema.playerStats)
@@ -133,6 +135,7 @@ export const dbStatsService: StatsService = {
     const db = getDb();
     await db.transaction(async (tx) => {
       const playerIds = input.players.map((p) => p.playerId);
+      if (playerIds.length === 0) return; // safety: never hit given the guards above, but keeps inArray well-formed
       const existing = await tx
         .select()
         .from(schema.playerStats)
