@@ -15,7 +15,7 @@ iframe app). This guide covers two paths:
 | Tool | Needed for | Notes |
 |---|---|---|
 | **Node.js 20+** | everything | `node --version` |
-| **PostgreSQL 16** (native install) | path B only | No Docker — install Postgres directly |
+| **PostgreSQL 16+** (native install) | path B only | No Docker — install Postgres directly. On **PG17/18**, `db:push` needs drizzle-kit ≥ 0.31 (already pinned). |
 | **cloudflared** | path B only | Free HTTPS tunnel for local Discord dev |
 | **A Discord application** | path B only | Created at the Developer Portal |
 
@@ -230,17 +230,18 @@ Run from the repo root:
 |---|---|
 | `npm run dev` | Build `shared`, then run server + client in watch mode |
 | `npm run build` | Type-check and build all three packages |
-| `npm test` | Run the Vitest suite (engine + lobby + game backend) |
+| `npm test` | Run the Vitest suite (engine + lobby + game backend + stats) |
 | `npm run db:push` | Sync the Drizzle schema to Postgres |
 | `npm run db:migrate` | Apply generated migrations |
 | `npm run db:studio` | Open Drizzle Studio |
+| `npm run stats:recompute` | Rebuild `player_stats` aggregates from `player_hand_stats` |
 
 ---
 
 ## Testing
 
 ```bash
-npm test          # 54 tests: poker engine, lobby flow, game backend
+npm test          # 82 tests: poker engine, lobby flow, game backend, stats
 npm run build     # confirms all packages type-check and build
 ```
 
@@ -260,5 +261,6 @@ faked chip ledger.
 | `EADDRINUSE :3001` | Another server instance is running; stop it or change `PORT`. |
 | Discord can't load the Activity | Re-check the URL override (must be the current tunnel URL) and the `/api` URL mapping. |
 | Tunnel host rejected by Vite | Confirmed allowed via `allowedHosts: ['.trycloudflare.com']` in `packages/client/vite.config.ts`. |
+| `db:push` fails with `column "discord_user_id" is in a primary key` (42P16) | Postgres 17/18 with drizzle-kit < 0.31. Upgrade it: `npm i -D drizzle-kit@^0.31 -w @poker/server` (already pinned in this repo). |
 
 For how it all fits together, see [ARCHITECTURE.md](./ARCHITECTURE.md).

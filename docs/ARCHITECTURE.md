@@ -41,11 +41,12 @@ packages/
 ├── server/   # Node + Express + Socket.io + Drizzle
 │   └── src/
 │       ├── index.ts          # HTTP + Socket.io bootstrap
-│       ├── routes/auth.ts     # Discord OAuth → JWT session
+│       ├── routes/{auth,stats}.ts  # Discord OAuth → JWT session; read-only /api/stats
 │       ├── discord.ts         # Discord HTTP helpers (server-side only)
-│       ├── db/{schema,index}.ts
+│       ├── db/               # schema, pool + adjustChips, and the stats layer
+│       │   └── {schema,index,stats,stats-aggregate,stats-leaderboard,stats-recompute}.ts
 │       ├── engine/            # pure poker rules (see below)
-│       └── rooms/             # LobbyManager, GameRoom, state sanitization
+│       └── rooms/             # LobbyManager, GameRoom, hand-stats, state sanitization
 └── client/   # React + Phaser 3 (the Activity iframe)
     └── src/
         ├── discord.ts         # SDK handshake (+ dev mock)
@@ -169,11 +170,78 @@ and an in-memory no-op otherwise (dev/mock mode).
 |---|---|---|
 | `players` | bankroll per Discord user | ✅ active |
 | `chip_transactions` | append-only ledger, unique `idempotency_key` | ✅ active |
+| `player_hand_stats` | append-only per-hand **fact** table (stats source of truth) | ✅ active |
+| `player_stats` | denormalized per-player **aggregate** counters | ✅ active |
 | `games`, `game_players`, `hands`, `hand_actions` | audit/history | provisioned; live game state is in-memory |
 
-> Live game state is held in memory by the `GameRoom` for latency; only the
-> bankroll and the chip ledger are persisted today. The audit tables are ready
-> for hand-history persistence without a schema change.
+> Live game state is held in memory by the `GameRoom` for latency; the bankroll,
+> the chip ledger, and **player statistics** are persisted today. The
+> `games`/`hands` audit tables remain ready for hand-history persistence without a
+> schema change (the stats fact table is separate — see below).
+
+## Player statistics
+
+A **hybrid** capture pipeline records a wide range of per-player stats so
+leaderboards, stat pages, and challenges can be built later — including
+retrospectively over historical data. UIs are out of scope; this delivers
+capture → storage → read APIs. Spec:
+[`docs/superpowers/specs/2026-06-20-player-statistics-tracking-design.md`](./superpowers/specs/2026-06-20-player-statistics-tracking-design.md).
+
+**Storage (two tables).**
+
+- `player_hand_stats` — append-only **fact** table, one row per player per hand:
+  chips contributed/won, net, result, hand category (incl. `royal-flush`), pot,
+  went-to-showdown, VPIP/PFR/aggression, all-in, final street, duration. This is
+  the retrospective source of truth. `UNIQUE (game_id, player_id, hand_number)`;
+  indexes on `(player_id, created_at)` and `(game_id)`.
+- `player_stats` — denormalized per-player **aggregate** counters (hands, chips
+  bet/won/lost, net profit, biggest pot, showdowns, VPIP/PFR/action counts,
+  per-category `jsonb` tally, total play time, games played). Always recomputable
+  from the fact table.
+
+**Capture flow.** Capture lives entirely in `GameRoom`, keeping the engine pure:
+
+1. `startHand()` creates a pure `HandStatsTracker` ([`rooms/hand-stats.ts`](../packages/server/src/rooms/hand-stats.ts)).
+2. `handleAction()` records each applied action **with the street captured before
+   `act()`** mutates the phase — so VPIP/PFR/aggression/final-street (which the
+   final state can't reconstruct) are accurate.
+3. `concludeHand()` assembles one `PlayerHandStat` per dealt-in player via
+   `buildHandFacts(...)` (royal-flush detected from the winning cards) and writes
+   them through the injected `StatsService`.
+4. Per-seat play-time is accrued from join → leave/disconnect (reconnect-aware)
+   and written once at game end via `recordSession`.
+
+**Idempotency & atomicity.** `dbStatsService.recordHand` ([`db/stats.ts`](../packages/server/src/db/stats.ts))
+runs one transaction: bulk-insert facts with `onConflictDoNothing`, then fold
+**only the newly-inserted** facts into the aggregates (read-modify-write via the
+pure reducer in `stats-aggregate.ts`). A replayed hand can never double-count.
+Session recording is at-most-once (guarded), and `total_play_ms`/`games_played`
+are **not** present in the fact table, so the `stats:recompute` backfill rebuilds
+every hand-derived aggregate but **preserves** those session columns.
+
+**Derived, never stored.** Ratios (win rate, VPIP, PFR, aggression factor,
+showdown-win%) are computed at read time in `toPlayerStatsSummary`; only raw
+counts/sums live in the DB, so the definitions can evolve without migration.
+
+**Read API (REST, not Socket.io).** `StatsRepository` is exposed via `statsRouter`
+([`routes/stats.ts`](../packages/server/src/routes/stats.ts)), mounted at
+`/api/stats`. All routes require a valid `poker_session` JWT cookie (same auth as
+the rest of `/api`); without a DB they no-op (mock mode).
+
+| Method | Route | Returns |
+|---|---|---|
+| GET | `/api/stats/:playerId` | `PlayerStatsSummary` (404 if none) |
+| GET | `/api/stats/leaderboard?metric=&limit=&since=` | `LeaderboardEntry[]` (400 on unknown metric) |
+| GET | `/api/stats/:playerId/hands?limit=&since=` | recent `PlayerHandStat[]` |
+
+`metric` ∈ `net_profit \| chips_won \| hands_won \| biggest_pot_won \| hands_played`.
+All-time leaderboards read `player_stats`; a `since` window aggregates the fact
+table. Contract types live in `@poker/shared`.
+
+> **Postgres 18 / drizzle-kit:** `db:push` requires **drizzle-kit ≥ 0.31** on
+> PG17+. Older 0.30.x mis-reads PG's named NOT NULL constraints and emits a
+> spurious `DROP CONSTRAINT "<table>_<col>_not_null"` for every column, which
+> fails on the `players` PK column (`42P16`).
 
 ## Lobby & countdown logic
 

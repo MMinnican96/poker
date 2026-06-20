@@ -13,7 +13,8 @@
     "test": "npm run test --workspace=packages/server",
     "db:migrate": "npm run db:migrate --workspace=packages/server",
     "db:push": "npm run db:push --workspace=packages/server",
-    "db:studio": "npm run db:studio --workspace=packages/server"
+    "db:studio": "npm run db:studio --workspace=packages/server",
+    "stats:recompute": "npm run stats:recompute --workspace=packages/server"
   },
   "devDependencies": {
     "concurrently": "^9.1.2",
