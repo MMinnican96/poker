@@ -1,11 +1,17 @@
-import { inArray } from 'drizzle-orm';
-import type { PlayerHandStat } from '@poker/shared';
+import { and, desc, eq, gte, inArray } from 'drizzle-orm';
+import type {
+  LeaderboardEntry,
+  LeaderboardMetric,
+  PlayerHandStat,
+  PlayerStatsSummary,
+} from '@poker/shared';
 import type { StatsService } from '../rooms/game.js';
 import { getDb, schema } from './index.js';
-import { addFact, addSession, emptyAggregate, type AggregateState } from './stats-aggregate.js';
+import { addFact, addSession, emptyAggregate, toPlayerStatsSummary, type AggregateState } from './stats-aggregate.js';
+import { metricColumn, rankRows } from './stats-leaderboard.js';
 
 /** Map a stored aggregate row to the in-memory accumulator shape. */
-function rowToAggregate(row: typeof schema.playerStats.$inferSelect): AggregateState {
+export function rowToAggregate(row: typeof schema.playerStats.$inferSelect): AggregateState {
   return {
     handsPlayed: row.handsPlayed,
     handsWon: row.handsWon,
@@ -151,4 +157,125 @@ export const dbStatsService: StatsService = {
       }
     });
   },
+};
+
+export interface StatsRepository {
+  getPlayerStats(playerId: string): Promise<PlayerStatsSummary | null>;
+  getLeaderboard(opts: {
+    metric: LeaderboardMetric;
+    limit: number;
+    since?: Date;
+  }): Promise<LeaderboardEntry[]>;
+  getPlayerHandHistory(
+    playerId: string,
+    opts: { limit: number; since?: Date },
+  ): Promise<PlayerHandStat[]>;
+}
+
+export const dbStatsRepository: StatsRepository = {
+  async getPlayerStats(playerId) {
+    const db = getDb();
+    const [row] = await db
+      .select()
+      .from(schema.playerStats)
+      .where(eq(schema.playerStats.playerId, playerId));
+    if (!row) return null;
+    return toPlayerStatsSummary(playerId, rowToAggregate(row));
+  },
+
+  async getLeaderboard({ metric, limit, since }) {
+    const db = getDb();
+
+    // All-time: rank straight off the aggregate columns.
+    if (!since) {
+      const column = schema.playerStats[metricColumn(metric)];
+      const rows = await db
+        .select({
+          playerId: schema.playerStats.playerId,
+          displayName: schema.players.displayName,
+          value: column,
+        })
+        .from(schema.playerStats)
+        .leftJoin(schema.players, eq(schema.players.discordUserId, schema.playerStats.playerId))
+        .orderBy(desc(column))
+        .limit(limit);
+      return rankRows(
+        rows.map((r) => ({ playerId: r.playerId, displayName: r.displayName, value: Number(r.value) })),
+        metric,
+      );
+    }
+
+    // Windowed: aggregate the fact table since `since`, then rank in JS.
+    const facts = await db
+      .select()
+      .from(schema.playerHandStats)
+      .where(gte(schema.playerHandStats.createdAt, since));
+    const byPlayer = new Map<string, number>();
+    for (const f of facts) {
+      const prev = byPlayer.get(f.playerId) ?? 0;
+      byPlayer.set(f.playerId, prev + windowedMetricValue(metric, f));
+    }
+    const names = await db
+      .select({ id: schema.players.discordUserId, displayName: schema.players.displayName })
+      .from(schema.players);
+    const nameById = new Map(names.map((n) => [n.id, n.displayName]));
+    const sorted = [...byPlayer.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, limit)
+      .map(([playerId, value]) => ({ playerId, displayName: nameById.get(playerId) ?? null, value }));
+    return rankRows(sorted, metric);
+  },
+
+  async getPlayerHandHistory(playerId, { limit, since }) {
+    const db = getDb();
+    const where = since
+      ? and(eq(schema.playerHandStats.playerId, playerId), gte(schema.playerHandStats.createdAt, since))
+      : eq(schema.playerHandStats.playerId, playerId);
+    const rows = await db
+      .select()
+      .from(schema.playerHandStats)
+      .where(where)
+      .orderBy(desc(schema.playerHandStats.createdAt))
+      .limit(limit);
+    return rows.map((r) => ({
+      gameId: r.gameId,
+      playerId: r.playerId,
+      handNumber: r.handNumber,
+      seatIndex: r.seatIndex,
+      position: r.position,
+      chipsContributed: r.chipsContributed,
+      chipsWon: r.chipsWon,
+      netResult: r.netResult,
+      result: r.result as PlayerHandStat['result'],
+      handCategory: r.handCategory as PlayerHandStat['handCategory'],
+      potTotal: r.potTotal,
+      wentToShowdown: r.wentToShowdown,
+      vpip: r.vpip,
+      pfr: r.pfr,
+      aggressiveActions: r.aggressiveActions,
+      passiveActions: r.passiveActions,
+      wasAllIn: r.wasAllIn,
+      finalStreet: r.finalStreet as PlayerHandStat['finalStreet'],
+      durationMs: r.durationMs,
+      createdAt: r.createdAt.toISOString(),
+    }));
+  },
+};
+
+/** Contribution of one fact to a windowed leaderboard metric. */
+function windowedMetricValue(metric: LeaderboardMetric, f: typeof schema.playerHandStats.$inferSelect): number {
+  switch (metric) {
+    case 'net_profit': return f.netResult;
+    case 'chips_won': return f.chipsWon;
+    case 'hands_won': return f.result === 'won' ? 1 : 0;
+    case 'biggest_pot_won': return f.result === 'won' ? f.potTotal : 0; // summed; refine later if needed
+    case 'hands_played': return 1;
+  }
+}
+
+/** Used in dev/mock mode (no DATABASE_URL): everything is empty. */
+export const noopStatsRepository: StatsRepository = {
+  async getPlayerStats() { return null; },
+  async getLeaderboard() { return []; },
+  async getPlayerHandHistory() { return []; },
 };
