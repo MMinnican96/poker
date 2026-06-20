@@ -96,6 +96,8 @@ interface Seat {
   disconnected: boolean;
   joinedAt: number;
   playMs?: number;
+  /** Stamped when a disconnect is detected; cleared on reconnect. */
+  disconnectedAt?: number;
 }
 
 /**
@@ -122,6 +124,12 @@ export class GameRoom {
   private ctx: HandContext | null = null;
   private handInProgress = false;
   private stopped = false;
+  /**
+   * Guards recordSession so it runs at most once per room lifetime.
+   * Note: durable cross-process idempotency would require a dedicated sessions
+   * table (deferred); this in-memory guard + `this.stopped` cover the single-room case.
+   */
+  private sessionRecorded = false;
 
   private turnTimeout: ReturnType<typeof setTimeout> | null = null;
   private tickInterval: ReturnType<typeof setInterval> | null = null;
@@ -332,8 +340,9 @@ export class GameRoom {
   /** A socket dropped: mark the seat disconnected and auto-fold if it's their turn. */
   handleDisconnect(socketId: string): void {
     const seat = this.seats.find((s) => s.socketId === socketId);
-    if (!seat || seat.left) return;
+    if (!seat || seat.left || seat.disconnected) return;
     seat.disconnected = true;
+    seat.disconnectedAt = Date.now();
     if (this.handInProgress && this.ctx) {
       const state = this.ctx.state;
       const current = state.players[state.currentPlayerIndex];
@@ -353,6 +362,7 @@ export class GameRoom {
     if (!seat || seat.left) return;
     seat.socketId = socketId;
     seat.disconnected = false;
+    seat.disconnectedAt = undefined;
     if (this.ctx) {
       this.io.to(socketId).emit('game_state_update', viewFor(this.ctx.state, playerId));
     }
@@ -364,14 +374,27 @@ export class GameRoom {
     this.clearTurnTimer();
     if (this.nextHandTimeout) clearTimeout(this.nextHandTimeout);
 
-    const now = Date.now();
-    const sessionPlayers = this.seats.map((s) => ({
-      playerId: s.discordUserId,
-      playMs: s.playMs ?? now - s.joinedAt,
-    }));
-    void this.stats
-      .recordSession({ gameId: this.gameId, players: sessionPlayers })
-      .catch((err) => console.error('[stats] recordSession failed:', err));
+    if (!this.sessionRecorded) {
+      this.sessionRecorded = true;
+      const now = Date.now();
+      const sessionPlayers = this.seats.map((s) => {
+        let playMs: number;
+        if (s.playMs !== undefined) {
+          // Player formally left — already stamped.
+          playMs = s.playMs;
+        } else if (s.disconnected && s.disconnectedAt !== undefined) {
+          // Disconnected without leaving — cap at the drop time, not now.
+          playMs = s.disconnectedAt - s.joinedAt;
+        } else {
+          playMs = now - s.joinedAt;
+        }
+        return { playerId: s.discordUserId, playMs };
+      });
+      void this.stats
+        .recordSession({ gameId: this.gameId, players: sessionPlayers })
+        .catch((err) => console.error('[stats] recordSession failed:', err));
+    }
+
     await Promise.all(this.seats.filter((s) => !s.left && s.chipStack > 0).map((s) => this.cashOut(s)));
 
     this.onEnd?.(this.gameId);

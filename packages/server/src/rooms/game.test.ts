@@ -267,6 +267,34 @@ describe('GameRoom stats', () => {
     room.stop();
   });
 
+  it('records session for all players and caps disconnected-early play-time at drop time', async () => {
+    const io = makeFakeIo();
+    const stats = makeFakeStats();
+    const room = makeRoom(io, makeFakeChips().service, {}, stats.service);
+    await room.start();
+
+    // 'a' disconnects immediately (before the game ends).
+    room.handleDisconnect('sa');
+
+    // Hand concludes (b auto-wins), then b has no opponent so game ends.
+    await io.waitFor('hand_result');
+
+    // endGame runs (triggered by startHand seeing < 2 live players after a folds).
+    // Give the micro-task queue a tick for the async fire-and-forget.
+    await Promise.resolve();
+
+    // Session must be recorded exactly once.
+    expect(stats.sessions).toHaveLength(1);
+    expect(stats.sessions[0].gameId).toBe('G');
+
+    // Every player must have a finite, non-negative playMs.
+    for (const p of stats.sessions[0].players) {
+      expect(Number.isFinite(p.playMs)).toBe(true);
+      expect(p.playMs).toBeGreaterThanOrEqual(0);
+    }
+    room.stop();
+  });
+
   it('works without a stats service (no-op default)', async () => {
     const io = makeFakeIo();
     const room = makeRoom(io, makeFakeChips().service);
