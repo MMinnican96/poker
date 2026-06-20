@@ -36,6 +36,10 @@ backend → Phaser UI → edge cases → docs). **54 tests pass**; all packages 
 Current focus: **live setup** — wiring a real Discord application + local
 PostgreSQL so it can launch inside Discord (see `docs/SETUP.md`, path B).
 
+Player statistics tracking (per-hand fact table + per-player aggregates + read
+APIs at `/api/stats`) is implemented; see
+`docs/superpowers/specs/2026-06-20-player-statistics-tracking-design.md`.
+
 ## Commands (run from repo root)
 
 | Command | What |
@@ -84,5 +88,6 @@ After any change, verify with `npm test` and `npm run build` before claiming don
 
 - Live Discord OAuth + `db:push` against real Postgres + a 2-tab Discord session
   (needs the user's credentials/infra — in progress).
-- Persisting hand history to the audit tables.
+- Persisting hand history to the games/hands audit tables (separate from the
+  player_hand_stats fact table, which IS written).
 - Production deploy (Railway + Vercel) — migration notes in `docs/ARCHITECTURE.md`.
