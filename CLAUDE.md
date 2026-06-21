@@ -89,8 +89,9 @@ After any change, verify with `npm test` and `npm run build` before claiming don
   is the template.
 - **Chip model**: bankroll persists in `players.chip_balance`; chips move via
   `adjustChips()` in a single transaction with a **unique `idempotency_key`**.
-  Buy-in/cash-out keys carry a per-seat `seatSession` UUID so a player who
-  leaves and rejoins the same game re-deducts correctly:
+  Buy-in/cash-out keys carry a per-seat `seatSession` counter (incremented each
+  time a player takes a seat) so a player who leaves and rejoins the same game
+  re-deducts correctly:
   `${gameId}:buyin:${id}:${seatSession}` / `${gameId}:cashout:${id}:${seatSession}`.
   Live game state is in memory; bankroll + ledger + **player stats** are persisted
   (the `games`/`hands` audit tables exist but still aren't written — stats use
