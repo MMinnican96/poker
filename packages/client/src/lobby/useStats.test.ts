@@ -4,6 +4,7 @@ import { fetchStats, sampleStats, useStats } from './useStats';
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   window.history.replaceState(null, '', '/');
 });
 
@@ -53,6 +54,7 @@ describe('useStats hook', () => {
   });
 
   it('returns sampleStats in mock mode without any network call', () => {
+    vi.stubEnv('DEV', 'true');
     window.history.replaceState(null, '', '/?mock=1');
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
@@ -67,6 +69,7 @@ describe('useStats hook', () => {
     const body = { playerId: 'bob', handsWon: 10 };
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve(body) }));
     const { result } = renderHook(() => useStats('bob'));
+    expect(result.current.loading).toBe(true);
     await waitFor(() => expect(result.current.stats).toEqual(body));
     expect(result.current.loading).toBe(false);
   });
