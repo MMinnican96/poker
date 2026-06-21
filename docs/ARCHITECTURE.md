@@ -139,10 +139,12 @@ Defined in [`packages/shared/src/events.ts`](../packages/shared/src/events.ts).
 
 | Event | Payload | Meaning |
 |---|---|---|
-| `lobby_state_update` | `LobbyState` | Full lobby snapshot (players, ready, config, status) |
+| `lobby_state_update` | `LobbyState` | Full lobby snapshot (players, ready, config, status, `activeGame`) |
 | `countdown_start` | `{ endsAt }` | Pre-game countdown started (absolute epoch ms) |
 | `countdown_cancel` | — | Countdown aborted (cancelled or under-funded at expiry) |
-| `game_start` | `{ gameId }` | A game session has begun |
+| `game_start` | `{ gameId }` | A game session has begun (host-path only; clients switch on `joined_table`) |
+| `joined_table` | `{ gameId, role }` | Client should mount the table UI with the given role |
+| `left_table` | — | Client should return to the lobby |
 | `game_state_update` | `GameState` | Per-viewer sanitized table state |
 | `timer_tick` | `{ playerId, remainingMs }` | Live turn-timer broadcast (~every 500ms) |
 | `action_rejected` | `{ reason }` | Your last action was illegal |
@@ -158,7 +160,11 @@ Defined in [`packages/shared/src/events.ts`](../packages/shared/src/events.ts).
 | `cancel_countdown` | — | Cancel the countdown (ready players only) |
 | `update_config` | `Partial<TableConfig>` | Host-only, before anyone readies |
 | `player_action` | `PlayerAction` | `fold` / `check` / `call` / `raise{amount}` / `all-in` |
-| `leave_table` | — | Leave + cash out (between hands only) |
+| `join_table` | — | Spectate a running game |
+| `sit_in` | — | Queue spectator→seated transition (resolves at next hand boundary) |
+| `sit_out` | — | Queue seated→spectator transition (resolves at next hand boundary) |
+| `cancel_pending` | — | Cancel a queued `sit_in` / `sit_out` / `leave_table` |
+| `leave_table` | — | Leave the table (deferred to hand end if seated; immediate if spectator) |
 
 ## Poker engine (`server/src/engine/`)
 
@@ -310,6 +316,111 @@ table. Contract types live in `@poker/shared`.
 > PG17+. Older 0.30.x mis-reads PG's named NOT NULL constraints and emits a
 > spurious `DROP CONSTRAINT "<table>_<col>_not_null"` for every column, which
 > fails on the `players` PK column (`42P16`).
+
+## Table membership (spectate / join / leave)
+
+`GameRoom` owns the full table population as a list of role-tagged **`Member`**
+objects (`role: 'seated' | 'spectator'`). A spectator is a connected member with
+no engine seat — they receive a sanitized table view (hole cards hidden as normal)
+but are never dealt in.
+
+### Member model
+
+```ts
+interface Member {
+  id: string;          // Discord user id
+  socketId: string;
+  role: 'seated' | 'spectator';
+  seatIndex?: number;  // only when role === 'seated'
+  seatSession: string; // unique UUID per seat occupancy
+  pending?: 'sit_in' | 'sit_out' | 'leave_table';
+  left?: true;         // marked gone; entry retained until hand boundary cleanup
+}
+```
+
+### Hand-boundary transition resolver (`applyPending`)
+
+Queued role changes resolve **at hand boundaries** (top of `startHand` and
+`scheduleNextHand`) via a centralised `applyPending()` call:
+
+- **`sit_in`** (spectator → seated): a new `seatSession` UUID is minted, the
+  buy-in is charged (`ChipService`), and the member is assigned the next
+  available seat. Gated on the lobby-known `bankroll ≥ buyIn`.
+- **`sit_out`** (seated → spectator): the table stack is cashed out and the seat
+  is released; the member keeps watching from the rail.
+- **`leave_table`** (deferred): the stack is cashed out and the member is emitted
+  to the lobby via `left_table`. For spectators `leave_table` is immediate (no
+  hand boundary needed).
+- **`cancel_pending`**: clears the queued transition.
+
+A seated player who **busts** (stack reaches 0 at settle) is automatically moved
+to spectator with a cash-out of 0, so they can watch the rest of the game
+without being stuck.
+
+### Teardown: idle-at-1 / end-at-0
+
+- **≥ 2 seated** — game runs normally.
+- **Exactly 1 seated** — `waitingForPlayers` flag is set; the table idles until a
+  spectator sits in or the remaining player leaves.
+- **0 seated** — game ends: all remaining members (including spectators) receive
+  `left_table` and are ejected to the lobby.
+
+### `seatSession`-scoped ledger keys
+
+Because a player can leave and rejoin the same game, the buy-in and cash-out
+idempotency keys carry the per-occupancy `seatSession` UUID:
+
+```
+${gameId}:buyin:${playerId}:${seatSession}
+${gameId}:cashout:${playerId}:${seatSession}
+```
+
+This ensures each distinct seat occupancy is a separate accounting unit, so
+leave→rejoin in the same game re-deducts the buy-in correctly rather than
+hitting the `onConflictDoNothing` guard from the first occupancy.
+
+### `activeGame` lobby summary + player filtering
+
+While a game is running, `LobbyRoom.toState()` folds a cards-free
+**`ActiveGameSummary`** into `LobbyState.activeGame`:
+
+```ts
+interface ActiveGameSummary {
+  gameId: string;
+  seatedCount: number;
+  watchingCount: number;
+  members: Array<{ id: string; name: string; role: 'seated' | 'spectator' }>;
+  buyIn: number;
+  waitingForPlayers: boolean;
+}
+```
+
+Table members are **filtered out of the lobby player list** (a `MemberProvider`
+interface is injected into `LobbyRoom` so it can ask the current `GameRoom` which
+players are at the table). `GameRoom` calls `onMembershipChange()` whenever
+membership changes so the lobby re-broadcasts immediately.
+
+### `joined_table` / `left_table` view-switch protocol
+
+The client-side lobby↔table switch is driven by two server→client events:
+
+| Event | Payload | Effect |
+|---|---|---|
+| `joined_table` | `{ gameId, role }` | `App.tsx` mounts the table UI (spectator or seated) |
+| `left_table` | — | `App.tsx` returns to the lobby |
+
+This replaces the old `game_start`-based switch, which had a latent bug where
+non-ready players were yanked into the table view when a game started.
+
+Client→server events that drive transitions:
+
+| Event | Meaning |
+|---|---|
+| `join_table` | Spectate a running game |
+| `sit_in` | Queue a spectator→seated transition (next hand) |
+| `sit_out` | Queue a seated→spectator transition (next hand) |
+| `cancel_pending` | Undo a queued transition |
+| `leave_table` | Leave the table (deferred to hand end if seated; immediate if spectator) |
 
 ## Lobby & countdown logic
 
