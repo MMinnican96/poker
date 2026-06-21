@@ -209,9 +209,11 @@ export class GameRoom {
 
   /** Resolve queued transitions + busts. Called at each hand boundary. */
   private applyPending(): void {
+    let membershipChanged = false;
     for (const m of this.members) {
       if (m.role === 'seated' && m.chipStack <= 0) {
         m.role = 'spectator'; // bust → spectate (Task 6 also covers settle-time)
+        membershipChanged = true;
       }
       if (m.pending === 'seat' && m.role === 'spectator' && this.canSeat(m)) {
         m.seatSession += 1;
@@ -223,17 +225,21 @@ export class GameRoom {
         });
         m.chipStack = this.config.buyIn;
         m.role = 'seated';
+        membershipChanged = true;
       } else if (m.pending === 'spectate' && m.role === 'seated') {
         void this.cashOut(m);
         m.role = 'spectator';
+        membershipChanged = true;
       } else if (m.pending === 'leave') {
         void this.cashOut(m);
         m.left = true;
         m.playMs = Date.now() - m.joinedAt;
         this.io.to(m.socketId).emit('left_table');
+        membershipChanged = true;
       }
       m.pending = null;
     }
+    if (membershipChanged) this.onMembershipChange?.();
   }
 
   private resolveBetweenHands(): void {
@@ -242,6 +248,7 @@ export class GameRoom {
 
   private startHand(): void {
     if (this.stopped) return;
+    if (this.handInProgress) return;
     this.applyPending();
     const seatedCount = this.seated().length;
     if (seatedCount === 0) { void this.endGame(); return; }
@@ -342,12 +349,15 @@ export class GameRoom {
     }
 
     // Bust → spectate: a seated member with no chips stops being dealt in.
+    let busted = false;
     for (const m of this.members) {
       if (m.role === 'seated' && !m.left && m.chipStack <= 0) {
         m.role = 'spectator';
         m.pending = null;
+        busted = true;
       }
     }
+    if (busted) this.onMembershipChange?.();
 
     this.handInProgress = false;
     this.broadcastState();
@@ -381,6 +391,7 @@ export class GameRoom {
 
   private scheduleNextHand(): void {
     if (this.stopped) return;
+    if (this.nextHandTimeout) { clearTimeout(this.nextHandTimeout); this.nextHandTimeout = null; }
     this.applyPending();
     const seatedCount = this.seated().length;
     if (seatedCount === 0) {
@@ -559,7 +570,7 @@ export class GameRoom {
 
   /** The viewer's per-recipient view: sanitized cards + table-population fields. */
   private tableView(viewerId: string): GameState {
-    const base = this.ctx ? viewFor(this.ctx.state, viewerId) : this.idleState();
+    const base = viewFor(this.ctx!.state, viewerId);
     const me = this.members.find((m) => m.discordUserId === viewerId);
     return {
       ...base,
@@ -571,11 +582,6 @@ export class GameRoom {
       waitingForPlayers: this.seated().length < 2,
       viewerPending: me?.pending ?? null,
     };
-  }
-
-  private idleState(): GameState {
-    // ctx is set after the first hand; before that there is nothing to show.
-    return this.ctx!.state;
   }
 
   private broadcastState(): void {
@@ -649,8 +655,4 @@ export class GameRoom {
     return this.members.filter((m) => m.role === 'seated' && !m.left);
   }
 
-  /** Seated members who can be dealt in (have chips and aren't disconnected). */
-  private seatedLive(): Member[] {
-    return this.seated().filter((m) => !m.disconnected && m.chipStack > 0);
-  }
 }

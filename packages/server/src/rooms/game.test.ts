@@ -507,6 +507,58 @@ describe('GameRoom summary', () => {
   });
 });
 
+describe('GameRoom re-entry guard and lobby rebroadcast', () => {
+  it('Test A: re-entry guard prevents double-deal when startHand is called twice', async () => {
+    const io = makeFakeIo();
+    const chips = makeFakeChips();
+    const room = makeRoom(io, chips.service);
+    await room.start();
+
+    // Complete a hand (a folds, b wins) so concludeHand → scheduleNextHand arms the timer.
+    const concluded = io.waitFor('hand_result');
+    room.handleAction('a', { type: 'fold' });
+    await concluded;
+
+    // Add a spectator and seat them (resolveBetweenHands → scheduleNextHand, clears+re-arms timer).
+    room.addSpectator({ discordUserId: 'c', displayName: 'C', avatarUrl: '', socketId: 'sc', bankroll: 3000 });
+    room.requestSeat('c');
+
+    // Simulate the (single) timer firing: drive startHand directly.
+    (room as unknown as { startHand(): void }).startHand();
+    const handNumberAfterFirstCall = room.state!.handNumber;
+
+    // Call startHand again immediately — re-entry guard must block the second deal.
+    (room as unknown as { startHand(): void }).startHand();
+    const handNumberAfterSecondCall = room.state!.handNumber;
+
+    expect(handNumberAfterSecondCall).toBe(handNumberAfterFirstCall);
+    room.stop();
+  });
+
+  it('Test B: lobby is re-broadcast when a deferred leave resolves via applyPending', async () => {
+    const io = makeFakeIo();
+    const chips = makeFakeChips();
+    const room = makeRoom(io, chips.service);
+    await room.start();
+
+    let changes = 0;
+    room.onMembershipChange = () => { changes++; };
+
+    // Leave mid-hand: deferred, fires onMembershipChange once at request time.
+    room.leave('a');
+    const changesAfterRequest = changes;
+    expect(changesAfterRequest).toBe(1);
+
+    // Fold ends the hand; then manually drive applyPending to resolve the leave.
+    room.handleAction('a', { type: 'fold' });
+    (room as unknown as { applyPending(): void }).applyPending();
+
+    // After resolution, changes must have increased (Fix 2a re-broadcasts).
+    expect(changes).toBeGreaterThan(changesAfterRequest);
+    room.stop();
+  });
+});
+
 describe('GameRoom bust handling', () => {
   it('moves a busted player to spectate after the hand settles', async () => {
     const io = makeFakeIo();
