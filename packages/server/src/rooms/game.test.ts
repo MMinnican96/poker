@@ -65,8 +65,8 @@ function makeFakeStats() {
 }
 
 const players: GameRoomPlayer[] = [
-  { discordUserId: 'a', displayName: 'A', avatarUrl: '', socketId: 'sa' },
-  { discordUserId: 'b', displayName: 'B', avatarUrl: '', socketId: 'sb' },
+  { discordUserId: 'a', displayName: 'A', avatarUrl: '', socketId: 'sa', bankroll: 3000 },
+  { discordUserId: 'b', displayName: 'B', avatarUrl: '', socketId: 'sb', bankroll: 3000 },
 ];
 
 function makeRoom(
@@ -102,7 +102,7 @@ describe('GameRoom', () => {
     expect(buyIns).toHaveLength(2);
     expect(buyIns.every((c) => c.amount === -3000)).toBe(true);
     expect(new Set(buyIns.map((c) => c.idempotencyKey))).toEqual(
-      new Set(['G:buyin:a', 'G:buyin:b']),
+      new Set(['G:buyin:a:1', 'G:buyin:b:1']),
     );
 
     // Heads-up: the button (seat 0 = 'a') acts first.
@@ -184,7 +184,7 @@ describe('GameRoom', () => {
 
     const cashOuts = chips.calls.filter((c) => c.type === 'cash-out');
     expect(new Set(cashOuts.map((c) => c.idempotencyKey))).toEqual(
-      new Set(['G:cashout:a', 'G:cashout:b']),
+      new Set(['G:cashout:a:1', 'G:cashout:b:1']),
     );
     // Buy-ins (-3000 each) plus cash-outs return exactly to zero.
     const net = chips.calls.reduce((t, c) => t + c.amount, 0);

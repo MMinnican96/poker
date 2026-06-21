@@ -72,6 +72,7 @@ export interface GameRoomPlayer {
   displayName: string;
   avatarUrl: string;
   socketId: string;
+  bankroll: number;
 }
 
 export interface GameRoomOptions {
@@ -86,18 +87,24 @@ export interface GameRoomOptions {
   onEnd?: (gameId: string) => void;
 }
 
-interface Seat {
+type MemberRole = 'seated' | 'spectator';
+type Pending = null | 'leave' | 'spectate' | 'seat';
+
+interface Member {
   discordUserId: string;
   displayName: string;
   avatarUrl: string;
   socketId: string;
-  chipStack: number;
+  role: MemberRole;
+  chipStack: number;     // 0 for spectators
+  bankroll: number;      // last-known lobby balance, gates sit-in
+  seatSession: number;   // ++ each time they take a seat
+  pending: Pending;
   left: boolean;
   disconnected: boolean;
+  disconnectedAt?: number;
   joinedAt: number;
   playMs?: number;
-  /** Stamped when a disconnect is detected; cleared on reconnect. */
-  disconnectedAt?: number;
 }
 
 /**
@@ -118,7 +125,7 @@ export class GameRoom {
   private readonly handDelayMs: number;
   private readonly onEnd?: (gameId: string) => void;
 
-  private seats: Seat[] = [];
+  private members: Member[] = [];
   private dealerIndex = 0;
   private handNumber = 0;
   private ctx: HandContext | null = null;
@@ -147,9 +154,12 @@ export class GameRoom {
     this.handDelayMs = opts.timing?.handDelayMs ?? 3_000;
     this.onEnd = opts.onEnd;
     const now = Date.now();
-    this.seats = opts.players.map((p) => ({
+    this.members = opts.players.map((p) => ({
       ...p,
+      role: 'seated' as const,
       chipStack: 0,
+      seatSession: 0,
+      pending: null,
       left: false,
       disconnected: false,
       joinedAt: now,
@@ -159,14 +169,15 @@ export class GameRoom {
   /** Deduct buy-ins from each player's bankroll, then deal the first hand. */
   async start(): Promise<void> {
     await Promise.all(
-      this.seats.map(async (seat) => {
+      this.seated().map(async (m) => {
+        m.seatSession += 1;
         await this.chips.adjust({
-          playerId: seat.discordUserId,
+          playerId: m.discordUserId,
           amount: -this.config.buyIn,
           type: 'buy-in',
-          idempotencyKey: `${this.gameId}:buyin:${seat.discordUserId}`,
+          idempotencyKey: `${this.gameId}:buyin:${m.discordUserId}:${m.seatSession}`,
         });
-        seat.chipStack = this.config.buyIn;
+        m.chipStack = this.config.buyIn;
       }),
     );
     if (this.stopped) return;
@@ -175,18 +186,18 @@ export class GameRoom {
 
   private startHand(): void {
     if (this.stopped) return;
-    const live = this.seats.filter((s) => !s.left && !s.disconnected && s.chipStack > 0);
-    if (live.length < 2) {
+    if (this.seatedLive().length < 2) {
       void this.endGame();
       return;
     }
 
-    const seeds: PlayerSeed[] = this.seats.map((s, i) => ({
-      discordUserId: s.discordUserId,
-      displayName: s.displayName,
-      avatarUrl: s.avatarUrl,
+    const seatedMembers = this.seated();
+    const seeds: PlayerSeed[] = seatedMembers.map((m, i) => ({
+      discordUserId: m.discordUserId,
+      displayName: m.displayName,
+      avatarUrl: m.avatarUrl,
       seatIndex: i,
-      chipStack: s.left ? 0 : s.chipStack,
+      chipStack: m.chipStack,
     }));
 
     this.handNumber += 1;
@@ -233,10 +244,10 @@ export class GameRoom {
   private beginTurn(): void {
     const state = this.ctx!.state;
     const current = state.players[state.currentPlayerIndex];
-    const seat = this.seats.find((s) => s.discordUserId === current.discordUserId);
+    const member = this.members.find((m) => m.discordUserId === current.discordUserId);
 
     // Disconnected players don't get a timer — fold them straight away.
-    if (seat?.disconnected) {
+    if (member?.disconnected) {
       this.handleAction(current.discordUserId, { type: 'fold' });
       return;
     }
@@ -268,10 +279,10 @@ export class GameRoom {
     const state = this.ctx!.state;
     const result = settleHand(state); // credits chipStacks, marks hand-complete
 
-    // Mirror the engine's chip stacks back onto the seats.
-    for (const seat of this.seats) {
-      const p = state.players.find((pp) => pp.discordUserId === seat.discordUserId);
-      if (p) seat.chipStack = p.chipStack;
+    // Mirror the engine's chip stacks back onto the members.
+    for (const member of this.members) {
+      const p = state.players.find((pp) => pp.discordUserId === member.discordUserId);
+      if (p) member.chipStack = p.chipStack;
     }
 
     this.handInProgress = false;
@@ -306,8 +317,7 @@ export class GameRoom {
 
   private scheduleNextHand(): void {
     if (this.stopped) return;
-    const live = this.seats.filter((s) => !s.left && !s.disconnected && s.chipStack > 0);
-    if (live.length < 2) {
+    if (this.seatedLive().length < 2) {
       void this.endGame();
       return;
     }
@@ -316,11 +326,12 @@ export class GameRoom {
   }
 
   private nextDealer(): number {
-    const n = this.seats.length;
+    const seated = this.seated();
+    const n = seated.length;
     for (let step = 1; step <= n; step++) {
       const idx = (this.dealerIndex + step) % n;
-      const seat = this.seats[idx];
-      if (!seat.left && seat.chipStack > 0) return idx;
+      const member = seated[idx];
+      if (member.chipStack > 0) return idx;
     }
     return this.dealerIndex;
   }
@@ -328,26 +339,26 @@ export class GameRoom {
   /** Leave the table — only allowed between hands. Cashes out remaining chips. */
   leave(playerId: string): void {
     if (this.handInProgress) return;
-    const seat = this.seats.find((s) => s.discordUserId === playerId);
-    if (!seat || seat.left) return;
-    void this.cashOut(seat);
-    seat.playMs = Date.now() - seat.joinedAt;
-    seat.left = true;
-    const live = this.seats.filter((s) => !s.left && s.chipStack > 0);
+    const member = this.members.find((m) => m.discordUserId === playerId);
+    if (!member || member.left) return;
+    void this.cashOut(member);
+    member.playMs = Date.now() - member.joinedAt;
+    member.left = true;
+    const live = this.members.filter((m) => !m.left && m.chipStack > 0);
     if (live.length < 2) void this.endGame();
   }
 
-  /** A socket dropped: mark the seat disconnected and auto-fold if it's their turn. */
+  /** A socket dropped: mark the member disconnected and auto-fold if it's their turn. */
   handleDisconnect(socketId: string): void {
-    const seat = this.seats.find((s) => s.socketId === socketId);
-    if (!seat || seat.left || seat.disconnected) return;
-    seat.disconnected = true;
-    seat.disconnectedAt = Date.now();
+    const member = this.members.find((m) => m.socketId === socketId);
+    if (!member || member.left || member.disconnected) return;
+    member.disconnected = true;
+    member.disconnectedAt = Date.now();
     if (this.handInProgress && this.ctx) {
       const state = this.ctx.state;
       const current = state.players[state.currentPlayerIndex];
-      if (current.discordUserId === seat.discordUserId) {
-        this.handleAction(seat.discordUserId, { type: 'fold' });
+      if (current.discordUserId === member.discordUserId) {
+        this.handleAction(member.discordUserId, { type: 'fold' });
       }
     }
   }
@@ -358,11 +369,11 @@ export class GameRoom {
    * reconnect mid-hand (they're still seated) and the game continues normally.
    */
   reconnect(playerId: string, socketId: string): void {
-    const seat = this.seats.find((s) => s.discordUserId === playerId);
-    if (!seat || seat.left) return;
-    seat.socketId = socketId;
-    seat.disconnected = false;
-    seat.disconnectedAt = undefined;
+    const member = this.members.find((m) => m.discordUserId === playerId);
+    if (!member || member.left) return;
+    member.socketId = socketId;
+    member.disconnected = false;
+    member.disconnectedAt = undefined;
     if (this.ctx) {
       this.io.to(socketId).emit('game_state_update', viewFor(this.ctx.state, playerId));
     }
@@ -377,25 +388,25 @@ export class GameRoom {
     if (!this.sessionRecorded) {
       this.sessionRecorded = true;
       const now = Date.now();
-      const sessionPlayers = this.seats.map((s) => {
+      const sessionPlayers = this.members.map((m) => {
         let playMs: number;
-        if (s.playMs !== undefined) {
+        if (m.playMs !== undefined) {
           // Player formally left — already stamped.
-          playMs = s.playMs;
-        } else if (s.disconnected && s.disconnectedAt !== undefined) {
+          playMs = m.playMs;
+        } else if (m.disconnected && m.disconnectedAt !== undefined) {
           // Disconnected without leaving — cap at the drop time, not now.
-          playMs = s.disconnectedAt - s.joinedAt;
+          playMs = m.disconnectedAt - m.joinedAt;
         } else {
-          playMs = now - s.joinedAt;
+          playMs = now - m.joinedAt;
         }
-        return { playerId: s.discordUserId, playMs };
+        return { playerId: m.discordUserId, playMs };
       });
       void this.stats
         .recordSession({ gameId: this.gameId, players: sessionPlayers })
         .catch((err) => console.error('[stats] recordSession failed:', err));
     }
 
-    await Promise.all(this.seats.filter((s) => !s.left && s.chipStack > 0).map((s) => this.cashOut(s)));
+    await Promise.all(this.members.filter((m) => !m.left && m.chipStack > 0).map((m) => this.cashOut(m)));
 
     this.onEnd?.(this.gameId);
   }
@@ -407,23 +418,23 @@ export class GameRoom {
     if (this.nextHandTimeout) clearTimeout(this.nextHandTimeout);
   }
 
-  private async cashOut(seat: Seat): Promise<void> {
-    if (seat.chipStack <= 0) return;
-    const amount = seat.chipStack;
-    seat.chipStack = 0;
+  private async cashOut(m: Member): Promise<void> {
+    if (m.chipStack <= 0) return;
+    const amount = m.chipStack;
+    m.chipStack = 0;
     await this.chips.adjust({
-      playerId: seat.discordUserId,
+      playerId: m.discordUserId,
       amount,
       type: 'cash-out',
-      idempotencyKey: `${this.gameId}:cashout:${seat.discordUserId}`,
+      idempotencyKey: `${this.gameId}:cashout:${m.discordUserId}:${m.seatSession}`,
     });
   }
 
   private broadcastState(): void {
     if (!this.ctx) return;
-    for (const seat of this.seats) {
-      if (seat.left) continue;
-      this.io.to(seat.socketId).emit('game_state_update', viewFor(this.ctx.state, seat.discordUserId));
+    for (const member of this.members) {
+      if (member.left) continue;
+      this.io.to(member.socketId).emit('game_state_update', viewFor(this.ctx.state, member.discordUserId));
     }
   }
 
@@ -432,8 +443,8 @@ export class GameRoom {
     event: E,
     ...args: Parameters<ServerToClientEvents[E]>
   ): void {
-    const seat = this.seats.find((s) => s.discordUserId === playerId);
-    if (seat) this.io.to(seat.socketId).emit(event, ...args);
+    const member = this.members.find((m) => m.discordUserId === playerId);
+    if (member) this.io.to(member.socketId).emit(event, ...args);
   }
 
   private clearTurnTimer(): void {
@@ -456,5 +467,14 @@ export class GameRoom {
   }
   contenderCount(): number {
     return this.ctx ? contenders(this.ctx.state).length : 0;
+  }
+
+  private seated(): Member[] {
+    return this.members.filter((m) => m.role === 'seated' && !m.left);
+  }
+
+  /** Seated members who can be dealt in (have chips and aren't disconnected). */
+  private seatedLive(): Member[] {
+    return this.seated().filter((m) => !m.disconnected && m.chipStack > 0);
   }
 }

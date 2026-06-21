@@ -55,6 +55,7 @@ export function registerSocketHandlers(io: LobbyIo, options: SocketHandlerOption
           displayName: p.displayName,
           avatarUrl: p.avatarUrl,
           socketId: p.socketId,
+          bankroll: p.chipBalance,
         })),
         chips: options.chips,
         stats: options.stats,
