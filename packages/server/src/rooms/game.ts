@@ -231,17 +231,15 @@ export class GameRoom {
   }
 
   private resolveBetweenHands(): void {
-    this.applyPending();
     this.scheduleNextHand();
   }
 
   private startHand(): void {
-    this.applyPending();
     if (this.stopped) return;
-    if (this.seatedLive().length < 2) {
-      void this.endGame();
-      return;
-    }
+    this.applyPending();
+    const seatedCount = this.seated().length;
+    if (seatedCount === 0) { void this.endGame(); return; }
+    if (seatedCount < 2) { this.handInProgress = false; this.broadcastState(); return; }
 
     const seatedMembers = this.seated();
     const seeds: PlayerSeed[] = seatedMembers.map((m, i) => ({
@@ -377,8 +375,16 @@ export class GameRoom {
 
   private scheduleNextHand(): void {
     if (this.stopped) return;
-    if (this.seatedLive().length < 2) {
+    this.applyPending();
+    const seatedCount = this.seated().length;
+    if (seatedCount === 0) {
       void this.endGame();
+      return;
+    }
+    if (seatedCount < 2) {
+      // Idle: keep the table open, broadcast the waiting state, deal nothing.
+      this.handInProgress = false;
+      this.broadcastState();
       return;
     }
     this.dealerIndex = this.nextDealer();
@@ -490,9 +496,13 @@ export class GameRoom {
         .catch((err) => console.error('[stats] recordSession failed:', err));
     }
 
-    await Promise.all(this.members.filter((m) => !m.left && m.chipStack > 0).map((m) => this.cashOut(m)));
+    for (const m of this.members) {
+      if (!m.left) this.io.to(m.socketId).emit('left_table');
+    }
 
     this.onEnd?.(this.gameId);
+
+    await Promise.all(this.members.filter((m) => !m.left && m.chipStack > 0).map((m) => this.cashOut(m)));
   }
 
   /** Stop all timers without cashing out (test/teardown safety). */

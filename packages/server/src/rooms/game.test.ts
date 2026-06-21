@@ -177,10 +177,12 @@ describe('GameRoom', () => {
     room.handleAction('a', { type: 'fold' });
     await concluded;
 
-    // One player leaves; the table drops below 2 and the game ends, cashing out both.
+    // One player leaves; table idles (1 seated). Second player leaves; game ends, cashing out both.
     room.leave('a');
     // Leaving again must be a no-op (idempotent).
     room.leave('a');
+    // Now only 'b' is seated (idle). 'b' also leaves, dropping to 0 → endGame.
+    room.leave('b');
 
     const cashOuts = chips.calls.filter((c) => c.type === 'cash-out');
     expect(new Set(cashOuts.map((c) => c.idempotencyKey))).toEqual(
@@ -393,7 +395,8 @@ describe('GameRoom stats', () => {
     const concluded = io.waitFor('hand_result');
     room.handleAction('a', { type: 'fold' });
     await concluded;
-    room.leave('a'); // drops below 2 players -> endGame
+    room.leave('a'); // table idles at 1 seated
+    room.leave('b'); // 0 seated → endGame → records session
 
     expect(stats.sessions).toHaveLength(1);
     expect(stats.sessions[0].gameId).toBe('G');
@@ -408,15 +411,15 @@ describe('GameRoom stats', () => {
     const room = makeRoom(io, makeFakeChips().service, {}, stats.service);
     await room.start();
 
-    // 'a' disconnects immediately (before the game ends).
+    // 'a' disconnects immediately; their turn auto-folds, b wins the hand.
     room.handleDisconnect('sa');
 
-    // Hand concludes (b auto-wins), then b has no opponent so game ends.
+    // Hand concludes (b auto-wins); table idles — both players are still seated but 'a' is disconnected.
     await io.waitFor('hand_result');
 
-    // endGame runs (triggered by startHand seeing < 2 live players after a folds).
-    // Give the micro-task queue a tick for the async fire-and-forget.
-    await Promise.resolve();
+    // Both players leave → 0 seated → endGame records the session.
+    room.leave('a');
+    room.leave('b');
 
     // Session must be recorded exactly once.
     expect(stats.sessions).toHaveLength(1);
@@ -438,6 +441,52 @@ describe('GameRoom stats', () => {
     room.handleAction('a', { type: 'fold' });
     await expect(concluded).resolves.toBeDefined();
     room.stop();
+  });
+});
+
+describe('GameRoom teardown thresholds', () => {
+  it('idles (does not deal) when only one player is seated, then resumes when a spectator sits in', async () => {
+    const io = makeFakeIo();
+    const chips = makeFakeChips();
+    const room = makeRoom(io, chips.service);
+    await room.start();
+    room.addSpectator({ discordUserId: 'c', displayName: 'C', avatarUrl: '', socketId: 'sc', bankroll: 3000 });
+
+    // 'a' leaves; after the hand only 'b' is seated → table idles, no new hand.
+    room.leave('a');
+    room.handleAction('a', { type: 'fold' });
+    (room as unknown as { scheduleNextHand(): void }).scheduleNextHand();
+    expect(room.isActive).toBe(true);
+    const idleView = io.records.filter((r) => r.target === 'sb' && r.event === 'game_state_update').at(-1)!.args[0] as GameState;
+    expect(idleView.waitingForPlayers).toBe(true);
+
+    // 'c' sits in → 2 seated → next hand deals.
+    room.requestSeat('c');
+    (room as unknown as { scheduleNextHand(): void }).scheduleNextHand();
+    expect(room.state!.players.length).toBe(2);
+    room.stop();
+  });
+
+  it('ends the game and ejects everyone when the last player leaves', async () => {
+    const io = makeFakeIo();
+    const chips = makeFakeChips();
+    const ended: string[] = [];
+    const room = new GameRoom({
+      io: io.io as never, gameId: 'G', instanceId: 'I', config: CONFIG,
+      players, chips: chips.service,
+      timing: { turnMs: 1e9, tickMs: 1e9, handDelayMs: 1e9 },
+      onEnd: (id) => ended.push(id),
+    });
+    await room.start();
+    room.addSpectator({ discordUserId: 'c', displayName: 'C', avatarUrl: '', socketId: 'sc', bankroll: 3000 });
+
+    room.leave('a');
+    room.handleAction('a', { type: 'fold' });
+    room.leave('b'); // now both seated players leaving
+    (room as unknown as { scheduleNextHand(): void }).scheduleNextHand();
+
+    expect(ended).toContain('G');
+    expect(io.records.some((r) => r.target === 'sc' && r.event === 'left_table')).toBe(true);
   });
 });
 
