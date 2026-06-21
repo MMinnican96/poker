@@ -9,10 +9,10 @@ rules live in a pure, fully-tested engine with no I/O.
 
 ```
 ┌────────────────────────── Discord client (iframe) ──────────────────────────┐
-│  React + Phaser 3                                                            │
+│  React + Tailwind                                                            │
 │  ┌───────────┐   Embedded App SDK   ┌──────────────┐   Socket.io (ws)        │
-│  │  Lobby UI │◄────── identity ─────│  GameCanvas  │◄───────────────┐        │
-│  │  (React)  │                      │  (Phaser)    │                │        │
+│  │  Lobby UI │◄────── identity ─────│ TableScreen  │◄───────────────┐        │
+│  │  (React)  │                      │ (React DOM)  │                │        │
 │  └───────────┘                      └──────────────┘                │        │
 └──────────────────────────────────────────────────────────────────── │ ──────┘
                       │ POST /api/auth/token (OAuth code)               │
@@ -47,14 +47,14 @@ packages/
 │       │   └── {schema,index,stats,stats-aggregate,stats-leaderboard,stats-recompute}.ts
 │       ├── engine/            # pure poker rules (see below)
 │       └── rooms/             # LobbyManager, GameRoom, hand-stats, state sanitization
-└── client/   # React + Phaser 3 (the Activity iframe)
+└── client/   # React + Tailwind (the Activity iframe)
     └── src/
         ├── index.css          # Tailwind v4 @import + @theme design tokens + keyframes
         ├── discord.ts         # SDK handshake (+ dev mock)
         ├── socket.ts          # typed Socket.io client
-        ├── App.tsx, ActionBar.tsx, GameCanvas.tsx
+        ├── App.tsx, ActionBar.tsx
         ├── lobby/             # Lobby screen components (see below)
-        └── game/              # Phaser scene + React↔Phaser bridge
+        └── table/             # React/DOM table scene (see "Client table view")
 ```
 
 `@poker/shared` is the contract glued to both ends: it defines `GameState`,
@@ -115,6 +115,44 @@ The following are intentionally deferred and shown as Coming Soon / disabled:
 - Per-player **In-Game** status while others remain in the lobby (the current
   architecture transitions the whole lobby at once; only `lobby.status === 'in-game'`
   maps to the In-Game pill).
+
+## Client table view
+
+The in-game table is rendered as **React + Tailwind DOM** (no Phaser — the old
+Phaser scene and `GameCanvas`/`game/` bridge were removed). It renders the same
+per-viewer `GameState` the server broadcasts, lives in
+`packages/client/src/table/`, and reuses the lobby's `UserPopout`,
+`PlayerProfileModal`, `useStats`, and `StatTile` components.
+
+```
+table/
+  TableScreen.tsx    # Top-level: owns game_state_update + timer_tick, lays out the felt
+  TableHeader.tsx    # Top bar: table name, spectator eye + list, leave/sit controls
+  CenterCluster.tsx  # Felt center: community cards (dealt to position) + pot / side pots
+  Seat.tsx           # One opponent seat: avatar, chips, dealer/SB/BB badges, action pill,
+                     #   hole-card fan, turn-timer ring
+  HeroHud.tsx        # Bottom-center hero: own hole cards + named hand, table/bank chips, timer
+  TableActionBar.tsx # Hero action controls: quick-raise, bet slider, fold/check/call/raise
+  Card.tsx           # A single playing card (face/back, size, rotation, reveal flag)
+  SeatLayout.ts      # Pure seat geometry — evenly splits opponents around the oval, hero at
+                     #   bottom-center; returns left/top + bet-chip offsets per slot
+  useHandName.ts     # Hook: names the hero's best hand via shared describeBestHand
+```
+
+Two supporting changes back this view:
+
+- **`GamePlayer.lastAction`** — the engine now records each player's most recent
+  action on their `GamePlayer` (in `@poker/shared`), which drives the per-seat
+  action pill (Fold / Check / Call / Raise / All-in).
+- **Hand evaluation moved to `@poker/shared`** (`hand-eval.ts`, exporting
+  `describeBestHand`), so the client can name the hero's hand client-side. The
+  server engine's `hand-evaluator.ts` is now a thin re-export shim, preserving its
+  existing import paths.
+
+**Showdown reveal** uses the server's existing `viewFor()` card exposure
+(non-folded hands are revealed at showdown; folded hands never are), so the table
+simply renders whatever hole cards the sanitized state contains. Revealing *all*
+remaining hands at hand-end is a **future phase**.
 
 ## Data flow
 

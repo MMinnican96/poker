@@ -6,7 +6,8 @@ Project guidance for Claude Code working in this repository.
 
 **Discord Poker** — a multiplayer Texas Hold'em game that runs as a **Discord
 Activity** (an embedded iframe app launched from a Discord voice channel).
-Players play with persistent chip balances; the table is a 2D cartoon canvas.
+Players play with persistent chip balances; the table is a 2D cartoon DOM scene
+(React + Tailwind).
 
 ## How you should act
 
@@ -25,11 +26,13 @@ packages/
 ├── shared/   @poker/shared — TS types + Socket.io event contracts (ESM, builds to dist/)
 ├── server/   Node + Express + Socket.io + Drizzle/Postgres
 │   └── src/{index.ts, routes/{auth,stats}.ts, discord.ts, db/, engine/, rooms/}
-└── client/   React + Phaser 3 (the Activity iframe)
-    └── src/{discord.ts, socket.ts, App.tsx, ActionBar.tsx, GameCanvas.tsx, game/,
+└── client/   React + Tailwind (the Activity iframe)
+    └── src/{discord.ts, socket.ts, App.tsx, ActionBar.tsx,
               lobby/{LobbyScreen, Header, PlayersPanel, PlayerRow, TableSettings,
                      ComingSoon, RecentActivity, UserPopout, PlayerProfileModal,
-                     StatTile, useStats}}
+                     StatTile, useStats},
+              table/{TableScreen, TableHeader, CenterCluster, Seat, HeroHud,
+                     TableActionBar, Card, SeatLayout, useHandName}}
 ```
 
 - **engine/** — pure poker rules (deck, hand-evaluator, pot, blinds, actions,
@@ -170,6 +173,10 @@ After any change, verify with `npm test` and `npm run build` before claiming don
   `ComingSoon`, `RecentActivity`, `UserPopout`, `PlayerProfileModal`, `StatTile`,
   `useStats`). `App.tsx` renders `<LobbyScreen>` with the same props the old
   `<Lobby>` received.
+- **Table view** — the in-game table lives in `packages/client/src/table/` and is
+  rendered as React/Tailwind DOM (no Phaser); seat geometry comes from
+  `table/SeatLayout.ts`; the hero hand name is named client-side via the shared
+  `describeBestHand`; `GamePlayer.lastAction` drives the per-seat action pill.
 - **`TableConfig.turnSeconds`** — a host-configurable turn timer (integer 10–120,
   multiple of 5, default 30). `sanitizeConfig` in `rooms/lobby.ts` validates it.
   `rooms/index.ts` threads it into `GameRoom` timing at construction:
