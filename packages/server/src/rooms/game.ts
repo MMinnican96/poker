@@ -186,7 +186,57 @@ export class GameRoom {
     this.startHand();
   }
 
+  /** Spectator asks for a seat. Applied at the next hand boundary (or now if idle). */
+  requestSeat(playerId: string): void {
+    const m = this.members.find((x) => x.discordUserId === playerId && !x.left);
+    if (!m || m.role === 'seated') return;
+    if (!this.canSeat(m)) return; // gated: full or underfunded
+    m.pending = 'seat';
+    if (!this.handInProgress) this.resolveBetweenHands();
+    else this.broadcastState();
+    this.onMembershipChange?.();
+  }
+
+  private canSeat(m: Member): boolean {
+    return this.seated().length < this.config.maxPlayers && m.bankroll >= this.config.buyIn;
+  }
+
+  /** Resolve queued transitions + busts. Called at each hand boundary. */
+  private applyPending(): void {
+    for (const m of this.members) {
+      if (m.role === 'seated' && m.chipStack <= 0) {
+        m.role = 'spectator'; // bust → spectate (Task 6 also covers settle-time)
+      }
+      if (m.pending === 'seat' && m.role === 'spectator' && this.canSeat(m)) {
+        m.seatSession += 1;
+        void this.chips.adjust({
+          playerId: m.discordUserId,
+          amount: -this.config.buyIn,
+          type: 'buy-in',
+          idempotencyKey: `${this.gameId}:buyin:${m.discordUserId}:${m.seatSession}`,
+        });
+        m.chipStack = this.config.buyIn;
+        m.role = 'seated';
+      } else if (m.pending === 'spectate' && m.role === 'seated') {
+        void this.cashOut(m);
+        m.role = 'spectator';
+      } else if (m.pending === 'leave') {
+        void this.cashOut(m);
+        m.left = true;
+        m.playMs = Date.now() - m.joinedAt;
+        this.io.to(m.socketId).emit('left_table');
+      }
+      m.pending = null;
+    }
+  }
+
+  private resolveBetweenHands(): void {
+    this.applyPending();
+    this.scheduleNextHand();
+  }
+
   private startHand(): void {
+    this.applyPending();
     if (this.stopped) return;
     if (this.seatedLive().length < 2) {
       void this.endGame();

@@ -228,6 +228,42 @@ describe('GameRoom', () => {
   });
 });
 
+describe('GameRoom sit-in', () => {
+  it('seats a spectator at the next hand and charges a fresh buy-in', async () => {
+    const io = makeFakeIo();
+    const chips = makeFakeChips();
+    const room = makeRoom(io, chips.service);
+    await room.start();
+    room.addSpectator({ discordUserId: 'c', displayName: 'C', avatarUrl: '', socketId: 'sc', bankroll: 3000 });
+
+    room.requestSeat('c'); // mid-hand: queued, not yet charged
+    expect(chips.calls.some((c) => c.playerId === 'c' && c.type === 'buy-in')).toBe(false);
+
+    // Finish the current hand; next hand applies the pending seat.
+    room.handleAction('a', { type: 'fold' });
+    // 'b' wins the blinds vs 'a' fold-out; next hand is scheduled via timer — drive it:
+    (room as unknown as { startHand(): void }).startHand();
+
+    const buyIn = chips.calls.find((c) => c.playerId === 'c' && c.type === 'buy-in');
+    expect(buyIn?.idempotencyKey).toBe('G:buyin:c:1');
+    expect(room.state!.players.some((p) => p.discordUserId === 'c')).toBe(true);
+    room.stop();
+  });
+
+  it('rejects sit-in when the table is full or the player is underfunded', async () => {
+    const io = makeFakeIo();
+    const chips = makeFakeChips();
+    const room = makeRoom(io, chips.service, {}, undefined);
+    await room.start();
+    room.addSpectator({ discordUserId: 'c', displayName: 'C', avatarUrl: '', socketId: 'sc', bankroll: 100 });
+    room.requestSeat('c'); // underfunded (bankroll 100 < buyIn 3000)
+    room.handleAction('a', { type: 'fold' });
+    (room as unknown as { startHand(): void }).startHand();
+    expect(room.state!.players.some((p) => p.discordUserId === 'c')).toBe(false);
+    room.stop();
+  });
+});
+
 describe('GameRoom spectator', () => {
   it('adds a spectator who sees no opponent hole cards and is not dealt in', async () => {
     const io = makeFakeIo();
