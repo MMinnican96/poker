@@ -37,6 +37,8 @@ export interface ChipService {
     type: string;
     idempotencyKey: string;
   }): Promise<{ applied: boolean; balance: number }>;
+  /** Optional: seed a player's starting balance (in-memory ledgers only; the DB ledger ignores this). */
+  seed?(playerId: string, balance: number): void;
 }
 
 /** No-op ledger (used when a room is created without persistence, e.g. lobby-only tests). */
