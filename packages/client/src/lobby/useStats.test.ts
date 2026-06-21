@@ -54,7 +54,7 @@ describe('useStats hook', () => {
   });
 
   it('returns sampleStats in mock mode without any network call', () => {
-    vi.stubEnv('DEV', 'true');
+    vi.stubEnv('DEV', true);
     window.history.replaceState(null, '', '/?mock=1');
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
