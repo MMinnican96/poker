@@ -33,12 +33,15 @@ export interface ClientToServerEvents {
   start_countdown: () => void;
   cancel_countdown: () => void;
   update_config: (config: Partial<TableConfig>) => void;
+  create_game: (config: TableConfig) => void;
+  cancel_game: () => void;
   player_action: (action: PlayerAction) => void;
   leave_table: () => void;
   join_table: () => void;
   sit_in: () => void;
   sit_out: () => void;
   cancel_pending: () => void;
+  request_game_state: () => void;
 }
 
 export interface InterServerEvents {
