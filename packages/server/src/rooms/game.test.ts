@@ -700,4 +700,26 @@ describe('GameRoom buy-in gating', () => {
     expect(toA.viewerBankroll).toBe(0);
     room.stop();
   });
+
+  it('rolls back a seat the ledger refuses (no free chips) and rejects the player', async () => {
+    const io = makeFakeIo();
+    const chips = makeFakeChips();
+    const room = makeRoom(io, chips.service);
+    await room.start();
+    // Spectator looks funded (bankroll 3000 → canSeat passes) but the ledger only has 100,
+    // forcing a refusal when the buy-in actually runs at the hand boundary.
+    room.addSpectator({ discordUserId: 'c', displayName: 'C', avatarUrl: '', socketId: 'sc', bankroll: 3000 });
+    chips.seed('c', 100);
+
+    room.requestSeat('c');                 // canSeat passes on the stale 3000 bankroll → queued
+    room.handleAction('a', { type: 'fold' }); // ends the hand → applyPending seats c optimistically + fires the buy-in
+    await new Promise((resolve) => setTimeout(resolve, 0)); // let the fire-and-forget buy-in .then resolve
+
+    const member = (room as unknown as { members: Array<{ discordUserId: string; role: string; chipStack: number }> }).members
+      .find((m) => m.discordUserId === 'c')!;
+    expect(member.role).toBe('spectator'); // rolled back
+    expect(member.chipStack).toBe(0);      // no free chips
+    expect(io.records.some((r) => r.target === 'sc' && r.event === 'sit_in_rejected')).toBe(true);
+    room.stop();
+  });
 });

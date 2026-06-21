@@ -245,8 +245,16 @@ export class GameRoom {
             idempotencyKey: `${this.gameId}:buyin:${m.discordUserId}:${m.seatSession}`,
           })
           .then((r) => {
-            if (r.applied) m.bankroll = r.balance;
-            this.onChipBalanceChange?.(m.discordUserId, m.bankroll);
+            if (r.applied) {
+              m.bankroll = r.balance;
+              this.onChipBalanceChange?.(m.discordUserId, m.bankroll);
+            } else {
+              // Ledger refused (insufficient funds): undo the optimistic seat — never hand out free chips.
+              m.chipStack = 0;
+              m.role = 'spectator';
+              this.io.to(m.socketId).emit('sit_in_rejected', { reason: 'Not enough chips for the buy-in.' });
+              this.onMembershipChange?.();
+            }
           });
         membershipChanged = true;
       } else if (m.pending === 'spectate' && m.role === 'seated') {
