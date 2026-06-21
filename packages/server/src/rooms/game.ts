@@ -337,6 +337,14 @@ export class GameRoom {
       if (p) member.chipStack = p.chipStack;
     }
 
+    // Bust → spectate: a seated member with no chips stops being dealt in.
+    for (const m of this.members) {
+      if (m.role === 'seated' && !m.left && m.chipStack <= 0) {
+        m.role = 'spectator';
+        m.pending = null;
+      }
+    }
+
     this.handInProgress = false;
     this.broadcastState();
 

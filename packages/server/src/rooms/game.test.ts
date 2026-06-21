@@ -440,3 +440,23 @@ describe('GameRoom stats', () => {
     room.stop();
   });
 });
+
+describe('GameRoom bust handling', () => {
+  it('moves a busted player to spectate after the hand settles', async () => {
+    const io = makeFakeIo();
+    const chips = makeFakeChips();
+    const room = makeRoom(io, chips.service);
+    await room.start();
+    // Heads-up all-in; loser busts to 0.
+    const done = io.waitFor('hand_result');
+    room.handleAction('a', { type: 'all-in' });
+    room.handleAction('b', { type: 'all-in' });
+    await done;
+
+    const loser = room.state!.players.find((p) => p.chipStack === 0)!.discordUserId;
+    // After settle the busted player is now a spectator in everyone's view.
+    const someView = io.records.filter((r) => r.event === 'game_state_update').at(-1)!.args[0] as GameState;
+    expect(someView.spectators?.some((s) => s.discordUserId === loser)).toBe(true);
+    room.stop();
+  });
+});
