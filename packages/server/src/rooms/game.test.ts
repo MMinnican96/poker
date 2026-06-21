@@ -295,6 +295,34 @@ describe('GameRoom leave / sit-out / cancel-pending', () => {
     room.stop();
   });
 
+  it('moves a seated player to spectate at hand end, cashing out', async () => {
+    const io = makeFakeIo();
+    const chips = makeFakeChips();
+    const room = makeRoom(io, chips.service);
+    await room.start();
+
+    // Mark 'a' as pending spectate while a hand is in progress.
+    room.moveToSpectate('a');
+    // No cash-out yet — the transition is deferred to hand end.
+    expect(chips.calls.some((c) => c.playerId === 'a' && c.type === 'cash-out')).toBe(false);
+
+    // Conclude the hand and drive the pending resolver directly.
+    room.handleAction('a', { type: 'fold' });
+    (room as unknown as { applyPending(): void }).applyPending();
+
+    // 'a' must now be cashed out.
+    expect(chips.calls.some((c) => c.playerId === 'a' && c.type === 'cash-out')).toBe(true);
+
+    // Trigger a broadcast so we can inspect the post-resolution view.
+    (room as unknown as { broadcastState(): void }).broadcastState();
+    const view = io.records
+      .filter((r) => r.target === 'sb' && r.event === 'game_state_update')
+      .at(-1)!.args[0] as GameState;
+    expect(view.spectators?.some((s) => s.discordUserId === 'a')).toBe(true);
+
+    room.stop();
+  });
+
   it('removes a spectator immediately on leave', async () => {
     const io = makeFakeIo();
     const chips = makeFakeChips();
@@ -305,6 +333,7 @@ describe('GameRoom leave / sit-out / cancel-pending', () => {
     expect(io.records.some((r) => r.target === 'sc' && r.event === 'left_table')).toBe(true);
     const view = io.records.filter((r) => r.target === 'sa' && r.event === 'game_state_update').at(-1)!.args[0] as GameState;
     expect(view.spectators).toEqual([]);
+    expect(chips.calls.some((c) => c.playerId === 'c')).toBe(false);
     room.stop();
   });
 });
