@@ -12,14 +12,17 @@ const base: LobbyPlayer = {
 };
 
 describe('playerStatus', () => {
-  it('maps not-ready to In Lobby', () => {
-    expect(playerStatus(base, 'waiting')).toBe('In Lobby');
+  it('maps no table role + not ready to In Lobby', () => {
+    expect(playerStatus(base, null)).toBe('In Lobby');
   });
-  it('maps ready to Ready', () => {
-    expect(playerStatus({ ...base, isReady: true }, 'waiting')).toBe('Ready');
+  it('maps no table role + ready to Ready', () => {
+    expect(playerStatus({ ...base, isReady: true }, null)).toBe('Ready');
   });
-  it('maps in-game lobby status to In-Game regardless of ready', () => {
-    expect(playerStatus(base, 'in-game')).toBe('In-Game');
+  it('maps a seated table member to In-Game · At Table', () => {
+    expect(playerStatus(base, 'seated')).toBe('In-Game · At Table');
+  });
+  it('maps a spectator table member to In-Game · Spectating', () => {
+    expect(playerStatus(base, 'spectator')).toBe('In-Game · Spectating');
   });
 });
 

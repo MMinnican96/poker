@@ -20,6 +20,7 @@ export interface TableSettingsProps {
   config: TableConfig;
   canEditConfig: boolean;
   isHost: boolean;
+  hostExists: boolean;
   status: LobbyStatus;
   readyCount: number;
   playerCount: number;
@@ -28,6 +29,8 @@ export interface TableSettingsProps {
   canStart: boolean;
   insufficientChips: boolean;
   onUpdateConfig: (patch: Partial<TableConfig>) => void;
+  onCreateGame: () => void;
+  onCancelGame: () => void;
   onReadyToggle: () => void;
   onStartCountdown: () => void;
   onCancelCountdown: () => void;
@@ -91,6 +94,7 @@ export function TableSettings(props: TableSettingsProps) {
     config,
     canEditConfig,
     isHost,
+    hostExists,
     status,
     readyCount,
     playerCount,
@@ -99,6 +103,8 @@ export function TableSettings(props: TableSettingsProps) {
     canStart,
     insufficientChips,
     onUpdateConfig,
+    onCreateGame,
+    onCancelGame,
     onReadyToggle,
     onStartCountdown,
     onCancelCountdown,
@@ -155,9 +161,11 @@ export function TableSettings(props: TableSettingsProps) {
         </div>
 
         <p className="mb-[22px] mt-1 text-sm font-bold text-sage-muted">
-          {isHost
-            ? "You're the host — tweak the table, then deal everyone in."
-            : 'Only the host can change these. Sit tight!'}
+          {!hostExists
+            ? 'Set up the table, then create a game for everyone to join.'
+            : isHost
+              ? "You're the host — tweak the table, then deal everyone in."
+              : 'Only the host can change these. Sit tight!'}
         </p>
 
         <div className="flex flex-col gap-3">
@@ -224,14 +232,30 @@ export function TableSettings(props: TableSettingsProps) {
               </button>
             )}
           </div>
-        ) : isHost ? (
+        ) : !hostExists ? (
           <button
-            onClick={onStartCountdown}
-            disabled={!canStart}
+            onClick={onCreateGame}
+            disabled={insufficientChips}
             className="flex w-full items-center justify-center gap-3 rounded-2xl border-[3px] border-gold-border bg-gold p-[18px] font-display text-[21px] font-semibold text-[#2a1c00] shadow-hard-gold-lg transition-transform hover:-translate-y-px active:translate-y-1 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            ♠ START GAME
+            ♠ CREATE A GAME
           </button>
+        ) : isHost ? (
+          <div className="flex items-center gap-3.5">
+            <button
+              onClick={onStartCountdown}
+              disabled={!canStart}
+              className="flex flex-1 items-center justify-center gap-3 rounded-2xl border-[3px] border-gold-border bg-gold p-[18px] font-display text-[21px] font-semibold text-[#2a1c00] shadow-hard-gold-lg transition-transform hover:-translate-y-px active:translate-y-1 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              ♠ START GAME
+            </button>
+            <button
+              onClick={onCancelGame}
+              className="rounded-2xl border-[2.5px] border-red-border bg-red px-6 py-[18px] font-display text-base font-semibold text-white shadow-hard-red active:translate-y-[3px]"
+            >
+              Cancel Game
+            </button>
+          </div>
         ) : (
           <div className="flex items-center justify-between gap-3.5">
             <button

@@ -49,6 +49,8 @@ export interface LobbyState {
   status: LobbyStatus;
   countdownEndsAt: number | null;
   config: TableConfig;
+  /** The player who created/hosts the pending game; null when no game is hosted. */
+  hostId: string | null;
   /** Present when a game is running on this instance; null/absent otherwise. */
   activeGame?: ActiveGameSummary | null;
 }

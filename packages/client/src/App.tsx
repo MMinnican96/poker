@@ -36,7 +36,10 @@ export function App() {
   useEffect(() => {
     if (status.phase !== 'ready') return;
     const socket = socketRef.current!;
-    const onJoined = () => setAtTable(true);
+    const onJoined = () => {
+      setAtTable(true);
+      socket.emit('request_game_state');
+    };
     const onLeft = () => setAtTable(false);
     socket.on('joined_table', onJoined);
     socket.on('left_table', onLeft);

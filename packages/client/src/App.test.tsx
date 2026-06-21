@@ -1,4 +1,4 @@
-import { render, screen, act } from '@testing-library/react';
+import { render, screen, act, cleanup, waitFor } from '@testing-library/react';
 import { vi } from 'vitest';
 
 const handlers: Record<string, (arg?: unknown) => void> = {};
@@ -18,11 +18,31 @@ vi.mock('./lobby/LobbyScreen', () => ({ LobbyScreen: () => <div>LOBBY VIEW</div>
 
 import { App } from './App';
 
-it('switches to the table on joined_table and back on left_table', async () => {
+afterEach(() => {
+  cleanup();
+  for (const k of Object.keys(handlers)) delete handlers[k];
+  fakeSocket.emit.mockClear();
+  fakeSocket.off.mockClear();
+  fakeSocket.disconnect.mockClear();
+});
+
+/** Render App and wait until its membership effect has registered socket handlers. */
+async function renderAppReady() {
   render(<App />);
   await screen.findByText('LOBBY VIEW');
-  act(() => handlers['joined_table']?.({ gameId: 'G', role: 'seated' }));
+  await waitFor(() => expect(handlers['joined_table']).toBeTypeOf('function'));
+}
+
+it('switches to the table on joined_table and back on left_table', async () => {
+  await renderAppReady();
+  act(() => handlers['joined_table']!({ gameId: 'G', role: 'seated' }));
   expect(screen.getByText('TABLE VIEW')).toBeInTheDocument();
-  act(() => handlers['left_table']?.());
+  act(() => handlers['left_table']!());
   expect(screen.getByText('LOBBY VIEW')).toBeInTheDocument();
+});
+
+it('requests the current game state when joining the table', async () => {
+  await renderAppReady();
+  act(() => handlers['joined_table']!({ gameId: 'G', role: 'seated' }));
+  expect(fakeSocket.emit).toHaveBeenCalledWith('request_game_state');
 });

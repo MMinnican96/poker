@@ -41,7 +41,7 @@ export class LobbyRoom {
   private config: TableConfig = { ...DEFAULT_TABLE_CONFIG };
   private countdownEndsAt: number | null = null;
   private countdownTimer: ReturnType<typeof setTimeout> | null = null;
-  /** First player to join is the host (may edit config before anyone readies). */
+  /** Set when a player creates the (single) game; cleared on cancel/reset/host-leave. */
   private hostId: string | null = null;
   private activeGameProvider: (() => { summary: ActiveGameSummary; memberIds: string[] } | null) | null = null;
 
@@ -65,11 +65,12 @@ export class LobbyRoom {
       discordUserId: identity.discordUserId,
       displayName: identity.displayName,
       avatarUrl: identity.avatarUrl,
-      chipBalance: identity.chipBalance,
+      // Preserve the lobby's live-tracked balance across a rejoin (e.g. table→lobby
+      // re-emit of join_lobby) so a stale identity value can't clobber it.
+      chipBalance: existing?.chipBalance ?? identity.chipBalance,
       isReady: existing?.isReady ?? false,
       socketId,
     });
-    if (!this.hostId) this.hostId = identity.discordUserId;
     this.broadcast();
   }
 
@@ -104,20 +105,36 @@ export class LobbyRoom {
   updateConfig(socketId: string, patch: Partial<TableConfig>): void {
     const player = this.bySocket(socketId);
     if (!player) return;
-    // Host only, while waiting, before anyone has readied up.
-    if (
-      player.discordUserId !== this.hostId ||
-      this.status !== 'waiting' ||
-      this.readyPlayers().length > 0
-    ) {
-      return;
-    }
+    // Host only, while forming (status waiting with a host set).
+    if (player.discordUserId !== this.hostId || this.status !== 'waiting') return;
     this.config = { ...this.config, ...sanitizeConfig(patch) };
     this.broadcast();
   }
 
+  /** A lobby player creates the (single) game with their chosen settings → becomes host. */
+  createGame(socketId: string, config: TableConfig): void {
+    const player = this.bySocket(socketId);
+    if (!player || this.hostId !== null || this.status !== 'waiting') return;
+    if (this.activeGameProvider?.()) return; // a game is already running
+    const next = { ...DEFAULT_TABLE_CONFIG, ...sanitizeConfig(config) };
+    if (player.chipBalance < next.buyIn) return; // host must afford the buy-in
+    this.config = next;
+    this.hostId = player.discordUserId;
+    this.broadcast();
+  }
+
+  /** Host disbands the not-yet-started game, returning the lobby to the open state. */
+  cancelGame(socketId: string): void {
+    const player = this.bySocket(socketId);
+    if (!player || player.discordUserId !== this.hostId || this.status !== 'waiting') return;
+    this.hostId = null;
+    for (const p of this.players.values()) p.isReady = false;
+    this.broadcast();
+  }
+
   startCountdown(socketId: string): void {
-    if (!this.bySocket(socketId)) return;
+    const player = this.bySocket(socketId);
+    if (!player || player.discordUserId !== this.hostId) return;
     if (this.status !== 'waiting') return;
     if (this.readyPlayers().length < 2) return;
 
@@ -166,6 +183,24 @@ export class LobbyRoom {
     this.activeGameProvider = fn;
   }
 
+  /** Called when the active game ends: clear host + ready flags, reopen the lobby. */
+  resetAfterGame(): void {
+    this.clearTimer();
+    this.hostId = null;
+    this.status = 'waiting';
+    this.countdownEndsAt = null;
+    for (const p of this.players.values()) p.isReady = false;
+    this.broadcast();
+  }
+
+  /** Update a player's displayed bankroll (driven by GameRoom chip movements). */
+  updateChipBalance(playerId: string, balance: number): void {
+    const p = this.players.get(playerId);
+    if (!p) return;
+    p.chipBalance = balance;
+    this.broadcast();
+  }
+
   /** Public re-broadcast hook (used when game membership changes). */
   broadcastState(): void {
     this.broadcast();
@@ -173,13 +208,13 @@ export class LobbyRoom {
 
   toState(): LobbyState {
     const active = this.activeGameProvider?.() ?? null;
-    const tableIds = new Set(active?.memberIds ?? []);
     return {
       instanceId: this.instanceId,
-      players: [...this.players.values()].filter((p) => !tableIds.has(p.discordUserId)),
+      players: [...this.players.values()],
       status: this.status,
       countdownEndsAt: this.countdownEndsAt,
       config: this.config,
+      hostId: this.hostId,
       activeGame: active?.summary ?? null,
     };
   }

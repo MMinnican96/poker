@@ -64,13 +64,14 @@ export function registerSocketHandlers(io: LobbyIo, options: SocketHandlerOption
           if (games.get(room.instanceId)?.gameId === id) games.delete(room.instanceId);
           const lr = lobbies.get(room.instanceId);
           lr?.setActiveGameProvider(null);
-          lr?.broadcastState();
+          lr?.resetAfterGame();
         },
       });
       games.set(room.instanceId, game);
       const lobbyRoom = lobbies.get(room.instanceId);
       lobbyRoom?.setActiveGameProvider(() => ({ summary: game.summary(), memberIds: game.memberIds() }));
       game.onMembershipChange = () => lobbyRoom?.broadcastState();
+      game.onChipBalanceChange = (id, bal) => lobbies.get(room.instanceId)?.updateChipBalance(id, bal);
       void game.start();
       options.onGameStart?.(room, players, gameId);
     },
@@ -101,10 +102,18 @@ export function registerSocketHandlers(io: LobbyIo, options: SocketHandlerOption
     socket.on('update_config', (patch) =>
       withLobby(socket, (room) => room.updateConfig(socket.id, patch)),
     );
+    socket.on('create_game', (config) =>
+      withLobby(socket, (room) => room.createGame(socket.id, config)),
+    );
+    socket.on('cancel_game', () => withLobby(socket, (room) => room.cancelGame(socket.id)));
 
     socket.on('player_action', (action) => {
       const game = gameFor(socket);
       if (game && socket.data.discordUserId) game.handleAction(socket.data.discordUserId, action);
+    });
+    socket.on('request_game_state', () => {
+      const game = gameFor(socket);
+      if (game && socket.data.discordUserId) game.sendStateTo(socket.data.discordUserId);
     });
     socket.on('leave_table', () => {
       const game = gameFor(socket);

@@ -565,16 +565,84 @@ describe('GameRoom bust handling', () => {
     const chips = makeFakeChips();
     const room = makeRoom(io, chips.service);
     await room.start();
-    // Heads-up all-in; loser busts to 0.
+    // Heads-up all-in; the loser busts to 0 (a split-pot tie leaves both seated).
     const done = io.waitFor('hand_result');
     room.handleAction('a', { type: 'all-in' });
     room.handleAction('b', { type: 'all-in' });
     await done;
 
-    const loser = room.state!.players.find((p) => p.chipStack === 0)!.discordUserId;
-    // After settle the busted player is now a spectator in everyone's view.
-    const someView = io.records.filter((r) => r.event === 'game_state_update').at(-1)!.args[0] as GameState;
-    expect(someView.spectators?.some((s) => s.discordUserId === loser)).toBe(true);
+    const busted = room.state!.players.find((p) => p.chipStack === 0);
+    const someView = io.records
+      .filter((r) => r.event === 'game_state_update')
+      .at(-1)!.args[0] as GameState;
+    if (busted) {
+      // After settle the busted player is a spectator in everyone's view.
+      expect(someView.spectators?.some((s) => s.discordUserId === busted.discordUserId)).toBe(true);
+    } else {
+      // Split pot: both retain chips, stay seated, nobody is moved to spectate.
+      expect(someView.spectators ?? []).toEqual([]);
+    }
+    room.stop();
+  });
+});
+
+describe('GameRoom waiting view', () => {
+  it('does not render a player who left as seated, and lists them as a spectator', async () => {
+    const io = makeFakeIo();
+    const chips = makeFakeChips();
+    const room = makeRoom(io, chips.service);
+    await room.start();
+
+    // 'a' moves to spectate; finish the hand and resolve → 1 seated, table idles.
+    room.moveToSpectate('a');
+    room.handleAction('a', { type: 'fold' });
+    (room as unknown as { scheduleNextHand(): void }).scheduleNextHand();
+
+    const view = io.records
+      .filter((r) => r.target === 'sb' && r.event === 'game_state_update')
+      .at(-1)!.args[0] as GameState;
+    expect(view.players.some((p) => p.discordUserId === 'a')).toBe(false);
+    expect(view.players.map((p) => p.discordUserId)).toEqual(['b']);
+    expect(view.spectators?.some((s) => s.discordUserId === 'a')).toBe(true);
+    expect(view.waitingForPlayers).toBe(true);
+    room.stop();
+  });
+
+  it('sends the current view to a player who requests it', async () => {
+    const io = makeFakeIo();
+    const room = makeRoom(io, makeFakeChips().service);
+    await room.start();
+
+    const before = io.records.filter((r) => r.target === 'sa' && r.event === 'game_state_update').length;
+    room.sendStateTo('a');
+    const after = io.records.filter((r) => r.target === 'sa' && r.event === 'game_state_update').length;
+    expect(after).toBe(before + 1);
+    room.stop();
+  });
+});
+
+describe('GameRoom chip-balance reporting', () => {
+  it('reports the updated bankroll on buy-in and cash-out', async () => {
+    const io = makeFakeIo();
+    const chips = makeFakeChips();
+    const room = makeRoom(io, chips.service);
+    const updates: { id: string; bal: number }[] = [];
+    room.onChipBalanceChange = (id, bal) => updates.push({ id, bal });
+    await room.start();
+
+    // Buy-in deducts the 3000 stake from each 3000 bankroll → 0.
+    expect(updates).toContainEqual({ id: 'a', bal: 0 });
+    expect(updates).toContainEqual({ id: 'b', bal: 0 });
+
+    // Conclude a hand, then both leave → cash-outs credit their stacks back.
+    const concluded = io.waitFor('hand_result');
+    room.handleAction('a', { type: 'fold' });
+    await concluded;
+    room.leave('a');
+    room.leave('b');
+
+    expect(updates.some((u) => u.id === 'a' && u.bal > 0)).toBe(true);
+    expect(updates.some((u) => u.id === 'b' && u.bal > 0)).toBe(true);
     room.stop();
   });
 });

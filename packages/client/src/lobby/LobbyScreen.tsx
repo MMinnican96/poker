@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { DiscordIdentity, LobbyState, TableConfig } from '@poker/shared';
+import { DEFAULT_TABLE_CONFIG } from '@poker/shared';
 import type { ClientSocket } from '../socket';
 import { Header, type LobbyTab } from './Header';
 import { PlayersPanel } from './PlayersPanel';
@@ -23,6 +24,7 @@ export function LobbyScreen({ socket, identity, instanceId }: LobbyScreenProps) 
   const [tab, setTab] = useState<LobbyTab>('home');
   const [userOpen, setUserOpen] = useState(false);
   const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
+  const [draftConfig, setDraftConfig] = useState<TableConfig>(DEFAULT_TABLE_CONFIG);
 
   const { stats: myStats } = useStats(userOpen ? identity.discordUserId : null);
 
@@ -53,15 +55,16 @@ export function LobbyScreen({ socket, identity, instanceId }: LobbyScreenProps) 
     );
   }
 
-  const isHost = lobby.players[0]?.discordUserId === identity.discordUserId;
+  const hostExists = lobby.hostId !== null;
+  const isHost = lobby.hostId === identity.discordUserId;
   const readyCount = lobby.players.filter((p) => p.isReady).length;
   const otherReadyCount = lobby.players.filter(
     (p) => p.isReady && p.discordUserId !== identity.discordUserId,
   ).length;
-  const canEditConfig = isHost && lobby.status === 'waiting' && readyCount === 0;
-  const insufficientChips = identity.chipBalance < lobby.config.buyIn;
-  // Host has no Ready control; they ready implicitly on START. START is enabled
-  // once at least one OTHER player is ready (host + that player = the 2-ready min).
+  // No host yet → everyone may edit their own local draft. Host set → host edits live.
+  const canEditConfig = hostExists ? isHost && lobby.status === 'waiting' : true;
+  const activeConfig = hostExists ? lobby.config : draftConfig;
+  const insufficientChips = identity.chipBalance < activeConfig.buyIn;
   const canStart = lobby.status === 'waiting' && !insufficientChips && otherReadyCount >= 1;
 
   // Ready the host implicitly, then start the countdown.
@@ -76,7 +79,13 @@ export function LobbyScreen({ socket, identity, instanceId }: LobbyScreenProps) 
     ? lobby.players.find((p) => p.discordUserId === selectedPlayerId) ?? null
     : null;
 
-  const updateConfig = (patch: Partial<TableConfig>) => socket.emit('update_config', patch);
+  const roleOf = (playerId: string) =>
+    lobby.activeGame?.members.find((m) => m.discordUserId === playerId)?.role ?? null;
+
+  const updateConfig = (patch: Partial<TableConfig>) => {
+    if (hostExists) socket.emit('update_config', patch);
+    else setDraftConfig((c) => ({ ...c, ...patch }));
+  };
 
   return (
     <div className="felt-bg flex h-screen w-full flex-col overflow-hidden font-body text-cream">
@@ -90,7 +99,7 @@ export function LobbyScreen({ socket, identity, instanceId }: LobbyScreenProps) 
       <main className="flex min-h-0 flex-1 gap-3.5 px-[18px] pb-[22px] pt-1.5">
         <PlayersPanel
           players={lobby.players}
-          lobbyStatus={lobby.status}
+          activeGame={lobby.activeGame ?? null}
           maxPlayers={lobby.config.maxPlayers}
           onSelectPlayer={setSelectedPlayerId}
         />
@@ -100,9 +109,10 @@ export function LobbyScreen({ socket, identity, instanceId }: LobbyScreenProps) 
             ? <ActiveGameCard activeGame={lobby.activeGame} onJoinTable={() => socket.emit('join_table')} />
             : (
               <TableSettings
-                config={lobby.config}
+                config={activeConfig}
                 canEditConfig={canEditConfig}
                 isHost={isHost}
+                hostExists={hostExists}
                 status={lobby.status}
                 readyCount={readyCount}
                 playerCount={lobby.players.length}
@@ -111,6 +121,8 @@ export function LobbyScreen({ socket, identity, instanceId }: LobbyScreenProps) 
                 canStart={canStart}
                 insufficientChips={insufficientChips}
                 onUpdateConfig={updateConfig}
+                onCreateGame={() => socket.emit('create_game', draftConfig)}
+                onCancelGame={() => socket.emit('cancel_game')}
                 onReadyToggle={() => socket.emit(me?.isReady ? 'player_unready' : 'player_ready')}
                 onStartCountdown={startCountdown}
                 onCancelCountdown={() => socket.emit('cancel_countdown')}
@@ -132,7 +144,7 @@ export function LobbyScreen({ socket, identity, instanceId }: LobbyScreenProps) 
       {selectedPlayer && (
         <PlayerProfileModal
           player={selectedPlayer}
-          lobbyStatus={lobby.status}
+          tableRole={roleOf(selectedPlayer.discordUserId)}
           onClose={() => setSelectedPlayerId(null)}
         />
       )}

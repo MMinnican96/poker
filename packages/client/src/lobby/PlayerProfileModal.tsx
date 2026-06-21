@@ -1,11 +1,11 @@
-import type { LobbyPlayer, LobbyStatus } from '@poker/shared';
+import type { LobbyPlayer, TableRole } from '@poker/shared';
 import { StatTile } from './StatTile';
 import { useStats } from './useStats';
 import { playerStatus, STATUS_STYLE } from './PlayerRow';
 
 export interface PlayerProfileModalProps {
   player: LobbyPlayer;
-  lobbyStatus: LobbyStatus;
+  tableRole: TableRole | null;
   onClose: () => void;
 }
 
@@ -16,9 +16,9 @@ function num(n: number | undefined): string | null {
   return n == null ? null : n.toLocaleString();
 }
 
-export function PlayerProfileModal({ player, lobbyStatus, onClose }: PlayerProfileModalProps) {
+export function PlayerProfileModal({ player, tableRole, onClose }: PlayerProfileModalProps) {
   const { stats } = useStats(player.discordUserId);
-  const status = playerStatus(player, lobbyStatus);
+  const status = playerStatus(player, tableRole);
   const s = STATUS_STYLE[status];
 
   return (
