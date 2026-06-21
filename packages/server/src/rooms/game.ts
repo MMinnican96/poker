@@ -1,5 +1,6 @@
 import type { Server } from 'socket.io';
 import type {
+  ActiveGameSummary,
   ClientToServerEvents,
   InterServerEvents,
   PlayerAction,
@@ -7,6 +8,7 @@ import type {
   ServerToClientEvents,
   SocketData,
   TableConfig,
+  TableMember,
 } from '@poker/shared';
 import {
   startHand,
@@ -609,6 +611,34 @@ export class GameRoom {
   }
   contenderCount(): number {
     return this.ctx ? contenders(this.ctx.state).length : 0;
+  }
+
+  summary(): ActiveGameSummary {
+    const seated = this.seated();
+    const members: TableMember[] = [
+      ...seated.map((m, i) => ({
+        discordUserId: m.discordUserId, displayName: m.displayName, avatarUrl: m.avatarUrl,
+        role: 'seated' as const, chipStack: m.chipStack, seatIndex: i,
+      })),
+      ...this.spectatorMembers().map((m) => ({
+        discordUserId: m.discordUserId, displayName: m.displayName, avatarUrl: m.avatarUrl,
+        role: 'spectator' as const, chipStack: 0, seatIndex: null,
+      })),
+    ];
+    return {
+      gameId: this.gameId,
+      handNumber: this.handNumber,
+      buyIn: this.config.buyIn,
+      maxPlayers: this.config.maxPlayers,
+      playingCount: seated.length,
+      spectatingCount: this.spectatorMembers().length,
+      members,
+      waitingForPlayers: seated.length < 2,
+    };
+  }
+
+  memberIds(): string[] {
+    return this.members.filter((m) => !m.left).map((m) => m.discordUserId);
   }
 
   private seated(): Member[] {

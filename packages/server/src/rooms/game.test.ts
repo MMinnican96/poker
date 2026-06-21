@@ -490,6 +490,23 @@ describe('GameRoom teardown thresholds', () => {
   });
 });
 
+describe('GameRoom summary', () => {
+  it('summarizes the table: playing/watching counts and members', async () => {
+    const io = makeFakeIo();
+    const chips = makeFakeChips();
+    const room = makeRoom(io, chips.service);
+    await room.start();
+    room.addSpectator({ discordUserId: 'c', displayName: 'C', avatarUrl: '', socketId: 'sc', bankroll: 3000 });
+
+    const s = room.summary();
+    expect(s.playingCount).toBe(2);
+    expect(s.spectatingCount).toBe(1);
+    expect(s.buyIn).toBe(3000);
+    expect(s.members.find((m) => m.discordUserId === 'c')).toMatchObject({ role: 'spectator', chipStack: 0, seatIndex: null });
+    room.stop();
+  });
+});
+
 describe('GameRoom bust handling', () => {
   it('moves a busted player to spectate after the hand settles', async () => {
     const io = makeFakeIo();
