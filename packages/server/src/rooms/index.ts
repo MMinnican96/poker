@@ -64,7 +64,7 @@ export function registerSocketHandlers(io: LobbyIo, options: SocketHandlerOption
           if (games.get(room.instanceId)?.gameId === id) games.delete(room.instanceId);
           const lr = lobbies.get(room.instanceId);
           lr?.setActiveGameProvider(null);
-          lr?.broadcastState();
+          lr?.resetAfterGame();
         },
       });
       games.set(room.instanceId, game);
@@ -101,6 +101,10 @@ export function registerSocketHandlers(io: LobbyIo, options: SocketHandlerOption
     socket.on('update_config', (patch) =>
       withLobby(socket, (room) => room.updateConfig(socket.id, patch)),
     );
+    socket.on('create_game', (config) =>
+      withLobby(socket, (room) => room.createGame(socket.id, config)),
+    );
+    socket.on('cancel_game', () => withLobby(socket, (room) => room.cancelGame(socket.id)));
 
     socket.on('player_action', (action) => {
       const game = gameFor(socket);

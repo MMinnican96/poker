@@ -70,21 +70,29 @@ function identity(id: string, chips: number): DiscordIdentity {
   return { discordUserId: id, displayName: id, avatarUrl: '', chipBalance: chips };
 }
 
+function fullConfig(buyIn = 3000) {
+  return { buyIn, smallBlind: 25, bigBlind: 50, maxPlayers: 9, turnSeconds: 30 };
+}
+
 describe('lobby flow', () => {
-  it('starts a game when two funded players ready up and the countdown expires', async () => {
+  it('starts a game after a host creates it and a second player readies up', async () => {
     const instanceId = 'flow-start';
     const a = await connect();
     const b = await connect();
     a.emit('join_lobby', { instanceId, identity: identity('alice', 5000) });
     b.emit('join_lobby', { instanceId, identity: identity('bob', 5000) });
+    await waitForState(a, (s) => s.players.length === 2);
 
-    const bothReady = waitForState(a, allReady(2));
-    a.emit('player_ready');
+    a.emit('create_game', fullConfig());
+    await waitForState(a, (s) => s.hostId === 'alice');
+
+    const bobReady = waitForState(a, (s) => s.players.find((p) => p.discordUserId === 'bob')?.isReady === true);
     b.emit('player_ready');
-    await bothReady;
+    await bobReady;
 
     const countdown = once(a, 'countdown_start');
     const gameStart = once(a, 'game_start');
+    a.emit('player_ready'); // host readies implicitly (mirrors the client)
     a.emit('start_countdown');
 
     expect((await countdown).endsAt).toBeGreaterThan(Date.now());
@@ -97,18 +105,22 @@ describe('lobby flow', () => {
     const b = await connect();
     a.emit('join_lobby', { instanceId, identity: identity('rich', 5000) });
     b.emit('join_lobby', { instanceId, identity: identity('broke', 100) }); // < 3000 buy-in
+    await waitForState(a, (s) => s.players.length === 2);
 
-    const bothReady = waitForState(a, allReady(2));
-    a.emit('player_ready');
+    a.emit('create_game', fullConfig());
+    await waitForState(a, (s) => s.hostId === 'rich');
+
+    const brokeReady = waitForState(a, (s) => s.players.find((p) => p.discordUserId === 'broke')?.isReady === true);
     b.emit('player_ready');
-    await bothReady;
+    await brokeReady;
 
     const cancelled = once(a, 'countdown_cancel');
+    a.emit('player_ready');
     a.emit('start_countdown');
     await cancelled; // resolves => game did not start
   });
 
-  it('only lets the host edit the table config', async () => {
+  it('only lets the host edit the table config after creating the game', async () => {
     const instanceId = 'flow-config';
     const host = await connect();
     const guest = await connect();
@@ -116,13 +128,14 @@ describe('lobby flow', () => {
     guest.emit('join_lobby', { instanceId, identity: identity('guest', 5000) });
     await waitForState(host, (s) => s.players.length === 2);
 
-    // Host change applies.
+    host.emit('create_game', fullConfig());
+    await waitForState(host, (s) => s.hostId === 'host');
+
     const applied = waitForState(host, (s) => s.config.buyIn === 1000);
     host.emit('update_config', { buyIn: 1000 });
     expect((await applied).config.buyIn).toBe(1000);
 
-    // Guest change is ignored: a following host change still shows the host value.
-    guest.emit('update_config', { buyIn: 99 });
+    guest.emit('update_config', { buyIn: 99 }); // ignored: not the host
     const next = waitForState(host, (s) => s.config.smallBlind === 10);
     host.emit('update_config', { smallBlind: 10 });
     expect((await next).config.buyIn).toBe(1000);
@@ -133,27 +146,33 @@ describe('lobby flow', () => {
     const host = await connect();
     host.emit('join_lobby', { instanceId, identity: identity('host-ts', 5000) });
     await waitForState(host, (s) => s.players.length === 1);
+    host.emit('create_game', fullConfig());
+    await waitForState(host, (s) => s.hostId === 'host-ts');
 
     const applied = waitForState(host, (s) => s.config.turnSeconds === 45);
     host.emit('update_config', { turnSeconds: 45 });
     expect((await applied).config.turnSeconds).toBe(45);
   });
 
-  // un-skipped in Task 9
-  it('moves a join_table spectator out of the player list and into activeGame', async () => {
+  it('keeps a join_table spectator in the player list and adds them to activeGame', async () => {
     const a = await connect(); const b = await connect(); const c = await connect();
     a.emit('join_lobby', { instanceId: 'spec', identity: identity('a', 5000) });
     b.emit('join_lobby', { instanceId: 'spec', identity: identity('b', 5000) });
     c.emit('join_lobby', { instanceId: 'spec', identity: identity('c', 5000) });
-    a.emit('player_ready'); b.emit('player_ready');
-    // Wait until a and b are ready (c stays unready, remains in lobby as watcher).
-    await waitForState(c, (s) => s.players.length === 3 && s.players.filter((p) => p.isReady).length === 2);
+    await waitForState(c, (s) => s.players.length === 3);
+
+    a.emit('create_game', fullConfig());
+    await waitForState(c, (s) => s.hostId === 'a');
+    b.emit('player_ready');
+    await waitForState(c, (s) => s.players.find((p) => p.discordUserId === 'b')?.isReady === true);
+    a.emit('player_ready');
     a.emit('start_countdown');
     await once(c, 'game_start');
-    // c is still in lobby; join the running game as a spectator.
+
     c.emit('join_table');
     const s = await waitForState(c, (st) => st.activeGame?.spectatingCount === 1);
-    expect(s.players.some((p) => p.discordUserId === 'c')).toBe(false);
+    // Table members are no longer filtered out of the lobby player list.
+    expect(s.players.some((p) => p.discordUserId === 'c')).toBe(true);
     expect(s.activeGame?.members.some((m) => m.discordUserId === 'c' && m.role === 'spectator')).toBe(true);
   });
 
@@ -162,14 +181,13 @@ describe('lobby flow', () => {
     const host = await connect();
     host.emit('join_lobby', { instanceId, identity: identity('host-ts2', 5000) });
     await waitForState(host, (s) => s.players.length === 1);
+    host.emit('create_game', fullConfig());
+    await waitForState(host, (s) => s.hostId === 'host-ts2');
 
-    // Send three invalid values; none should change the config.
     host.emit('update_config', { turnSeconds: 5 });   // below min
     host.emit('update_config', { turnSeconds: 200 }); // above max
     host.emit('update_config', { turnSeconds: 33 });  // not a multiple of 5
 
-    // Then send a valid buyIn change to confirm the server is still processing events
-    // and that turnSeconds stayed at the default.
     const settled = waitForState(host, (s) => s.config.buyIn === 999);
     host.emit('update_config', { buyIn: 999 });
     const state = await settled;
