@@ -4,6 +4,7 @@ import type { ClientSocket } from '../socket';
 import { TableHeader } from './TableHeader';
 import { CenterCluster } from './CenterCluster';
 import { Seat } from './Seat';
+import { HeroToken } from './HeroToken';
 import { HeroHud } from './HeroHud';
 import { TableActionBar } from './TableActionBar';
 import { arrangeSeats, seatPositions } from './SeatLayout';
@@ -132,6 +133,16 @@ export function TableScreen({ socket, identity }: Props) {
               onOpen={() => setSelectedId(p.discordUserId)}
             />
           ))}
+
+          {!view.waitingForPlayers && (
+            <HeroToken
+              player={isSpectating ? null : hero}
+              role={hero ? roleFor(hero.seatIndex) : null}
+              isActive={!!isMyTurn}
+              timerPct={isMyTurn ? timerPctFor(viewerId) : null}
+              isSpectating={isSpectating}
+            />
+          )}
         </div>
       </main>
 
