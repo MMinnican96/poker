@@ -1,16 +1,22 @@
-import type { LobbyPlayer, LobbyStatus } from '@poker/shared';
+import type { LobbyPlayer, TableRole } from '@poker/shared';
 
-export type PlayerStatusLabel = 'Ready' | 'In Lobby' | 'In-Game';
+export type PlayerStatusLabel =
+  | 'Ready'
+  | 'In Lobby'
+  | 'In-Game · At Table'
+  | 'In-Game · Spectating';
 
-export function playerStatus(player: LobbyPlayer, lobbyStatus: LobbyStatus): PlayerStatusLabel {
-  if (lobbyStatus === 'in-game') return 'In-Game';
+export function playerStatus(player: LobbyPlayer, tableRole: TableRole | null): PlayerStatusLabel {
+  if (tableRole === 'seated') return 'In-Game · At Table';
+  if (tableRole === 'spectator') return 'In-Game · Spectating';
   return player.isReady ? 'Ready' : 'In Lobby';
 }
 
 export const STATUS_STYLE: Record<PlayerStatusLabel, { dot: string; text: string; bg: string }> = {
   Ready: { dot: 'bg-mint', text: 'text-mint-bright', bg: 'bg-mint/15' },
   'In Lobby': { dot: 'bg-[#ffcb52]', text: 'text-gold-soft', bg: 'bg-gold/15' },
-  'In-Game': { dot: 'bg-blue', text: 'text-[#9ad4ff]', bg: 'bg-blue/15' },
+  'In-Game · At Table': { dot: 'bg-blue', text: 'text-[#9ad4ff]', bg: 'bg-blue/15' },
+  'In-Game · Spectating': { dot: 'bg-[#b9a3ff]', text: 'text-[#c9b8ff]', bg: 'bg-[#b9a3ff]/15' },
 };
 
 export interface PlayerRowProps {

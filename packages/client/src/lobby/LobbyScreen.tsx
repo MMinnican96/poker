@@ -79,6 +79,9 @@ export function LobbyScreen({ socket, identity, instanceId }: LobbyScreenProps) 
     ? lobby.players.find((p) => p.discordUserId === selectedPlayerId) ?? null
     : null;
 
+  const roleOf = (playerId: string) =>
+    lobby.activeGame?.members.find((m) => m.discordUserId === playerId)?.role ?? null;
+
   const updateConfig = (patch: Partial<TableConfig>) => {
     if (hostExists) socket.emit('update_config', patch);
     else setDraftConfig((c) => ({ ...c, ...patch }));
@@ -96,7 +99,7 @@ export function LobbyScreen({ socket, identity, instanceId }: LobbyScreenProps) 
       <main className="flex min-h-0 flex-1 gap-3.5 px-[18px] pb-[22px] pt-1.5">
         <PlayersPanel
           players={lobby.players}
-          lobbyStatus={lobby.status}
+          activeGame={lobby.activeGame ?? null}
           maxPlayers={lobby.config.maxPlayers}
           onSelectPlayer={setSelectedPlayerId}
         />
@@ -141,7 +144,7 @@ export function LobbyScreen({ socket, identity, instanceId }: LobbyScreenProps) 
       {selectedPlayer && (
         <PlayerProfileModal
           player={selectedPlayer}
-          lobbyStatus={lobby.status}
+          tableRole={roleOf(selectedPlayer.discordUserId)}
           onClose={() => setSelectedPlayerId(null)}
         />
       )}

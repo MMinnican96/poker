@@ -1,14 +1,18 @@
-import type { LobbyPlayer, LobbyStatus } from '@poker/shared';
+import type { ActiveGameSummary, LobbyPlayer, TableRole } from '@poker/shared';
 import { PlayerRow, playerStatus } from './PlayerRow';
 
 export interface PlayersPanelProps {
   players: LobbyPlayer[];
-  lobbyStatus: LobbyStatus;
+  activeGame: ActiveGameSummary | null;
   maxPlayers: number;
   onSelectPlayer: (id: string) => void;
 }
 
-export function PlayersPanel({ players, lobbyStatus, maxPlayers, onSelectPlayer }: PlayersPanelProps) {
+function roleOf(activeGame: ActiveGameSummary | null, playerId: string): TableRole | null {
+  return activeGame?.members.find((m) => m.discordUserId === playerId)?.role ?? null;
+}
+
+export function PlayersPanel({ players, activeGame, maxPlayers, onSelectPlayer }: PlayersPanelProps) {
   return (
     <aside className="flex min-w-[212px] flex-[0_1_270px] flex-col overflow-hidden rounded-3xl border-[2.5px] border-black/30 bg-felt-900/55 shadow-panel">
       <div className="flex items-center justify-between px-5 pb-3.5 pt-[18px]">
@@ -22,7 +26,7 @@ export function PlayersPanel({ players, lobbyStatus, maxPlayers, onSelectPlayer 
           <PlayerRow
             key={p.discordUserId}
             player={p}
-            status={playerStatus(p, lobbyStatus)}
+            status={playerStatus(p, roleOf(activeGame, p.discordUserId))}
             onSelect={() => onSelectPlayer(p.discordUserId)}
           />
         ))}
