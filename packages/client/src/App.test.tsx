@@ -26,3 +26,10 @@ it('switches to the table on joined_table and back on left_table', async () => {
   act(() => handlers['left_table']?.());
   expect(screen.getByText('LOBBY VIEW')).toBeInTheDocument();
 });
+
+it('requests the current game state when joining the table', async () => {
+  render(<App />);
+  await screen.findByText('LOBBY VIEW');
+  act(() => handlers['joined_table']?.({ gameId: 'G', role: 'seated' }));
+  expect(fakeSocket.emit).toHaveBeenCalledWith('request_game_state');
+});
