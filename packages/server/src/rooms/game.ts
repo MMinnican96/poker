@@ -377,7 +377,7 @@ export class GameRoom {
     member.disconnected = false;
     member.disconnectedAt = undefined;
     if (this.ctx) {
-      this.io.to(socketId).emit('game_state_update', viewFor(this.ctx.state, playerId));
+      this.io.to(socketId).emit('game_state_update', this.tableView(playerId));
     }
   }
 

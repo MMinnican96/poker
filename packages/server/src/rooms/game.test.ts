@@ -247,6 +247,8 @@ describe('GameRoom spectator', () => {
     expect(view.players).toHaveLength(2);
     expect(view.players.every((p) => p.holeCards === null)).toBe(true);
     expect(view.spectators).toEqual([{ discordUserId: 'c', displayName: 'C', avatarUrl: '' }]);
+    expect(view.waitingForPlayers).toBe(false); // 2 seated players
+    expect(view.viewerPending).toBeNull();
     room.stop();
   });
 });
