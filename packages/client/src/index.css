@@ -60,6 +60,8 @@
   /* Animations */
   --animate-pop: rpn-pop 0.18s cubic-bezier(0.2, 1.2, 0.4, 1);
   --animate-fade: rpn-fade 0.15s ease;
+  --animate-deal: rpn-deal 0.44s cubic-bezier(0.2, 1.05, 0.3, 1) both;
+  --animate-reveal: rpn-reveal 0.36s ease-out both;
 }
 
 @keyframes rpn-pop {
@@ -69,6 +71,14 @@
 @keyframes rpn-fade {
   0% { opacity: 0; }
   100% { opacity: 1; }
+}
+@keyframes rpn-deal {
+  0% { opacity: 0; transform: translateY(-56px) scale(0.84); }
+  100% { opacity: 1; transform: none; }
+}
+@keyframes rpn-reveal {
+  0% { transform: rotateY(82deg); opacity: 0.2; }
+  100% { transform: none; opacity: 1; }
 }
 
 @layer base {
@@ -87,5 +97,10 @@
 @layer components {
   .felt-bg {
     background: radial-gradient(120% 90% at 50% -10%, #1d6044 0%, #134632 42%, #0b2c1f 100%);
+  }
+  .animate-deal { animation: var(--animate-deal); }
+  .animate-reveal { animation: var(--animate-reveal); }
+  @media (prefers-reduced-motion: reduce) {
+    .animate-deal, .animate-reveal { animation: none; }
   }
 }
