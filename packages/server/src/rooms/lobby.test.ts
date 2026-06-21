@@ -127,4 +127,34 @@ describe('lobby flow', () => {
     host.emit('update_config', { smallBlind: 10 });
     expect((await next).config.buyIn).toBe(1000);
   });
+
+  it('accepts a valid turnSeconds from the host', async () => {
+    const instanceId = 'flow-turnseconds-valid';
+    const host = await connect();
+    host.emit('join_lobby', { instanceId, identity: identity('host-ts', 5000) });
+    await waitForState(host, (s) => s.players.length === 1);
+
+    const applied = waitForState(host, (s) => s.config.turnSeconds === 45);
+    host.emit('update_config', { turnSeconds: 45 });
+    expect((await applied).config.turnSeconds).toBe(45);
+  });
+
+  it('rejects out-of-range or non-step turnSeconds', async () => {
+    const instanceId = 'flow-turnseconds-invalid';
+    const host = await connect();
+    host.emit('join_lobby', { instanceId, identity: identity('host-ts2', 5000) });
+    await waitForState(host, (s) => s.players.length === 1);
+
+    // Send three invalid values; none should change the config.
+    host.emit('update_config', { turnSeconds: 5 });   // below min
+    host.emit('update_config', { turnSeconds: 200 }); // above max
+    host.emit('update_config', { turnSeconds: 33 });  // not a multiple of 5
+
+    // Then send a valid buyIn change to confirm the server is still processing events
+    // and that turnSeconds stayed at the default.
+    const settled = waitForState(host, (s) => s.config.buyIn === 999);
+    host.emit('update_config', { buyIn: 999 });
+    const state = await settled;
+    expect(state.config.turnSeconds).toBe(30); // unchanged default
+  });
 });

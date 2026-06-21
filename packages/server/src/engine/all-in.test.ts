@@ -4,7 +4,7 @@ import { createDeck } from './deck.js';
 import { startHand, act } from './game-state.js';
 import { settleHand } from './showdown.js';
 
-const CONFIG: TableConfig = { buyIn: 0, smallBlind: 25, bigBlind: 50, maxPlayers: 9 };
+const CONFIG: TableConfig = { buyIn: 0, smallBlind: 25, bigBlind: 50, maxPlayers: 9, turnSeconds: 30 };
 
 describe('multi-way all-in integrity', () => {
   it('builds correct side pots and conserves chips across three unequal stacks', () => {
