@@ -52,7 +52,7 @@ packages/
         ├── index.css          # Tailwind v4 @import + @theme design tokens + keyframes
         ├── discord.ts         # SDK handshake (+ dev mock)
         ├── socket.ts          # typed Socket.io client
-        ├── App.tsx, ActionBar.tsx
+        ├── App.tsx
         ├── lobby/             # Lobby screen components (see below)
         └── table/             # React/DOM table scene (see "Client table view")
 ```

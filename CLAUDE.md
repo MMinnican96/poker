@@ -27,7 +27,7 @@ packages/
 ├── server/   Node + Express + Socket.io + Drizzle/Postgres
 │   └── src/{index.ts, routes/{auth,stats}.ts, discord.ts, db/, engine/, rooms/}
 └── client/   React + Tailwind (the Activity iframe)
-    └── src/{discord.ts, socket.ts, App.tsx, ActionBar.tsx,
+    └── src/{discord.ts, socket.ts, App.tsx,
               lobby/{LobbyScreen, Header, PlayersPanel, PlayerRow, TableSettings,
                      ComingSoon, RecentActivity, UserPopout, PlayerProfileModal,
                      StatTile, useStats},
@@ -175,7 +175,7 @@ After any change, verify with `npm test` and `npm run build` before claiming don
   `<Lobby>` received.
 - **Table view** — the in-game table lives in `packages/client/src/table/` and is
   rendered as React/Tailwind DOM (no Phaser); seat geometry comes from
-  `table/SeatLayout.ts`; the hero hand name is named client-side via the shared
+  `table/SeatLayout.ts`; the hero hand name is computed client-side via the shared
   `describeBestHand`; `GamePlayer.lastAction` drives the per-seat action pill.
 - **`TableConfig.turnSeconds`** — a host-configurable turn timer (integer 10–120,
   multiple of 5, default 30). `sanitizeConfig` in `rooms/lobby.ts` validates it.
