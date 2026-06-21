@@ -2,6 +2,7 @@ import type { Server } from 'socket.io';
 import type {
   ActiveGameSummary,
   ClientToServerEvents,
+  GameState,
   InterServerEvents,
   PlayerAction,
   PlayerHandStat,
@@ -185,6 +186,9 @@ export class GameRoom {
       }),
     );
     if (this.stopped) return;
+    for (const m of this.seated()) {
+      this.io.to(m.socketId).emit('joined_table', { gameId: this.gameId, role: 'seated' });
+    }
     this.startHand();
   }
 

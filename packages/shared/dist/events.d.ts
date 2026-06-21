@@ -56,5 +56,6 @@ export interface SocketData {
     instanceId: string;
     displayName: string;
     avatarUrl: string;
+    chipBalance: number;
 }
 //# sourceMappingURL=events.d.ts.map

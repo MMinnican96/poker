@@ -50,4 +50,5 @@ export interface SocketData {
   instanceId: string;
   displayName: string;
   avatarUrl: string;
+  chipBalance: number;
 }
