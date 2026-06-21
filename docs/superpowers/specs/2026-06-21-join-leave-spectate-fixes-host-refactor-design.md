@@ -69,8 +69,8 @@ Server stays authoritative. Three coordinated changes:
 
 1. **Lobby host model** (`rooms/lobby.ts`): `hostId` becomes an explicit,
    transferable field surfaced in `LobbyState`. New `createGame` / `cancelGame`
-   operations; host-only `startCountdown`; reset on game end. The old
-   `update_config` flow is removed (config is fixed at creation).
+   operations; host-only `startCountdown`; reset on game end. The host can keep
+   editing the config after creation (`update_config`, host-only while forming).
 2. **Game view correctness** (`rooms/game.ts`): a single `currentView(viewerId)`
    that renders a synthetic **waiting** `GameState` from the real seated members
    when the table is idle (`<2` seated) or `ctx` is null, instead of the stale
@@ -88,7 +88,7 @@ no active game, hostId = null
   every lobby player: editable steppers (local draft) + "Create a Game"
         │  create_game(config)
         ▼
-hostId = creator, status 'waiting' (forming), config fixed
+hostId = creator, status 'waiting' (forming); host can still edit config
   host: START GAME (≥1 other ready) + Cancel Game
   others: Ready toggle
         │  cancel_game (host)        │ start_countdown (host, ≥2 ready)
@@ -113,8 +113,8 @@ hostId = creator, status 'waiting' (forming), config fixed
 
 **`events.ts`:**
 - `ClientToServerEvents`: **add** `create_game: (config: TableConfig) => void`,
-  `cancel_game: () => void`, `request_game_state: () => void`. **Remove**
-  `update_config`.
+  `cancel_game: () => void`, `request_game_state: () => void`. **Keep**
+  `update_config` (now host-only live editing while forming).
 - `ServerToClientEvents`: unchanged (`game_state_update` carries the requested
   view; `lobby_state_update` carries `hostId`).
 
@@ -133,7 +133,12 @@ hostId = creator, status 'waiting' (forming), config fixed
   none). Keep the existing "cancel countdown if <2 ready" behaviour.
 - `startCountdown(socketId)`: **enforce host-only** (in addition to the existing
   ≥2 ready / waiting checks).
-- `updateConfig`: **removed**.
+- `updateConfig(socketId, patch)`: **kept**, gating changed to **host-only while
+  forming** — allowed when `socketId` is the host and `status === 'waiting'` with
+  `hostId` set. The old `readyCount === 0` restriction is dropped so the host can
+  still tweak settings after players ready up (funding is re-checked at countdown
+  finish, as today). Pre-creation edits remain purely client-local (no
+  `update_config` until a game exists).
 - `resetAfterGame()`: new method — `hostId = null`, clear ready flags, status
   `'waiting'`, broadcast. Called from `rooms/index.ts` `onEnd`.
 - `updateChipBalance(playerId, balance)`: new method — update the stored
@@ -166,7 +171,7 @@ hostId = creator, status 'waiting' (forming), config fixed
 
 ### Server — wiring (`packages/server/src/rooms/index.ts`)
 
-- Register `create_game`, `cancel_game`, `request_game_state`; remove
+- Register `create_game`, `cancel_game`, `request_game_state`; keep
   `update_config`.
 - Set `game.onChipBalanceChange = (id, bal) => lobbyRoom?.updateChipBalance(id, bal)`.
 - In `onEnd`, call `lr.resetAfterGame()` (in addition to clearing the active-game
@@ -188,14 +193,19 @@ hostId = creator, status 'waiting' (forming), config fixed
     React state** (seeded from `DEFAULT_TABLE_CONFIG` / `lobby.config`), render the
     Create-a-Game variant of `TableSettings`, and on create emit
     `create_game(localConfig)`.
-  - When `hostId` set: render the forming UI (host → START + Cancel Game; others →
-    Ready), reading `lobby.config` read-only.
+  - When `hostId` set: render the forming UI. The host sees **editable** steppers
+    (each change emits `update_config`) plus START + Cancel Game; non-hosts see
+    `lobby.config` read-only plus the Ready toggle. `canEditConfig` becomes
+    `isHost && status === 'waiting'` (the old `readyCount === 0` clause is gone).
 - `TableSettings`:
-  - New "no host yet" mode: steppers always editable (local draft); primary button
-    is **"Create a Game"** (disabled if the creator can't afford the buy-in).
-  - Host (forming) mode: add a **"Cancel Game"** button alongside START.
-  - Remove the `onUpdateConfig`-to-server path; pre-create edits are local. (The
-    component receives `onCreateGame` / `onCancelGame` callbacks.)
+  - New "no host yet" mode: steppers editable as a local draft; primary button is
+    **"Create a Game"** (disabled if the creator can't afford the buy-in). Edits go
+    to a local `onUpdateConfig` (no server round-trip until create).
+  - Host (forming) mode: steppers stay editable and emit `update_config` to the
+    server; add a **"Cancel Game"** button alongside START.
+  - The component receives `onCreateGame` / `onCancelGame` callbacks in addition to
+    the existing `onUpdateConfig` (which the parent routes to either local draft
+    state or the `update_config` socket emit depending on whether a host exists).
 - `PlayerRow.playerStatus`: new labels —
   `'In Lobby' | 'Ready' | 'In-Game · At Table' | 'In-Game · Spectating'`. The
   in-game labels are derived from the player's role in `activeGame.members`
@@ -240,6 +250,8 @@ TDD throughout. Update and extend:
 - Host transfer on `removeBySocket` while forming and during countdown; `hostId`
   becomes null when the last player leaves.
 - `startCountdown` is host-only.
+- `updateConfig` is host-only while forming (applies for the host; ignored for a
+  non-host and when no host is set), including after a player has readied up.
 - `resetAfterGame` clears host/ready/status.
 - `updateChipBalance` updates and rebroadcasts; `addPlayer` preserves an existing
   `chipBalance`.
