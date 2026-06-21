@@ -100,6 +100,7 @@ export function applyActionToState(
 ): void {
   const player = state.players[state.currentPlayerIndex];
   player.hasActed = true;
+  player.lastAction = action.type;
 
   switch (action.type) {
     case 'fold':

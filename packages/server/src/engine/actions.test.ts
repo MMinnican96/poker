@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { GamePlayer, GameState } from '@poker/shared';
 import { DEFAULT_TABLE_CONFIG } from '@poker/shared';
 import { validateAction, applyActionToState } from './actions.js';
+import { startHand } from './game-state.js';
 
 function player(id: string, over: Partial<GamePlayer> = {}): GamePlayer {
   return {
@@ -99,5 +100,23 @@ describe('applyActionToState', () => {
     const s = state([p]);
     applyActionToState(s, 'a', { type: 'fold' });
     expect(p.status).toBe('folded');
+  });
+});
+
+function seed(id: string, seat: number) {
+  return { discordUserId: id, displayName: id, avatarUrl: '', seatIndex: seat, chipStack: 1000 };
+}
+
+describe('lastAction tracking', () => {
+  it('starts null and records the action type when a player acts', () => {
+    const { state } = startHand({
+      gameId: 'g', instanceId: 'i', handNumber: 1, dealerIndex: 0,
+      seeds: [seed('a', 0), seed('b', 1), seed('c', 2)],
+      config: DEFAULT_TABLE_CONFIG,
+    });
+    expect(state.players.every((p) => p.lastAction == null)).toBe(true);
+    const actorId = state.players[state.currentPlayerIndex].discordUserId;
+    applyActionToState(state, actorId, { type: 'fold' });
+    expect(state.players.find((p) => p.discordUserId === actorId)!.lastAction).toBe('fold');
   });
 });

@@ -67,6 +67,8 @@ export interface GamePlayer {
   status: PlayerStatus;
   /** Whether this player has acted since the last bet/raise on the current street. */
   hasActed: boolean;
+  /** Most recent action this street (display-only); null at hand start and each new street. */
+  lastAction?: ActionType | null;
 }
 
 export interface Pot {
