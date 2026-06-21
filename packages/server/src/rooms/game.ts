@@ -37,6 +37,8 @@ export interface ChipService {
     type: string;
     idempotencyKey: string;
   }): Promise<{ applied: boolean; balance: number }>;
+  /** Optional: seed a player's starting balance (in-memory ledgers only; the DB ledger ignores this). */
+  seed?(playerId: string, balance: number): void;
 }
 
 /** No-op ledger (used when a room is created without persistence, e.g. lobby-only tests). */
@@ -178,14 +180,20 @@ export class GameRoom {
     await Promise.all(
       this.seated().map(async (m) => {
         m.seatSession += 1;
-        await this.chips.adjust({
+        const r = await this.chips.adjust({
           playerId: m.discordUserId,
           amount: -this.config.buyIn,
           type: 'buy-in',
           idempotencyKey: `${this.gameId}:buyin:${m.discordUserId}:${m.seatSession}`,
         });
+        if (!r.applied) {
+          // Could not fund the buy-in — keep them off the table as a spectator.
+          m.role = 'spectator';
+          this.io.to(m.socketId).emit('sit_in_rejected', { reason: 'Not enough chips for the buy-in.' });
+          return;
+        }
         m.chipStack = this.config.buyIn;
-        m.bankroll -= this.config.buyIn;
+        m.bankroll = r.balance;
         this.onChipBalanceChange?.(m.discordUserId, m.bankroll);
       }),
     );
@@ -200,7 +208,13 @@ export class GameRoom {
   requestSeat(playerId: string): void {
     const m = this.members.find((x) => x.discordUserId === playerId && !x.left);
     if (!m || m.role === 'seated') return;
-    if (!this.canSeat(m)) return; // gated: full or underfunded
+    if (!this.canSeat(m)) {
+      const reason = this.seated().length >= this.config.maxPlayers
+        ? 'The table is full.'
+        : 'Not enough chips for the buy-in.';
+      this.io.to(m.socketId).emit('sit_in_rejected', { reason });
+      return;
+    }
     m.pending = 'seat';
     if (!this.handInProgress) this.resolveBetweenHands();
     else this.broadcastState();
@@ -221,16 +235,27 @@ export class GameRoom {
       }
       if (m.pending === 'seat' && m.role === 'spectator' && this.canSeat(m)) {
         m.seatSession += 1;
-        void this.chips.adjust({
-          playerId: m.discordUserId,
-          amount: -this.config.buyIn,
-          type: 'buy-in',
-          idempotencyKey: `${this.gameId}:buyin:${m.discordUserId}:${m.seatSession}`,
-        });
         m.chipStack = this.config.buyIn;
-        m.bankroll -= this.config.buyIn;
-        this.onChipBalanceChange?.(m.discordUserId, m.bankroll);
         m.role = 'seated';
+        void this.chips
+          .adjust({
+            playerId: m.discordUserId,
+            amount: -this.config.buyIn,
+            type: 'buy-in',
+            idempotencyKey: `${this.gameId}:buyin:${m.discordUserId}:${m.seatSession}`,
+          })
+          .then((r) => {
+            if (r.applied) {
+              m.bankroll = r.balance;
+              this.onChipBalanceChange?.(m.discordUserId, m.bankroll);
+            } else {
+              // Ledger refused (insufficient funds): undo the optimistic seat — never hand out free chips.
+              m.chipStack = 0;
+              m.role = 'spectator';
+              this.io.to(m.socketId).emit('sit_in_rejected', { reason: 'Not enough chips for the buy-in.' });
+              this.onMembershipChange?.();
+            }
+          });
         membershipChanged = true;
       } else if (m.pending === 'spectate' && m.role === 'seated') {
         void this.cashOut(m);
@@ -537,14 +562,14 @@ export class GameRoom {
     if (m.chipStack <= 0) return;
     const amount = m.chipStack;
     m.chipStack = 0;
-    m.bankroll += amount;
-    this.onChipBalanceChange?.(m.discordUserId, m.bankroll);
-    await this.chips.adjust({
+    const r = await this.chips.adjust({
       playerId: m.discordUserId,
       amount,
       type: 'cash-out',
       idempotencyKey: `${this.gameId}:cashout:${m.discordUserId}:${m.seatSession}`,
     });
+    m.bankroll = r.balance;
+    this.onChipBalanceChange?.(m.discordUserId, m.bankroll);
   }
 
   /** A lobby player chose to watch. Immediate; emits joined_table + state. */
@@ -588,6 +613,7 @@ export class GameRoom {
         })),
         waitingForPlayers: false,
         viewerPending: me?.pending ?? null,
+        viewerBankroll: me?.bankroll,
       };
     }
     return this.waitingView(viewerId);
@@ -630,6 +656,7 @@ export class GameRoom {
       })),
       waitingForPlayers: seated.length < 2,
       viewerPending: me?.pending ?? null,
+      viewerBankroll: me?.bankroll,
     };
   }
 

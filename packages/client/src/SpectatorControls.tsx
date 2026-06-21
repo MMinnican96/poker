@@ -15,7 +15,8 @@ export function SpectatorControls({ state, myId, bankroll, onSitIn, onSitOut, on
   const spectators = state.spectators ?? [];
   const pending = state.viewerPending ?? null;
   const seatFull = state.players.length >= state.config.maxPlayers;
-  const underfunded = bankroll < state.config.buyIn;
+  const liveBankroll = state.viewerBankroll ?? bankroll;
+  const underfunded = liveBankroll < state.config.buyIn;
   const canSit = !seatFull && !underfunded;
   const sitReason = seatFull ? 'Table is full' : underfunded ? 'Not enough chips for the buy-in' : '';
 

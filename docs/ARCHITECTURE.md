@@ -234,7 +234,23 @@ double-credited.
 This is chip-conserving and far less error-prone than per-hand DB writes; the
 integrity tests assert the ledger nets to zero. The `ChipService` interface is
 injected, so the server uses the real DB-backed ledger when `DATABASE_URL` is set
-and an in-memory no-op otherwise (dev/mock mode).
+and an authoritative in-memory ledger (`InMemoryChipService`) otherwise (dev/mock
+mode).
+
+### Chip balance authority
+
+The chip ledger is the single source of truth for every player's balance.
+`adjustChips` (DB) and `InMemoryChipService` (mock mode) share the `overdraws`
+rule (`db/chip-rules.ts`) so a deduction can never drive a balance below zero —
+an overdraw returns `{ applied: false }` and changes nothing. `GameRoom` gates
+every buy-in (start, sit-in) on that `applied` result: a refused buy-in keeps the
+player a spectator and sends `sit_in_rejected`. Each member's `bankroll` is set
+from the ledger's returned `balance` (never a stale delta), pushed to the lobby
+(`updateChipBalance`) and to the player's own client as `GameState.viewerBankroll`,
+so chip displays and the "Join Next Hand" affordability gate are live without an
+activity reload. Mock mode (`InMemoryChipService`) is seeded from each player's
+identity balance on `join_lobby`; spectators (re)joining a table are gated against
+the lobby's live balance (`LobbyRoom.getChipBalance`), not a stale identity value.
 
 ## Database schema
 

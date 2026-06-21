@@ -10,7 +10,8 @@ import type {
   SocketData,
 } from '@poker/shared';
 import { authRouter } from './routes/auth.js';
-import { registerSocketHandlers, noopChipService, noopStatsService, type ChipService, type StatsService } from './rooms/index.js';
+import { registerSocketHandlers, noopStatsService, type ChipService, type StatsService } from './rooms/index.js';
+import { InMemoryChipService } from './rooms/in-memory-chips.js';
 import { adjustChips } from './db/index.js';
 import { dbStatsService, dbStatsRepository, noopStatsRepository } from './db/stats.js';
 import { createStatsRouter } from './routes/stats.js';
@@ -55,10 +56,11 @@ export const io = new Server<
   },
 });
 
-// With a database configured, chips + stats persist; without one the server runs
-// in dev/mock mode using in-memory no-ops so it can boot without Postgres.
+// With a database configured, chips + stats persist; without one (dev/mock mode)
+// chips use an authoritative in-memory ledger and stats are a no-op, so the
+// server can boot without Postgres.
 const hasDb = !!process.env.DATABASE_URL;
-const chips: ChipService = hasDb ? { adjust: adjustChips } : noopChipService;
+const chips: ChipService = hasDb ? { adjust: adjustChips } : new InMemoryChipService();
 const stats: StatsService = hasDb ? dbStatsService : noopStatsService;
 if (!hasDb) {
   console.warn('[server] DATABASE_URL not set — running without persistence (dev/mock mode).');

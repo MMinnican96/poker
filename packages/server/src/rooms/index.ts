@@ -88,6 +88,7 @@ export function registerSocketHandlers(io: LobbyIo, options: SocketHandlerOption
 
       void socket.join(instanceId);
       lobbies.getOrCreate(instanceId).addPlayer(identity, socket.id);
+      options.chips?.seed?.(identity.discordUserId, identity.chipBalance);
 
       // If a game is already running, treat this as a reconnect to that seat.
       games.get(instanceId)?.reconnect(identity.discordUserId, socket.id);
@@ -123,12 +124,13 @@ export function registerSocketHandlers(io: LobbyIo, options: SocketHandlerOption
     socket.on('join_table', () => {
       const game = gameFor(socket);
       if (!game || !socket.data.discordUserId) return;
+      const live = lobbies.get(socket.data.instanceId!)?.getChipBalance(socket.data.discordUserId);
       game.addSpectator({
         discordUserId: socket.data.discordUserId,
         displayName: socket.data.displayName,
         avatarUrl: socket.data.avatarUrl,
         socketId: socket.id,
-        bankroll: socket.data.chipBalance ?? 0,
+        bankroll: live ?? socket.data.chipBalance ?? 0,
       });
     });
     socket.on('sit_in', () => routeMember(socket, (g, id) => g.requestSeat(id)));
