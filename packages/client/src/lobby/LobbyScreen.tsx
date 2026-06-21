@@ -27,12 +27,13 @@ export function LobbyScreen({ socket, identity, instanceId, onGameStart }: Lobby
   const { stats: myStats } = useStats(userOpen ? identity.discordUserId : null);
 
   useEffect(() => {
+    const handleGameStart = ({ gameId }: { gameId: string }) => onGameStart(gameId);
     socket.emit('join_lobby', { instanceId, identity });
     socket.on('lobby_state_update', setLobby);
-    socket.on('game_start', ({ gameId }) => onGameStart(gameId));
+    socket.on('game_start', handleGameStart);
     return () => {
       socket.off('lobby_state_update', setLobby);
-      socket.off('game_start');
+      socket.off('game_start', handleGameStart);
     };
   }, [socket, instanceId, identity, onGameStart]);
 
