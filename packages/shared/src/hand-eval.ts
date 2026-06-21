@@ -110,9 +110,36 @@ export function compareHands(a: Card[], b: Card[]): number {
   return sa === sb ? 0 : sa > sb ? 1 : -1;
 }
 
-/** Name the best hand from 2–7 cards; null when there are fewer than 5. Display-only. */
+/**
+ * Classify fewer than 5 cards by rank multiplicity alone. Straights and flushes
+ * are impossible with <5 cards, so this only ever yields four/three-of-a-kind,
+ * two-pair, pair or high-card — enough to give the hero's hand a value pre-flop.
+ */
+function describeShort(cards: Card[]): { name: string; category: HandCategory } {
+  const counts = new Map<number, number>();
+  for (const card of cards) {
+    const v = rankValue(card.rank);
+    counts.set(v, (counts.get(v) ?? 0) + 1);
+  }
+  const shape = [...counts.values()].sort((a, b) => b - a);
+  const pairs = shape.filter((n) => n === 2).length;
+  let category: HandCategory;
+  if (shape[0] === 4) category = 'four-of-a-kind';
+  else if (shape[0] === 3) category = 'three-of-a-kind';
+  else if (pairs >= 2) category = 'two-pair';
+  else if (shape[0] === 2) category = 'pair';
+  else category = 'high-card';
+  return { name: CATEGORY_NAME[category], category };
+}
+
+/**
+ * Name the best hand from the given cards; null when there are fewer than 2.
+ * With 5+ cards the full evaluator runs; with 2–4 it classifies by rank
+ * multiplicity (see `describeShort`). Display-only.
+ */
 export function describeBestHand(cards: Card[]): { name: string; category: HandCategory } | null {
-  if (cards.length < 5) return null;
+  if (cards.length < 2) return null;
+  if (cards.length < 5) return describeShort(cards);
   const r = evaluateBest(cards);
   return { name: r.name, category: r.category };
 }

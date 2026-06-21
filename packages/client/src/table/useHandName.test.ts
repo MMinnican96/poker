@@ -13,8 +13,18 @@ describe('useHandName', () => {
     expect(result.current?.title).toBe('Two Pair');
   });
 
-  it('returns null before there are five cards', () => {
+  it('names a pocket pair pre-flop (two hole cards, no board)', () => {
+    const { result } = renderHook(() => useHandName([c('8', 'hearts'), c('8', 'diamonds')], []));
+    expect(result.current?.title).toBe('Pair');
+  });
+
+  it('names high card pre-flop for unpaired hole cards', () => {
     const { result } = renderHook(() => useHandName([c('A', 'spades'), c('10', 'spades')], []));
+    expect(result.current?.title).toBe('High Card');
+  });
+
+  it('returns null when there are no hole cards', () => {
+    const { result } = renderHook(() => useHandName(null, []));
     expect(result.current).toBeNull();
   });
 });
