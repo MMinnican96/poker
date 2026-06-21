@@ -982,6 +982,7 @@ git commit -m "feat(client): add PlayersPanel and PlayerRow with status mapping"
       playerCount: number;
       secondsLeft: number;
       meIsReady: boolean;
+      canStart: boolean;
       insufficientChips: boolean;
       onUpdateConfig: (patch: Partial<TableConfig>) => void;
       onReadyToggle: () => void;
@@ -990,6 +991,12 @@ git commit -m "feat(client): add PlayersPanel and PlayerRow with status mapping"
       onLeave: () => void;
     }
     ```
+
+  **Host-ready resolution (decided with the human):** the host has no Ready
+  control. START GAME is enabled via the `canStart` prop (computed by the parent as
+  "at least one *other* player is ready"); the parent's `onStartCountdown` readies
+  the host implicitly before starting. `TableSettings` therefore must NOT derive the
+  START disabled state from `readyCount` — it uses `disabled={!canStart}`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1017,6 +1024,7 @@ function props(overrides: Partial<React.ComponentProps<typeof TableSettings>> = 
     playerCount: 3,
     secondsLeft: 0,
     meIsReady: false,
+    canStart: true,
     insufficientChips: false,
     onUpdateConfig: vi.fn(),
     onReadyToggle: vi.fn(),
@@ -1191,6 +1199,7 @@ export function TableSettings(props: TableSettingsProps) {
     playerCount,
     secondsLeft,
     meIsReady,
+    canStart,
     insufficientChips,
     onUpdateConfig,
     onReadyToggle,
@@ -1321,7 +1330,7 @@ export function TableSettings(props: TableSettingsProps) {
         ) : isHost ? (
           <button
             onClick={onStartCountdown}
-            disabled={readyCount < 2 || status !== 'waiting'}
+            disabled={!canStart}
             className="flex w-full items-center justify-center gap-3 rounded-2xl border-[3px] border-gold-border bg-gold p-[18px] font-display text-[21px] font-semibold text-[#2a1c00] shadow-hard-gold-lg transition-transform hover:-translate-y-px active:translate-y-1 disabled:cursor-not-allowed disabled:opacity-50"
           >
             ♠ START GAME
@@ -1883,8 +1892,20 @@ export function LobbyScreen({ socket, identity, instanceId, onGameStart }: Lobby
 
   const isHost = lobby.players[0]?.discordUserId === identity.discordUserId;
   const readyCount = lobby.players.filter((p) => p.isReady).length;
+  const otherReadyCount = lobby.players.filter(
+    (p) => p.isReady && p.discordUserId !== identity.discordUserId,
+  ).length;
   const canEditConfig = isHost && lobby.status === 'waiting' && readyCount === 0;
   const insufficientChips = identity.chipBalance < lobby.config.buyIn;
+  // Host has no Ready control; they ready implicitly on START. START is enabled
+  // once at least one OTHER player is ready (host + that player = the 2-ready min).
+  const canStart = lobby.status === 'waiting' && !insufficientChips && otherReadyCount >= 1;
+
+  // Ready the host implicitly, then start the countdown.
+  const startCountdown = () => {
+    if (!me?.isReady) socket.emit('player_ready');
+    socket.emit('start_countdown');
+  };
   const secondsLeft =
     lobby.countdownEndsAt != null ? Math.max(0, Math.ceil((lobby.countdownEndsAt - now) / 1000)) : 0;
 
@@ -1922,10 +1943,11 @@ export function LobbyScreen({ socket, identity, instanceId, onGameStart }: Lobby
               playerCount={lobby.players.length}
               secondsLeft={secondsLeft}
               meIsReady={me?.isReady ?? false}
+              canStart={canStart}
               insufficientChips={insufficientChips}
               onUpdateConfig={updateConfig}
               onReadyToggle={() => socket.emit(me?.isReady ? 'player_unready' : 'player_ready')}
-              onStartCountdown={() => socket.emit('start_countdown')}
+              onStartCountdown={startCountdown}
               onCancelCountdown={() => socket.emit('cancel_countdown')}
               onLeave={() => socket.emit('leave_table')}
             />
