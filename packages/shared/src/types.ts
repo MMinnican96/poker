@@ -95,6 +95,8 @@ export interface GameState {
   waitingForPlayers?: boolean;
   /** This viewer's queued hand-boundary transition, stamped per recipient. */
   viewerPending?: 'leave' | 'spectate' | 'seat' | null;
+  /** This viewer's authoritative bankroll (off-table chips), pushed live by the server. */
+  viewerBankroll?: number;
 }
 
 export type ActionType = 'fold' | 'check' | 'call' | 'raise' | 'all-in';

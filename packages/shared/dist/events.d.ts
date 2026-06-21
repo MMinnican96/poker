@@ -30,6 +30,9 @@ export interface ServerToClientEvents {
         role: TableRole;
     }) => void;
     left_table: () => void;
+    sit_in_rejected: (data: {
+        reason: string;
+    }) => void;
 }
 export interface ClientToServerEvents {
     join_lobby: (data: {
