@@ -228,6 +228,29 @@ describe('GameRoom', () => {
   });
 });
 
+describe('GameRoom spectator', () => {
+  it('adds a spectator who sees no opponent hole cards and is not dealt in', async () => {
+    const io = makeFakeIo();
+    const chips = makeFakeChips();
+    const room = makeRoom(io, chips.service);
+    await room.start();
+
+    room.addSpectator({ discordUserId: 'c', displayName: 'C', avatarUrl: '', socketId: 'sc', bankroll: 3000 });
+
+    // The spectator is told to switch to the table.
+    const joined = io.records.find((r) => r.target === 'sc' && r.event === 'joined_table');
+    expect(joined?.args[0]).toEqual({ gameId: 'G', role: 'spectator' });
+
+    // The spectator's view: 2 seated players, all hole cards hidden, listed as a spectator.
+    const toSpectator = io.records.filter((r) => r.target === 'sc' && r.event === 'game_state_update');
+    const view = toSpectator.at(-1)!.args[0] as GameState;
+    expect(view.players).toHaveLength(2);
+    expect(view.players.every((p) => p.holeCards === null)).toBe(true);
+    expect(view.spectators).toEqual([{ discordUserId: 'c', displayName: 'C', avatarUrl: '' }]);
+    room.stop();
+  });
+});
+
 describe('GameRoom stats', () => {
   it('records one fact per player on a fold-out', async () => {
     const io = makeFakeIo();

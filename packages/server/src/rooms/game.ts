@@ -124,6 +124,8 @@ export class GameRoom {
   private readonly tickMs: number;
   private readonly handDelayMs: number;
   private readonly onEnd?: (gameId: string) => void;
+  /** Set by rooms/index.ts to notify the lobby when the membership roster changes. */
+  onMembershipChange?: () => void;
 
   private members: Member[] = [];
   private dealerIndex = 0;
@@ -430,11 +432,59 @@ export class GameRoom {
     });
   }
 
+  /** A lobby player chose to watch. Immediate; emits joined_table + state. */
+  addSpectator(p: GameRoomPlayer): void {
+    if (this.stopped) return;
+    const existing = this.members.find((m) => m.discordUserId === p.discordUserId);
+    if (existing && !existing.left) {
+      existing.socketId = p.socketId; // reconnect/rebind
+    } else {
+      this.members.push({
+        ...p,
+        role: 'spectator',
+        chipStack: 0,
+        seatSession: existing?.seatSession ?? 0,
+        pending: null,
+        left: false,
+        disconnected: false,
+        joinedAt: Date.now(),
+      });
+    }
+    this.io.to(p.socketId).emit('joined_table', { gameId: this.gameId, role: 'spectator' });
+    this.broadcastState();
+    this.onMembershipChange?.();
+  }
+
+  private spectatorMembers(): Member[] {
+    return this.members.filter((m) => m.role === 'spectator' && !m.left);
+  }
+
+  /** The viewer's per-recipient view: sanitized cards + table-population fields. */
+  private tableView(viewerId: string): GameState {
+    const base = this.ctx ? viewFor(this.ctx.state, viewerId) : this.idleState();
+    const me = this.members.find((m) => m.discordUserId === viewerId);
+    return {
+      ...base,
+      spectators: this.spectatorMembers().map((m) => ({
+        discordUserId: m.discordUserId,
+        displayName: m.displayName,
+        avatarUrl: m.avatarUrl,
+      })),
+      waitingForPlayers: this.seated().length < 2,
+      viewerPending: me?.pending ?? null,
+    };
+  }
+
+  private idleState(): GameState {
+    // ctx is set after the first hand; before that there is nothing to show.
+    return this.ctx!.state;
+  }
+
   private broadcastState(): void {
     if (!this.ctx) return;
-    for (const member of this.members) {
-      if (member.left) continue;
-      this.io.to(member.socketId).emit('game_state_update', viewFor(this.ctx.state, member.discordUserId));
+    for (const m of this.members) {
+      if (m.left) continue;
+      this.io.to(m.socketId).emit('game_state_update', this.tableView(m.discordUserId));
     }
   }
 
