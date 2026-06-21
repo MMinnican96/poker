@@ -33,7 +33,7 @@ export function SpectatorControls({ state, myId, bankroll, onSitIn, onSitOut, on
           {pending === 'seat' ? (
             <button style={S.btn} onClick={onCancelPending}>Cancel — joining next hand</button>
           ) : (
-            <button style={canSit ? S.btn : S.btnDisabled} disabled={!canSit} title={sitReason} onClick={onSitIn}>
+            <button style={canSit ? S.btn : S.btnDisabled} disabled={!canSit} {...(!canSit && { title: sitReason })} onClick={onSitIn}>
               Join Next Hand
             </button>
           )}

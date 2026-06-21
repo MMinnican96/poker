@@ -38,3 +38,42 @@ it('seated player with a pending leave shows a Cancel control', () => {
   screen.getByRole('button', { name: /Cancel/i }).click();
   expect(onCancel).toHaveBeenCalled();
 });
+
+it('spectator with a pending seat shows a Cancel — joining next hand control', () => {
+  const onCancel = vi.fn();
+  render(
+    <SpectatorControls
+      state={baseState({ viewerPending: 'seat' })}
+      myId="c"
+      bankroll={3000}
+      onSitIn={vi.fn()}
+      onSitOut={vi.fn()}
+      onLeave={vi.fn()}
+      onCancelPending={onCancel}
+    />,
+  );
+  // Join Next Hand should NOT be shown while a seat is pending.
+  expect(screen.queryByRole('button', { name: /Join Next Hand/i })).toBeNull();
+  screen.getByRole('button', { name: /Cancel/i }).click();
+  expect(onCancel).toHaveBeenCalled();
+});
+
+it('seated player with no pending shows Move to Spectate and Leave Table', () => {
+  const onSitOut = vi.fn();
+  const onLeave = vi.fn();
+  render(
+    <SpectatorControls
+      state={baseState({ viewerPending: null })}
+      myId="a"
+      bankroll={0}
+      onSitIn={vi.fn()}
+      onSitOut={onSitOut}
+      onLeave={onLeave}
+      onCancelPending={vi.fn()}
+    />,
+  );
+  screen.getByRole('button', { name: /Move to Spectate/i }).click();
+  expect(onSitOut).toHaveBeenCalled();
+  screen.getByRole('button', { name: /Leave Table/i }).click();
+  expect(onLeave).toHaveBeenCalled();
+});
