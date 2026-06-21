@@ -49,6 +49,8 @@ export interface LobbyState {
   status: LobbyStatus;
   countdownEndsAt: number | null;
   config: TableConfig;
+  /** Present when a game is running on this instance; null/absent otherwise. */
+  activeGame?: ActiveGameSummary | null;
 }
 
 export interface GamePlayer {
@@ -85,6 +87,12 @@ export interface GameState {
   minRaise: number;
   handNumber: number;
   config: TableConfig;
+  /** People watching (no cards, not dealt). GameRoom-populated, not the engine. */
+  spectators?: { discordUserId: string; displayName: string; avatarUrl: string }[];
+  /** True when the table idles with <2 seated players (no hand dealt). */
+  waitingForPlayers?: boolean;
+  /** This viewer's queued hand-boundary transition, stamped per recipient. */
+  viewerPending?: 'leave' | 'spectate' | 'seat' | null;
 }
 
 export type ActionType = 'fold' | 'check' | 'call' | 'raise' | 'all-in';
@@ -194,4 +202,28 @@ export interface PlayerStatsSummary {
   pfr: number;
   aggressionFactor: number;
   showdownWinRate: number;
+}
+
+export type TableRole = 'seated' | 'spectator';
+
+/** A person at the table — cards-free, safe to show anyone (incl. lobby). */
+export interface TableMember {
+  discordUserId: string;
+  displayName: string;
+  avatarUrl: string;
+  role: TableRole;
+  chipStack: number;        // 0 for spectators
+  seatIndex: number | null; // engine seat order when seated, null when watching
+}
+
+/** Read-only snapshot of the active game, folded into LobbyState for lobby players. */
+export interface ActiveGameSummary {
+  gameId: string;
+  handNumber: number;
+  buyIn: number;
+  maxPlayers: number;
+  playingCount: number;
+  spectatingCount: number;
+  members: TableMember[];
+  waitingForPlayers: boolean;
 }
