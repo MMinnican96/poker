@@ -5,6 +5,7 @@ import type { ClientSocket } from './socket';
 import { GameBridge } from './game/bridge';
 import { createGame } from './game/createGame';
 import { ActionBar } from './ActionBar';
+import { SpectatorControls } from './SpectatorControls';
 
 interface GameCanvasProps {
   socket: ClientSocket;
@@ -85,6 +86,18 @@ export function GameCanvas({ socket, identity }: GameCanvasProps) {
       )}
 
       {view && <ActionBar state={view} myId={identity.discordUserId} onAction={act} />}
+
+      {view && (
+        <SpectatorControls
+          state={view}
+          myId={identity.discordUserId}
+          bankroll={identity.chipBalance}
+          onSitIn={() => socket.emit('sit_in')}
+          onSitOut={() => socket.emit('sit_out')}
+          onLeave={() => socket.emit('leave_table')}
+          onCancelPending={() => socket.emit('cancel_pending')}
+        />
+      )}
     </div>
   );
 }
