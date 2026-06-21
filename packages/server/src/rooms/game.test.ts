@@ -264,6 +264,51 @@ describe('GameRoom sit-in', () => {
   });
 });
 
+describe('GameRoom leave / sit-out / cancel-pending', () => {
+  it('defers a seated leave to hand end, cashes out, and emits left_table', async () => {
+    const io = makeFakeIo();
+    const chips = makeFakeChips();
+    const room = makeRoom(io, chips.service);
+    await room.start();
+
+    room.leave('a'); // mid-hand → queued, still seated
+    expect(room.state!.players.some((p) => p.discordUserId === 'a')).toBe(true);
+    expect(chips.calls.some((c) => c.playerId === 'a' && c.type === 'cash-out')).toBe(false);
+
+    room.handleAction('a', { type: 'fold' });
+    // Drive resolution directly:
+    (room as unknown as { applyPending(): void }).applyPending();
+    expect(chips.calls.some((c) => c.playerId === 'a' && c.type === 'cash-out')).toBe(true);
+    expect(io.records.some((r) => r.target === 'sa' && r.event === 'left_table')).toBe(true);
+    room.stop();
+  });
+
+  it('cancels a pending leave so the player stays seated with chips intact', async () => {
+    const io = makeFakeIo();
+    const chips = makeFakeChips();
+    const room = makeRoom(io, chips.service);
+    await room.start();
+    room.leave('a');
+    room.cancelPending('a');
+    (room as unknown as { applyPending(): void }).applyPending();
+    expect(chips.calls.some((c) => c.playerId === 'a' && c.type === 'cash-out')).toBe(false);
+    room.stop();
+  });
+
+  it('removes a spectator immediately on leave', async () => {
+    const io = makeFakeIo();
+    const chips = makeFakeChips();
+    const room = makeRoom(io, chips.service);
+    await room.start();
+    room.addSpectator({ discordUserId: 'c', displayName: 'C', avatarUrl: '', socketId: 'sc', bankroll: 3000 });
+    room.leave('c');
+    expect(io.records.some((r) => r.target === 'sc' && r.event === 'left_table')).toBe(true);
+    const view = io.records.filter((r) => r.target === 'sa' && r.event === 'game_state_update').at(-1)!.args[0] as GameState;
+    expect(view.spectators).toEqual([]);
+    room.stop();
+  });
+});
+
 describe('GameRoom spectator', () => {
   it('adds a spectator who sees no opponent hole cards and is not dealt in', async () => {
     const io = makeFakeIo();

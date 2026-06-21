@@ -388,16 +388,40 @@ export class GameRoom {
     return this.dealerIndex;
   }
 
-  /** Leave the table — only allowed between hands. Cashes out remaining chips. */
+  /** Seated → cash out to lobby (deferred to hand end). Spectator → leave now. */
   leave(playerId: string): void {
-    if (this.handInProgress) return;
-    const member = this.members.find((m) => m.discordUserId === playerId);
-    if (!member || member.left) return;
-    void this.cashOut(member);
-    member.playMs = Date.now() - member.joinedAt;
-    member.left = true;
-    const live = this.members.filter((m) => !m.left && m.chipStack > 0);
-    if (live.length < 2) void this.endGame();
+    const m = this.members.find((x) => x.discordUserId === playerId && !x.left);
+    if (!m) return;
+    if (m.role === 'spectator') {
+      m.left = true;
+      this.io.to(m.socketId).emit('left_table');
+      this.broadcastState();
+      this.onMembershipChange?.();
+      return;
+    }
+    m.pending = 'leave';
+    if (!this.handInProgress) this.resolveBetweenHands();
+    else this.broadcastState();
+    this.onMembershipChange?.();
+  }
+
+  /** Seated → cash out but keep watching (deferred to hand end). */
+  moveToSpectate(playerId: string): void {
+    const m = this.members.find((x) => x.discordUserId === playerId && !x.left);
+    if (!m || m.role !== 'seated') return;
+    m.pending = 'spectate';
+    if (!this.handInProgress) this.resolveBetweenHands();
+    else this.broadcastState();
+    this.onMembershipChange?.();
+  }
+
+  /** Undo a queued transition before the hand boundary applies it. */
+  cancelPending(playerId: string): void {
+    const m = this.members.find((x) => x.discordUserId === playerId && !x.left);
+    if (!m || m.pending === null) return;
+    m.pending = null;
+    this.broadcastState();
+    this.onMembershipChange?.();
   }
 
   /** A socket dropped: mark the member disconnected and auto-fold if it's their turn. */
