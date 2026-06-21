@@ -8,6 +8,13 @@ Project guidance for Claude Code working in this repository.
 Activity** (an embedded iframe app launched from a Discord voice channel).
 Players play with persistent chip balances; the table is a 2D cartoon canvas.
 
+## How you should act
+
+- Always read documentation where required for implementing features which align with latest versions and best practices
+- Always write tests to validate implementations
+- Always update documentation and claude.md for up to date context
+- Always use Opus 4.8 for code implementations in sub agents
+
 ## Stack & layout
 
 npm-workspaces monorepo. The **server is the authoritative source of truth** for
@@ -19,7 +26,10 @@ packages/
 ├── server/   Node + Express + Socket.io + Drizzle/Postgres
 │   └── src/{index.ts, routes/{auth,stats}.ts, discord.ts, db/, engine/, rooms/}
 └── client/   React + Phaser 3 (the Activity iframe)
-    └── src/{discord.ts, socket.ts, Lobby.tsx, ActionBar.tsx, GameCanvas.tsx, game/}
+    └── src/{discord.ts, socket.ts, App.tsx, ActionBar.tsx, GameCanvas.tsx, game/,
+              lobby/{LobbyScreen, Header, PlayersPanel, PlayerRow, TableSettings,
+                     ComingSoon, RecentActivity, UserPopout, PlayerProfileModal,
+                     StatTile, useStats}}
 ```
 
 - **engine/** — pure poker rules (deck, hand-evaluator, pot, blinds, actions,
@@ -37,7 +47,9 @@ See `docs/ARCHITECTURE.md` for the full picture and `docs/SETUP.md` to run it.
 ## Status
 
 All 7 implementation batches are complete (scaffold → engine → lobby → game
-backend → Phaser UI → edge cases → docs). **82 tests pass**; all packages build.
+backend → Phaser UI → edge cases → docs), plus the Ratbag Poker Night lobby
+redesign (Tailwind v4 + component folder + host-configurable turn timer). Tests
+pass (server + client); all packages build.
 Current focus: **live setup** — wiring a real Discord application + local
 PostgreSQL so it can launch inside Discord (see `docs/SETUP.md`, path B).
 
@@ -50,7 +62,7 @@ APIs at `/api/stats`) is implemented; see
 | Command | What |
 |---|---|
 | `npm run dev` | Build `shared`, then run server (:3001) + client (:5173) in watch |
-| `npm test` | Vitest suite (engine + lobby + game backend) |
+| `npm test` | Vitest suite — server (engine + lobby + game backend) **and** client (RTL) |
 | `npm run build` | Type-check + build all three packages |
 | `npm run db:push` | Sync Drizzle schema to Postgres (uses the `pg` driver + `DATABASE_URL`) |
 | `npm run stats:recompute` | Rebuild `player_stats` aggregates from the `player_hand_stats` fact table |
@@ -110,12 +122,35 @@ After any change, verify with `npm test` and `npm run build` before claiming don
   `players` PK (`42P16: column … is in a primary key`). Avoid columns that are
   **both** PRIMARY KEY and FOREIGN KEY where possible — older drizzle-kit pushes
   also choke on them.
-- **Tests** live next to source as `*.test.ts` (excluded from the `tsc` build).
+- **Tailwind v4** — the client uses `@tailwindcss/vite` (CSS-first config). Design
+  tokens (colors, fonts, shadows, radii, breakpoints, animations) are declared in a
+  single `@theme` block in `packages/client/src/index.css`; see
+  `docs/DESIGN_STANDARDS.md` for the full token table and component patterns.
+  Never hardcode hex values in component files — always use a named token.
+- **Lobby components** — the lobby lives in `packages/client/src/lobby/`. `Lobby.tsx`
+  was replaced by `LobbyScreen` (top-level container that owns socket state) plus
+  focused child components (`Header`, `PlayersPanel`, `PlayerRow`, `TableSettings`,
+  `ComingSoon`, `RecentActivity`, `UserPopout`, `PlayerProfileModal`, `StatTile`,
+  `useStats`). `App.tsx` renders `<LobbyScreen>` with the same props the old
+  `<Lobby>` received.
+- **`TableConfig.turnSeconds`** — a host-configurable turn timer (integer 10–120,
+  multiple of 5, default 30). `sanitizeConfig` in `rooms/lobby.ts` validates it.
+  `rooms/index.ts` threads it into `GameRoom` timing at construction:
+  `turnMs: options.gameTiming?.turnMs ?? config.turnSeconds * 1000` (test injection
+  still works; production uses the host's configured value).
+- **Client tests** run under **Vitest + React Testing Library** (jsdom); the setup
+  file is `packages/client/src/test-setup.ts`. Test files live next to source as
+  `*.test.tsx` / `*.test.ts`. The root `npm test` command runs the server suite
+  **and** the client suite sequentially.
+- **Tests** live next to source as `*.test.ts`/`*.test.tsx` (excluded from the `tsc`
+  build in both the server and client tsconfigs).
 
 ## Deferred / not yet done
 
-- Live Discord OAuth + `db:push` against real Postgres + a 2-tab Discord session
-  (needs the user's credentials/infra — in progress).
 - Persisting hand history to the games/hands audit tables (separate from the
   player_hand_stats fact table, which IS written).
 - Production deploy (Railway + Vercel) — migration notes in `docs/ARCHITECTURE.md`.
+- Lobby UI deferred features (all marked Coming Soon / disabled in the current UI):
+  player titles and levels; Shop, Leaderboard, and Stats tab data; friends / Add
+  Friend; populated Recent Activity; user Settings toggles; full View Profile page;
+  Log Out.

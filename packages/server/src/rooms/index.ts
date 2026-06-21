@@ -44,11 +44,12 @@ export function registerSocketHandlers(io: LobbyIo, options: SocketHandlerOption
   const lobbies = new LobbyManager(io, {
     ...options,
     onGameStart: (room, players, gameId) => {
+      const config = room.toState().config;
       const game = new GameRoom({
         io,
         gameId,
         instanceId: room.instanceId,
-        config: room.toState().config,
+        config,
         players: players.map((p) => ({
           discordUserId: p.discordUserId,
           displayName: p.displayName,
@@ -57,7 +58,7 @@ export function registerSocketHandlers(io: LobbyIo, options: SocketHandlerOption
         })),
         chips: options.chips,
         stats: options.stats,
-        timing: options.gameTiming,
+        timing: { ...options.gameTiming, turnMs: options.gameTiming?.turnMs ?? config.turnSeconds * 1000 },
         onEnd: (id) => {
           if (games.get(room.instanceId)?.gameId === id) games.delete(room.instanceId);
         },

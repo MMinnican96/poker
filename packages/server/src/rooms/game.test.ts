@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { GameState, TableConfig, PlayerHandStat } from '@poker/shared';
 import { GameRoom, type ChipService, type GameRoomPlayer, type StatsService } from './game.js';
 
-const CONFIG: TableConfig = { buyIn: 3000, smallBlind: 25, bigBlind: 50, maxPlayers: 9 };
+const CONFIG: TableConfig = { buyIn: 3000, smallBlind: 25, bigBlind: 50, maxPlayers: 9, turnSeconds: 30 };
 
 interface EmitRecord {
   target: string;

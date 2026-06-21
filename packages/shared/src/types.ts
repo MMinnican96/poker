@@ -31,6 +31,8 @@ export interface TableConfig {
   smallBlind: number;
   bigBlind: number;
   maxPlayers: number;
+  /** Seconds a player has to act before auto-fold/check. Host-configurable. */
+  turnSeconds: number;
 }
 
 export const DEFAULT_TABLE_CONFIG: TableConfig = {
@@ -38,6 +40,7 @@ export const DEFAULT_TABLE_CONFIG: TableConfig = {
   smallBlind: 25,
   bigBlind: 50,
   maxPlayers: 9,
+  turnSeconds: 30,
 };
 
 export interface LobbyState {

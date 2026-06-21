@@ -1,12 +1,10 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 import path from 'node:path';
 
-// The Cloudflare tunnel only exposes port 5173; Vite proxies API + socket
-// traffic to the backend on 3001 so the tunnel needs a single origin.
 export default defineConfig({
-  plugins: [react()],
-  // Read VITE_* vars from the repo-root .env (single source of truth).
+  plugins: [react(), tailwindcss()],
   envDir: path.resolve(__dirname, '../..'),
   resolve: {
     alias: {
@@ -16,17 +14,11 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      '/api': {
-        target: 'http://localhost:3001',
-        changeOrigin: true,
-      },
-      '/socket.io': {
-        target: 'http://localhost:3001',
-        ws: true,
-        changeOrigin: true,
-      },
+      '/api': { target: 'http://localhost:3001', changeOrigin: true },
+      '/socket.io': { target: 'http://localhost:3001', ws: true, changeOrigin: true },
     },
-    // Required so the trycloudflare.com tunnel host is accepted.
+    // Required so the trycloudflare.com tunnel host (single exposed origin for
+    // the Discord Activity) is accepted by Vite's dev server.
     allowedHosts: ['.trycloudflare.com'],
   },
 });

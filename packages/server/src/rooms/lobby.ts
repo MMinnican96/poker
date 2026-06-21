@@ -227,9 +227,20 @@ function sanitizeConfig(patch: Partial<TableConfig>): Partial<TableConfig> {
   if (isPositiveInt(patch.smallBlind)) out.smallBlind = patch.smallBlind;
   if (isPositiveInt(patch.bigBlind)) out.bigBlind = patch.bigBlind;
   if (isPositiveInt(patch.maxPlayers)) out.maxPlayers = Math.min(patch.maxPlayers, 9);
+  if (isValidTurnSeconds(patch.turnSeconds)) out.turnSeconds = patch.turnSeconds;
   return out;
 }
 
 function isPositiveInt(n: unknown): n is number {
   return typeof n === 'number' && Number.isInteger(n) && n > 0;
+}
+
+function isValidTurnSeconds(n: unknown): n is number {
+  return (
+    typeof n === 'number' &&
+    Number.isInteger(n) &&
+    n >= 10 &&
+    n <= 120 &&
+    n % 5 === 0
+  );
 }

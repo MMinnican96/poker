@@ -1,0 +1,91 @@
+@import "tailwindcss";
+
+@theme {
+  /* Fonts */
+  --font-display: "Fredoka", system-ui, sans-serif;
+  --font-body: "Nunito", system-ui, sans-serif;
+
+  /* Felt + panels */
+  --color-felt-900: #0b2c1f;
+  --color-felt-800: #0e3325;
+  --color-felt-700: #134632;
+  --color-felt-600: #163f2e;
+  --color-felt-500: #1c4836;
+  --color-felt-400: #1d6044;
+  --color-felt-300: #2c5d48;
+  --color-ink: #0c2418;
+
+  /* Gold */
+  --color-gold: #ffc63d;
+  --color-gold-border: #c8920d;
+  --color-gold-shadow: #ad7a04;
+  --color-gold-soft: #ffd882;
+
+  /* Accents */
+  --color-mint: #44e0a3;
+  --color-mint-bright: #7df0c4;
+  --color-mint-border: #1e9e6e;
+  --color-blue: #5bb8ff;
+  --color-blue-border: #2e86c8;
+  --color-red: #ff6b6b;
+  --color-red-border: #d63d3d;
+  --color-red-shadow: #b32e2e;
+  --color-purple: #b07bff;
+
+  /* Text */
+  --color-cream: #f4f1e8;
+  --color-sage: #7fb89c;
+  --color-sage-light: #9ed7bd;
+  --color-sage-muted: #8fbfa8;
+
+  /* Radii */
+  --radius-pill: 999px;
+
+  /* Shadows */
+  --shadow-hard-ink: 0 4px 0 #0c2418;
+  --shadow-hard-ink-sm: 0 3px 0 #0c2418;
+  --shadow-hard-gold: 0 4px 0 #ad7a04;
+  --shadow-hard-gold-lg: 0 6px 0 #ad7a04;
+  --shadow-hard-red: 0 4px 0 #b32e2e;
+  --shadow-pill: 0 5px 0 #061710;
+  --shadow-panel: 0 16px 36px rgba(0, 0, 0, 0.35), inset 0 2px 0 rgba(255, 255, 255, 0.04);
+  --shadow-card: 0 6px 0 rgba(0, 0, 0, 0.22);
+  --shadow-tablecard: 0 20px 44px rgba(0, 0, 0, 0.42), inset 0 2px 0 rgba(255, 255, 255, 0.06);
+  --shadow-modal: 0 26px 60px rgba(0, 0, 0, 0.55), inset 0 2px 0 rgba(255, 255, 255, 0.06);
+  --shadow-popout: 0 22px 50px rgba(0, 0, 0, 0.5), inset 0 2px 0 rgba(255, 255, 255, 0.06);
+
+  /* Breakpoint that hides the right rail (matches mock @1080px) */
+  --breakpoint-rail: 1080px;
+
+  /* Animations */
+  --animate-pop: rpn-pop 0.18s cubic-bezier(0.2, 1.2, 0.4, 1);
+  --animate-fade: rpn-fade 0.15s ease;
+}
+
+@keyframes rpn-pop {
+  0% { transform: scale(0.92) translateY(6px); opacity: 0; }
+  100% { transform: scale(1) translateY(0); opacity: 1; }
+}
+@keyframes rpn-fade {
+  0% { opacity: 0; }
+  100% { opacity: 1; }
+}
+
+@layer base {
+  html, body, #root { margin: 0; height: 100%; }
+  body { font-family: var(--font-body); }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.28);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-track { background: transparent; }
+}
+
+@layer components {
+  .felt-bg {
+    background: radial-gradient(120% 90% at 50% -10%, #1d6044 0%, #134632 42%, #0b2c1f 100%);
+  }
+}
