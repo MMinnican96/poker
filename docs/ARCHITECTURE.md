@@ -49,15 +49,72 @@ packages/
 │       └── rooms/             # LobbyManager, GameRoom, hand-stats, state sanitization
 └── client/   # React + Phaser 3 (the Activity iframe)
     └── src/
+        ├── index.css          # Tailwind v4 @import + @theme design tokens + keyframes
         ├── discord.ts         # SDK handshake (+ dev mock)
         ├── socket.ts          # typed Socket.io client
-        ├── Lobby.tsx, ActionBar.tsx, GameCanvas.tsx
+        ├── App.tsx, ActionBar.tsx, GameCanvas.tsx
+        ├── lobby/             # Lobby screen components (see below)
         └── game/              # Phaser scene + React↔Phaser bridge
 ```
 
 `@poker/shared` is the contract glued to both ends: it defines `GameState`,
 `LobbyState`, `Card`, `TableConfig`, and the typed Socket.io event maps, so the
 client and server can never drift on the wire format.
+
+## Client lobby components
+
+The lobby UI lives in `packages/client/src/lobby/` and was built with
+**Tailwind CSS v4** (CSS-first config via `@tailwindcss/vite`). Design tokens
+(colors, shadows, radii, fonts, animations) are declared in a single `@theme` block
+in `src/index.css`; see [`docs/DESIGN_STANDARDS.md`](./DESIGN_STANDARDS.md) for the
+full token table and component patterns.
+
+```
+lobby/
+  LobbyScreen.tsx        # Top-level: owns socket subscription, tab + modal state, layout
+  Header.tsx             # Logo, nav tabs (Home / Leaderboard / Stats / Shop), user button
+  PlayersPanel.tsx       # Left aside: players list + count badge
+  PlayerRow.tsx          # One clickable player row; exports playerStatus() + STATUS_STYLE
+  TableSettings.tsx      # Center Home tab: steppers, status pills, action buttons
+  ComingSoon.tsx         # Reusable Coming Soon placeholder (Leaderboard / Stats / Shop)
+  RecentActivity.tsx     # Right rail: scaffolded feed (empty state; hidden below 1080px)
+  UserPopout.tsx         # Top-right popout: Profile / Settings (Coming Soon) / How to Play
+  PlayerProfileModal.tsx # Quick-view stats for a clicked player
+  StatTile.tsx           # Shared stat tile; renders "—" when value is null
+  useStats.ts            # Hook: fetch /api/stats/:id; sample data in mock mode
+```
+
+**`LobbyScreen`** owns the `lobby_state_update` / `game_start` subscription (moved
+from the old `Lobby.tsx`, which is deleted), the countdown tick, and local UI state:
+`activeTab`, `userPopoutOpen`, `selectedPlayerId`. It computes derived values
+(`isHost`, `readyCount`, `canEditConfig`, `secondsLeft`, per-player status) and
+passes them down as props.
+
+**Tabs:** Home shows full content (`TableSettings` + panels). Leaderboard, Stats, and
+Shop render `<ComingSoon />` — the data exists on the server but is out of scope for
+the current lobby implementation; quick-view stat tiles in the popout and modal still
+show real (or mock-mode sample) data.
+
+**`useStats(playerId)`** returns `{ stats: PlayerStatsSummary | null, loading }`.
+In mock mode it returns deterministic sample data seeded from a hash of `playerId`
+(no fetch). In real mode it calls `GET /api/stats/:id` with session credentials; on
+non-OK / network error it returns `null` and the UI shows `—` placeholders.
+
+### Deferred lobby UI features
+
+The following are intentionally deferred and shown as Coming Soon / disabled:
+
+- Player **titles** and **levels** (no backend concept yet).
+- **Shop** tab — no items or purchases.
+- **Leaderboard** and **Stats** tab data — routes exist; UI content deferred.
+- **Friends / Add Friend** — removed from the design.
+- **Recent Activity** — scaffold and empty-state only; no data written.
+- **User Settings** toggles — Settings sub-tab shows a Coming Soon placeholder.
+- **View Profile** full page — button present but disabled.
+- **Log Out** — visual only.
+- Per-player **In-Game** status while others remain in the lobby (the current
+  architecture transitions the whole lobby at once; only `lobby.status === 'in-game'`
+  maps to the In-Game pill).
 
 ## Data flow
 
@@ -135,10 +192,21 @@ Each player therefore receives a *different* `game_state_update`. The
 
 ## Turn timer
 
-`GameRoom` runs a per-turn `setTimeout` (default 10s) and broadcasts `timer_tick`
-~twice a second. On expiry the player is auto-**checked** (if free) or
-auto-**folded**. The timer resets each turn and is cleared whenever the hand
-advances.
+`GameRoom` runs a per-turn `setTimeout` and broadcasts `timer_tick` ~twice a second.
+On expiry the player is auto-**checked** (if free) or auto-**folded**. The timer
+resets each turn and is cleared whenever the hand advances.
+
+**Host-configurable duration.** `TableConfig.turnSeconds` (integer 10–120, multiple
+of 5, default 30) is set by the host via the lobby's Turn Timer stepper before the
+game starts. `rooms/index.ts` translates it when constructing the `GameRoom`:
+
+```ts
+timing: { ...options.gameTiming, turnMs: options.gameTiming?.turnMs ?? config.turnSeconds * 1000 }
+```
+
+Test code still injects a short `gameTiming.turnMs` (which takes precedence), so
+unit tests don't need real-time waits. `sanitizeConfig` in `rooms/lobby.ts` rejects
+out-of-range or non-step values.
 
 ## Chip transactions & idempotency
 
