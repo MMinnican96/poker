@@ -96,6 +96,16 @@ After any change, verify with `npm test` and `npm run build` before claiming don
   Live game state is in memory; bankroll + ledger + **player stats** are persisted
   (the `games`/`hands` audit tables exist but still aren't written — stats use
   their own tables, below).
+  **Chip balance authority**: balances can **never go negative** — `adjustChips`
+  (DB) and `InMemoryChipService` (mock) share the `overdraws` guard in
+  `db/chip-rules.ts`; an overdraw returns `{ applied: false }` and changes nothing.
+  Mock mode now uses the **authoritative `InMemoryChipService`** (seeded from each
+  player's identity balance on `join_lobby`) rather than a no-op. Every buy-in
+  (start + sit-in) is gated on the ledger `applied` result: a refused buy-in keeps
+  the player a spectator and emits `sit_in_rejected`. A member's `bankroll` comes
+  from the ledger's returned `balance` (not a stale delta) and is pushed live to
+  the lobby (`updateChipBalance`) and to the player's client as
+  `GameState.viewerBankroll`.
 - **Table membership (spectate / join / leave)**: `GameRoom` owns the full table
   population as role-tagged `Member[]` (`role: 'seated' | 'spectator'`).
   Spectators receive a sanitized table view but are never dealt in. Transitions

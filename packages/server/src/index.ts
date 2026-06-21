@@ -56,8 +56,9 @@ export const io = new Server<
   },
 });
 
-// With a database configured, chips + stats persist; without one the server runs
-// in dev/mock mode using in-memory no-ops so it can boot without Postgres.
+// With a database configured, chips + stats persist; without one (dev/mock mode)
+// chips use an authoritative in-memory ledger and stats are a no-op, so the
+// server can boot without Postgres.
 const hasDb = !!process.env.DATABASE_URL;
 const chips: ChipService = hasDb ? { adjust: adjustChips } : new InMemoryChipService();
 const stats: StatsService = hasDb ? dbStatsService : noopStatsService;
