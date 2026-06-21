@@ -23,9 +23,31 @@ function state(over: Partial<GameState> = {}): GameState {
   };
 }
 
+function other(over: Partial<GamePlayer> = {}): GamePlayer {
+  return { ...hero(), discordUserId: 'opp', displayName: 'Opp', ...over };
+}
+
 describe('TableActionBar', () => {
-  it('returns null when it is not the hero turn', () => {
-    const { container } = render(<TableActionBar state={state({ currentPlayerIndex: 0, players: [hero({ status: 'folded' })] })} myId="me" onAction={() => {}} />);
+  it('renders the bar with disabled actions when it is not the hero turn', () => {
+    const onAction = vi.fn();
+    const { container } = render(
+      <TableActionBar
+        state={state({ players: [hero(), other()], currentPlayerIndex: 1 })}
+        myId="me"
+        onAction={onAction}
+      />,
+    );
+    expect(container.firstChild).not.toBeNull();
+    const fold = screen.getByRole('button', { name: 'Fold' });
+    expect(fold).toBeDisabled();
+    fireEvent.click(fold);
+    expect(onAction).not.toHaveBeenCalled();
+  });
+
+  it('returns null only when the viewer is spectating (no seat / sitting out)', () => {
+    const { container } = render(
+      <TableActionBar state={state({ players: [hero({ status: 'sitting-out' })] })} myId="me" onAction={() => {}} />,
+    );
     expect(container.firstChild).toBeNull();
   });
 
