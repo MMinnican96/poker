@@ -11,13 +11,27 @@ function num(n: number | undefined): string | null {
   return n == null ? null : n.toLocaleString();
 }
 
+export interface SeatActions {
+  mode: 'playing' | 'spectating';
+  buyIn: number;
+  canJoin: boolean;
+  joinReason: string;
+  pending: 'leave' | 'spectate' | null;
+  leaveHint: string;
+  onSpectate: () => void;
+  onJoin: () => void;
+  onLeave: () => void;
+  onCancelPending: () => void;
+}
+
 export interface UserPopoutProps {
   identity: DiscordIdentity;
   stats: PlayerStatsSummary | null;
   onClose: () => void;
+  seat?: SeatActions;
 }
 
-export function UserPopout({ identity, stats, onClose }: UserPopoutProps) {
+export function UserPopout({ identity, stats, onClose, seat }: UserPopoutProps) {
   const [tab, setTab] = useState<UserTab>('profile');
 
   const tabBtn = (id: UserTab, label: string) => (
@@ -95,6 +109,61 @@ export function UserPopout({ identity, stats, onClose }: UserPopoutProps) {
                   <p className="text-sm font-bold leading-snug text-[#dfeee6]">{text}</p>
                 </div>
               ))}
+            </div>
+          )}
+
+          {seat && (
+            <div className="mt-3.5 flex flex-col gap-2.5 border-t-2 border-black/20 pt-3.5">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-extrabold tracking-[0.12em] text-sage">YOUR SEAT</span>
+                <span className={`inline-flex items-center gap-1.5 rounded-pill px-3 py-1 font-display text-xs font-bold ${seat.mode === 'playing' ? 'bg-mint/15 text-mint-bright' : 'bg-blue/15 text-blue'}`}>
+                  <span className={`h-2 w-2 rounded-pill ${seat.mode === 'playing' ? 'bg-mint' : 'bg-blue'}`} />
+                  {seat.mode === 'playing' ? 'Playing' : 'Spectating'}
+                </span>
+              </div>
+
+              {seat.mode === 'playing' && (
+                <button
+                  onClick={seat.onSpectate}
+                  className="flex w-full items-center gap-3 rounded-2xl border-2 border-black/30 bg-felt-600 px-3.5 py-3 text-left font-display text-base font-semibold text-white hover:bg-felt-700"
+                >
+                  <span className="flex h-[34px] w-[34px] flex-none items-center justify-center rounded-[10px] border-2 border-blue/40 bg-blue/15 text-[17px] text-blue">👁</span>
+                  <span className="flex flex-col leading-tight"><span>Spectate</span><span className="text-xs font-bold text-sage-muted">Sit out — stop being dealt in</span></span>
+                </button>
+              )}
+
+              {seat.mode === 'spectating' && (
+                <div className="relative">
+                  <button
+                    onClick={seat.onJoin}
+                    disabled={!seat.canJoin}
+                    className={`flex w-full items-center gap-3 rounded-2xl border-2 px-3.5 py-3 text-left font-display text-base font-semibold ${seat.canJoin ? 'cursor-pointer border-gold-border bg-gold text-[#2a1c00] shadow-hard-gold' : 'cursor-not-allowed border-black/30 bg-felt-300 text-sage-muted opacity-75'}`}
+                  >
+                    <span className="flex h-[34px] w-[34px] flex-none items-center justify-center rounded-[10px] border-2 border-black/30 bg-black/15 text-[17px]">♠</span>
+                    <span className="flex flex-col leading-tight"><span>Join Table</span><span className="text-xs font-bold text-sage-muted">Buy in for {seat.buyIn.toLocaleString()} · next hand</span></span>
+                  </button>
+                  {!seat.canJoin && seat.joinReason && (
+                    <p className="mt-2 rounded-xl border-2 border-ink bg-felt-800 px-3 py-2 text-[13px] font-bold text-[#ffd0d0]">{seat.joinReason}</p>
+                  )}
+                </div>
+              )}
+
+              {seat.pending && (
+                <div className="flex items-center justify-between gap-2.5 rounded-xl border-2 border-gold/35 bg-gold/10 py-2.5 pl-3.5 pr-2.5">
+                  <span className="text-[13px] font-bold text-gold-soft">
+                    {seat.pending === 'leave' ? 'Leaving when this hand finishes' : 'Moving to spectate when this hand finishes'}
+                  </span>
+                  <button onClick={seat.onCancelPending} className="flex-none rounded-[10px] border-2 border-ink bg-felt-300 px-3 py-1.5 font-display text-xs font-semibold text-[#dfeee6]">Cancel</button>
+                </div>
+              )}
+
+              <button
+                onClick={seat.onLeave}
+                className="flex w-full items-center gap-3 rounded-2xl border-2 border-red/35 bg-red/15 px-3.5 py-3 text-left font-display text-base font-semibold text-white hover:bg-red/20"
+              >
+                <span className="flex h-[34px] w-[34px] flex-none items-center justify-center rounded-[10px] border-2 border-red/40 bg-red/20 text-[17px] text-[#ff9b9b]">↩</span>
+                <span className="flex flex-col leading-tight"><span>Leave Table</span><span className="text-xs font-bold text-[#cc9999]">{seat.leaveHint}</span></span>
+              </button>
             </div>
           )}
 

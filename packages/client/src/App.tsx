@@ -3,7 +3,7 @@ import type { DiscordIdentity } from '@poker/shared';
 import { setupDiscord } from './discord';
 import { createSocket, type ClientSocket } from './socket';
 import { LobbyScreen } from './lobby/LobbyScreen';
-import { GameCanvas } from './GameCanvas';
+import { TableScreen } from './table/TableScreen';
 
 type Status =
   | { phase: 'connecting' }
@@ -67,7 +67,7 @@ export function App() {
   }
 
   if (atTable) {
-    return <GameCanvas socket={socketRef.current!} identity={status.identity} />;
+    return <TableScreen socket={socketRef.current!} identity={status.identity} />;
   }
 
   return (

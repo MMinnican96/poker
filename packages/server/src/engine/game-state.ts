@@ -54,6 +54,7 @@ export function startHand(opts: StartHandOptions): HandContext {
     holeCards: null,
     status: s.chipStack > 0 ? 'active' : 'sitting-out',
     hasActed: false,
+    lastAction: null,
   }));
 
   for (const p of players) {
@@ -148,6 +149,7 @@ export function advanceStreet(ctx: HandContext): void {
   for (const p of state.players) {
     p.betThisRound = 0;
     p.hasActed = false;
+    p.lastAction = null;
   }
   state.callAmount = 0;
   state.minRaise = state.config.bigBlind;

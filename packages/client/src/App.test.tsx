@@ -13,7 +13,7 @@ vi.mock('./discord', () => ({
     instanceId: 'I',
   }),
 }));
-vi.mock('./GameCanvas', () => ({ GameCanvas: () => <div>TABLE VIEW</div> }));
+vi.mock('./table/TableScreen', () => ({ TableScreen: () => <div>TABLE VIEW</div> }));
 vi.mock('./lobby/LobbyScreen', () => ({ LobbyScreen: () => <div>LOBBY VIEW</div> }));
 
 import { App } from './App';
