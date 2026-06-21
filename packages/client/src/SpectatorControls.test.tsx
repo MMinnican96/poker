@@ -58,6 +58,15 @@ it('spectator with a pending seat shows a Cancel — joining next hand control',
   expect(onCancel).toHaveBeenCalled();
 });
 
+it('uses the live viewerBankroll to gate Join Next Hand', () => {
+  // identity bankroll is high/stale (3000), but the live viewerBankroll is 100 → underfunded.
+  const state = baseState({ viewerBankroll: 100 });
+  render(<SpectatorControls state={state} myId="c" bankroll={3000} onSitIn={vi.fn()} onSitOut={vi.fn()} onLeave={vi.fn()} onCancelPending={vi.fn()} />);
+  const btn = screen.getByRole('button', { name: /Join Next Hand/i });
+  expect(btn).toBeDisabled();
+  expect(btn).toHaveAttribute('title', expect.stringMatching(/chips/i));
+});
+
 it('seated player with no pending shows Move to Spectate and Leave Table', () => {
   const onSitOut = vi.fn();
   const onLeave = vi.fn();

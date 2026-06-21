@@ -23,6 +23,7 @@ export function GameCanvas({ socket, identity }: GameCanvasProps) {
   const gameRef = useRef<Phaser.Game | null>(null);
   const [view, setView] = useState<GameState | null>(null);
   const [result, setResult] = useState<ResultBanner | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     if (!parentRef.current) return;
@@ -53,14 +54,21 @@ export function GameCanvas({ socket, identity }: GameCanvasProps) {
       window.setTimeout(() => setResult(null), 4500);
     };
 
+    const onRejected = (payload: { reason: string }) => {
+      setNotice(payload.reason);
+      window.setTimeout(() => setNotice(null), 4000);
+    };
+
     socket.on('game_state_update', onState);
     socket.on('timer_tick', onTimer);
     socket.on('hand_result', onResult);
+    socket.on('sit_in_rejected', onRejected);
 
     return () => {
       socket.off('game_state_update', onState);
       socket.off('timer_tick', onTimer);
       socket.off('hand_result', onResult);
+      socket.off('sit_in_rejected', onRejected);
       bridge.removeAllListeners();
       game.destroy(true);
       gameRef.current = null;
@@ -83,6 +91,10 @@ export function GameCanvas({ socket, identity }: GameCanvasProps) {
           </div>
           {result.handName && <div style={{ opacity: 0.85 }}>{result.handName}</div>}
         </div>
+      )}
+
+      {notice && (
+        <div style={styles.notice}>{notice}</div>
       )}
 
       {view && <ActionBar state={view} myId={identity.discordUserId} onAction={act} />}
@@ -131,5 +143,16 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 12,
     padding: '12px 22px',
     textAlign: 'center',
+  },
+  notice: {
+    position: 'absolute',
+    top: 80,
+    left: '50%',
+    transform: 'translateX(-50%)',
+    background: 'rgba(120,20,20,0.92)',
+    border: '1px solid #ff6b6b',
+    borderRadius: 10,
+    padding: '10px 18px',
+    fontWeight: 700,
   },
 };
