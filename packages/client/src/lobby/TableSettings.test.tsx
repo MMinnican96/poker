@@ -15,6 +15,7 @@ function props(overrides: Partial<React.ComponentProps<typeof TableSettings>> = 
     config,
     canEditConfig: true,
     isHost: true,
+    hostExists: true,
     status: 'waiting' as const,
     readyCount: 0,
     playerCount: 3,
@@ -23,6 +24,8 @@ function props(overrides: Partial<React.ComponentProps<typeof TableSettings>> = 
     canStart: true,
     insufficientChips: false,
     onUpdateConfig: vi.fn(),
+    onCreateGame: vi.fn(),
+    onCancelGame: vi.fn(),
     onReadyToggle: vi.fn(),
     onStartCountdown: vi.fn(),
     onCancelCountdown: vi.fn(),
@@ -82,5 +85,27 @@ describe('TableSettings', () => {
     const p = props({ insufficientChips: true });
     render(<TableSettings {...p} />);
     expect(screen.getByText(/need .* chips/i)).toBeInTheDocument();
+  });
+
+  it('shows Create a Game when no host exists and fires onCreateGame', () => {
+    const p = props({ hostExists: false });
+    render(<TableSettings {...p} />);
+    const btn = screen.getByRole('button', { name: /create a game/i });
+    expect(btn).not.toBeDisabled();
+    btn.click();
+    expect(p.onCreateGame).toHaveBeenCalledOnce();
+  });
+
+  it('disables Create a Game when the creator is underfunded', () => {
+    const p = props({ hostExists: false, insufficientChips: true });
+    render(<TableSettings {...p} />);
+    expect(screen.getByRole('button', { name: /create a game/i })).toBeDisabled();
+  });
+
+  it('lets the host cancel the game they created', () => {
+    const p = props({ hostExists: true, isHost: true });
+    render(<TableSettings {...p} />);
+    screen.getByRole('button', { name: /cancel game/i }).click();
+    expect(p.onCancelGame).toHaveBeenCalledOnce();
   });
 });
