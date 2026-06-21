@@ -3,6 +3,7 @@ import pg from 'pg';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { eq, sql } from 'drizzle-orm';
 import * as schema from './schema.js';
+import { overdraws } from './chip-rules.js';
 
 const { Pool } = pg;
 
@@ -66,6 +67,19 @@ export async function adjustChips(input: {
   idempotencyKey: string;
 }): Promise<{ applied: boolean; balance: number }> {
   return getDb().transaction(async (tx) => {
+    // Lock the player row and read the current balance up front.
+    const [row] = await tx
+      .select({ balance: schema.players.chipBalance })
+      .from(schema.players)
+      .where(eq(schema.players.discordUserId, input.playerId))
+      .for('update');
+    const current = row?.balance ?? 0;
+
+    // Defense in depth: the persistent balance can never go negative.
+    if (overdraws(current, input.amount)) {
+      return { applied: false, balance: current };
+    }
+
     const inserted = await tx
       .insert(schema.chipTransactions)
       .values({
@@ -79,11 +93,7 @@ export async function adjustChips(input: {
 
     if (inserted.length === 0) {
       // Already applied — return current balance unchanged.
-      const [row] = await tx
-        .select({ balance: schema.players.chipBalance })
-        .from(schema.players)
-        .where(eq(schema.players.discordUserId, input.playerId));
-      return { applied: false, balance: row?.balance ?? 0 };
+      return { applied: false, balance: current };
     }
 
     const [updated] = await tx
