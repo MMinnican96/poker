@@ -17,6 +17,8 @@ export default defineConfig({
       '/api': { target: 'http://localhost:3001', changeOrigin: true },
       '/socket.io': { target: 'http://localhost:3001', ws: true, changeOrigin: true },
     },
+    // Required so the trycloudflare.com tunnel host (single exposed origin for
+    // the Discord Activity) is accepted by Vite's dev server.
     allowedHosts: ['.trycloudflare.com'],
   },
 });

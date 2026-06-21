@@ -142,7 +142,8 @@ After any change, verify with `npm test` and `npm run build` before claiming don
   file is `packages/client/src/test-setup.ts`. Test files live next to source as
   `*.test.tsx` / `*.test.ts`. The root `npm test` command runs the server suite
   **and** the client suite sequentially.
-- **Tests** live next to source as `*.test.ts` (excluded from the `tsc` build).
+- **Tests** live next to source as `*.test.ts`/`*.test.tsx` (excluded from the `tsc`
+  build in both the server and client tsconfigs).
 
 ## Deferred / not yet done
 

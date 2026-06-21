@@ -41,7 +41,6 @@ export function UserPopout({ identity, stats, onClose }: UserPopoutProps) {
             src={identity.avatarUrl}
             alt=""
             className="h-13 w-13 flex-none rounded-2xl border-[2.5px] border-gold-border object-cover"
-            style={{ width: 52, height: 52 }}
           />
           <div className="flex min-w-0 flex-1 flex-col leading-tight">
             <span className="font-display text-lg font-semibold text-white">{identity.displayName}</span>
