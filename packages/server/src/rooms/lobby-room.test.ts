@@ -123,4 +123,13 @@ describe('LobbyRoom chip balances', () => {
     r.addPlayer(id('a', 3000), 'sa2'); // rejoin with a stale identity balance
     expect(r.toState().players.find((p) => p.discordUserId === 'a')!.chipBalance).toBe(500);
   });
+
+  it('getChipBalance returns the live tracked balance, or undefined for unknown players', () => {
+    const r = room();
+    r.addPlayer(id('a', 3000), 'sa');
+    expect(r.getChipBalance('a')).toBe(3000);
+    r.updateChipBalance('a', 1200);
+    expect(r.getChipBalance('a')).toBe(1200);
+    expect(r.getChipBalance('nobody')).toBeUndefined();
+  });
 });

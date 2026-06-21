@@ -201,6 +201,11 @@ export class LobbyRoom {
     this.broadcast();
   }
 
+  /** The player's live (server-tracked) bankroll, or undefined if not in this lobby. */
+  getChipBalance(playerId: string): number | undefined {
+    return this.players.get(playerId)?.chipBalance;
+  }
+
   /** Public re-broadcast hook (used when game membership changes). */
   broadcastState(): void {
     this.broadcast();
