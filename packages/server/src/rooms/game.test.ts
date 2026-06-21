@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { GameState, TableConfig, PlayerHandStat } from '@poker/shared';
 import { GameRoom, type ChipService, type GameRoomPlayer, type StatsService } from './game.js';
+import { InMemoryChipService } from './in-memory-chips.js';
 
 const CONFIG: TableConfig = { buyIn: 3000, smallBlind: 25, bigBlind: 50, maxPlayers: 9, turnSeconds: 30 };
 
@@ -38,19 +39,18 @@ function makeFakeIo() {
   };
 }
 
-/** Fake chip ledger with idempotent application, recording every call. */
+/** Authoritative fake chip ledger (records every call; tracks real balances). */
 function makeFakeChips() {
   const calls: Array<{ playerId: string; amount: number; type: string; idempotencyKey: string }> = [];
-  const seen = new Set<string>();
+  const ledger = new InMemoryChipService();
   const service: ChipService = {
+    seed: (id, bal) => ledger.seed(id, bal),
     async adjust(input) {
       calls.push(input);
-      if (seen.has(input.idempotencyKey)) return { applied: false, balance: 0 };
-      seen.add(input.idempotencyKey);
-      return { applied: true, balance: 0 };
+      return ledger.adjust(input);
     },
   };
-  return { calls, service };
+  return { calls, service, seed: (id: string, bal: number) => ledger.seed(id, bal) };
 }
 
 /** Fake stats service recording every recordHand/recordSession call. */
@@ -75,6 +75,8 @@ function makeRoom(
   timing = {},
   stats: StatsService | undefined = undefined,
 ) {
+  chips.seed?.('a', 3000);
+  chips.seed?.('b', 3000);
   return new GameRoom({
     io: io.io as never,
     gameId: 'G',
@@ -234,6 +236,7 @@ describe('GameRoom sit-in', () => {
   it('seats a spectator at the next hand and charges a fresh buy-in', async () => {
     const io = makeFakeIo();
     const chips = makeFakeChips();
+    chips.seed('c', 3000);
     const room = makeRoom(io, chips.service);
     await room.start();
     room.addSpectator({ discordUserId: 'c', displayName: 'C', avatarUrl: '', socketId: 'sc', bankroll: 3000 });
@@ -255,6 +258,7 @@ describe('GameRoom sit-in', () => {
   it('rejects sit-in when the table is full or the player is underfunded', async () => {
     const io = makeFakeIo();
     const chips = makeFakeChips();
+    chips.seed('c', 100);
     const room = makeRoom(io, chips.service, {}, undefined);
     await room.start();
     room.addSpectator({ discordUserId: 'c', displayName: 'C', avatarUrl: '', socketId: 'sc', bankroll: 100 });
@@ -448,6 +452,7 @@ describe('GameRoom teardown thresholds', () => {
   it('idles (does not deal) when only one player is seated, then resumes when a spectator sits in', async () => {
     const io = makeFakeIo();
     const chips = makeFakeChips();
+    chips.seed('c', 3000);
     const room = makeRoom(io, chips.service);
     await room.start();
     room.addSpectator({ discordUserId: 'c', displayName: 'C', avatarUrl: '', socketId: 'sc', bankroll: 3000 });
@@ -470,6 +475,7 @@ describe('GameRoom teardown thresholds', () => {
   it('ends the game and ejects everyone when the last player leaves', async () => {
     const io = makeFakeIo();
     const chips = makeFakeChips();
+    chips.seed('a', 3000); chips.seed('b', 3000); chips.seed('c', 3000);
     const ended: string[] = [];
     const room = new GameRoom({
       io: io.io as never, gameId: 'G', instanceId: 'I', config: CONFIG,
@@ -511,6 +517,7 @@ describe('GameRoom re-entry guard and lobby rebroadcast', () => {
   it('Test A: re-entry guard prevents double-deal when startHand is called twice', async () => {
     const io = makeFakeIo();
     const chips = makeFakeChips();
+    chips.seed('c', 3000);
     const room = makeRoom(io, chips.service);
     await room.start();
 
@@ -640,9 +647,57 @@ describe('GameRoom chip-balance reporting', () => {
     await concluded;
     room.leave('a');
     room.leave('b');
+    // cashOut reports the credited bankroll after awaiting the ledger; let those
+    // microtasks settle before asserting the post-cash-out balances.
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(updates.some((u) => u.id === 'a' && u.bal > 0)).toBe(true);
     expect(updates.some((u) => u.id === 'b' && u.bal > 0)).toBe(true);
+    room.stop();
+  });
+});
+
+describe('GameRoom buy-in gating', () => {
+  it('rejects an underfunded sit-in request immediately with a reason', async () => {
+    const io = makeFakeIo();
+    const chips = makeFakeChips();
+    const room = makeRoom(io, chips.service);
+    chips.seed('c', 100);
+    await room.start();
+    // Spectator's bankroll reflects the live (low) balance — the gate uses it.
+    room.addSpectator({ discordUserId: 'c', displayName: 'C', avatarUrl: '', socketId: 'sc', bankroll: 100 });
+    room.requestSeat('c'); // bankroll 100 < buyIn 3000 → pre-check refuses
+    expect(io.records.some((r) => r.target === 'sc' && r.event === 'sit_in_rejected')).toBe(true);
+    expect(room.state!.players.some((p) => p.discordUserId === 'c')).toBe(false);
+    room.stop();
+  });
+
+  it('keeps a player who cannot fund the buy-in at start off the table and rejects them', async () => {
+    const io = makeFakeIo();
+    const chips = makeFakeChips();
+    // 'b' only has 100 in the ledger — the start buy-in must be refused.
+    chips.seed('a', 3000);
+    chips.seed('b', 100);
+    const room = new GameRoom({
+      io: io.io as never, gameId: 'G', instanceId: 'I', config: CONFIG,
+      players, chips: chips.service,
+      timing: { turnMs: 1e9, tickMs: 1e9, handDelayMs: 1e9 },
+    });
+    await room.start();
+    expect(io.records.some((r) => r.target === 'sb' && r.event === 'sit_in_rejected')).toBe(true);
+    // Only 'a' is seated; the table idles (no hand dealt with one player).
+    expect((room.state?.players ?? []).some((p) => p.discordUserId === 'b')).toBe(false);
+    room.stop();
+  });
+
+  it('sets bankroll from the ledger balance and exposes it as viewerBankroll', async () => {
+    const io = makeFakeIo();
+    const chips = makeFakeChips();
+    const room = makeRoom(io, chips.service);
+    await room.start();
+    // 'a' bought in: ledger 3000 - 3000 = 0 → viewerBankroll 0.
+    const toA = io.records.filter((r) => r.target === 'sa' && r.event === 'game_state_update').at(-1)!.args[0] as GameState;
+    expect(toA.viewerBankroll).toBe(0);
     room.stop();
   });
 });
