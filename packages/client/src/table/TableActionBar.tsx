@@ -43,11 +43,13 @@ export function TableActionBar({ state, myId, onAction }: Props) {
     <div className="flex-none px-[18px] pb-3.5">
       <div className="rounded-[18px] border-[2.5px] border-black/35 bg-felt-900/70 px-[18px] py-3 shadow-panel">
         <div className="flex items-center gap-3.5">
-          <div className="flex flex-none gap-1.5">
-            <button className={quick} onClick={() => preset(0.5)}>½ Pot</button>
-            <button className={quick} onClick={() => preset(1)}>Pot</button>
-            <button className={quick} onClick={() => preset(2)}>2× Pot</button>
-          </div>
+          {canRaise && (
+            <div className="flex flex-none gap-1.5">
+              <button className={quick} onClick={() => preset(0.5)}>½ Pot</button>
+              <button className={quick} onClick={() => preset(1)}>Pot</button>
+              <button className={quick} onClick={() => preset(2)}>2× Pot</button>
+            </div>
+          )}
           {canRaise && (
             <div className="flex min-w-[90px] flex-1 items-center gap-2.5">
               <input
