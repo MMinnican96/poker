@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { DiscordIdentity } from '@poker/shared';
 import { setupDiscord } from './discord';
 import { createSocket, type ClientSocket } from './socket';
-import { Lobby } from './Lobby';
+import { LobbyScreen } from './lobby/LobbyScreen';
 import { GameCanvas } from './GameCanvas';
 
 type Status =
@@ -55,7 +55,7 @@ export function App() {
   }
 
   return (
-    <Lobby
+    <LobbyScreen
       socket={socketRef.current!}
       identity={status.identity}
       instanceId={status.instanceId}
