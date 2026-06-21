@@ -16,7 +16,6 @@
     "@fontsource-variable/nunito": "^5.2.7",
     "@poker/shared": "*",
     "@tailwindcss/vite": "^4.3.1",
-    "phaser": "^3.88.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "socket.io-client": "^4.8.1",
