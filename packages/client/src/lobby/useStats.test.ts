@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fetchStats, sampleStats } from './useStats';
+import { renderHook, waitFor } from '@testing-library/react';
+import { fetchStats, sampleStats, useStats } from './useStats';
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  window.history.replaceState(null, '', '/');
+});
 
 describe('sampleStats', () => {
   it('is deterministic for a given playerId', () => {
@@ -31,5 +35,39 @@ describe('fetchStats', () => {
   it('returns null when fetch throws', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network')));
     expect(await fetchStats('x')).toBeNull();
+  });
+  it('returns null when ok but body is null', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve(null) }));
+    expect(await fetchStats('x')).toBeNull();
+  });
+  it('returns null when ok but body is a string', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve('a string') }));
+    expect(await fetchStats('x')).toBeNull();
+  });
+});
+
+describe('useStats hook', () => {
+  it('returns { stats: null, loading: false } when playerId is null', () => {
+    const { result } = renderHook(() => useStats(null));
+    expect(result.current).toEqual({ stats: null, loading: false });
+  });
+
+  it('returns sampleStats in mock mode without any network call', () => {
+    window.history.replaceState(null, '', '/?mock=1');
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const playerId = 'alice';
+    const { result } = renderHook(() => useStats(playerId));
+    expect(result.current.stats).toEqual(sampleStats(playerId));
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('fetches real stats in non-mock mode', async () => {
+    window.history.replaceState(null, '', '/');
+    const body = { playerId: 'bob', handsWon: 10 };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve(body) }));
+    const { result } = renderHook(() => useStats('bob'));
+    await waitFor(() => expect(result.current.stats).toEqual(body));
+    expect(result.current.loading).toBe(false);
   });
 });
