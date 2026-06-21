@@ -12,6 +12,8 @@
   },
   "dependencies": {
     "@discord/embedded-app-sdk": "^2.0.0",
+    "@fontsource-variable/fredoka": "^5.2.10",
+    "@fontsource-variable/nunito": "^5.2.7",
     "@poker/shared": "*",
     "@tailwindcss/vite": "^4.3.1",
     "phaser": "^3.88.2",

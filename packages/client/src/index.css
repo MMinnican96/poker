@@ -2,8 +2,8 @@
 
 @theme {
   /* Fonts */
-  --font-display: "Fredoka", system-ui, sans-serif;
-  --font-body: "Nunito", system-ui, sans-serif;
+  --font-display: "Fredoka Variable", "Fredoka", system-ui, sans-serif;
+  --font-body: "Nunito Variable", "Nunito", system-ui, sans-serif;
 
   /* Felt + panels */
   --color-felt-900: #0b2c1f;
