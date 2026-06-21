@@ -222,6 +222,81 @@ lobby.
 
 ---
 
+## Path C — Deploy to production (Railway + Railway Postgres)
+
+This hosts the whole app on **Railway** as a single always-on service: the
+server (Express + Socket.io) **also serves the built client**, so client,
+server, and WebSocket traffic share one origin behind the Discord proxy. The
+database is **Railway Postgres** in the same project (private networking, no
+separate provider).
+
+> Config-as-code lives in **`railway.json`** at the repo root (builder, build +
+> start commands, healthcheck). Railway picks it up automatically.
+
+### 1. Create the project + database
+
+1. Sign in at **railway.com** with GitHub → **New Project** → **Deploy from
+   GitHub repo** → pick this repo. (Grant repo access via **Configure GitHub App**
+   if it's not listed.)
+2. In the project, **+ New → Database → Add PostgreSQL**. The `Postgres` service
+   exposes two connection strings in its **Variables** tab:
+   - `DATABASE_URL` — private (`*.railway.internal`), for the running server.
+   - `DATABASE_PUBLIC_URL` — TCP proxy, for connecting from your laptop.
+
+### 2. Configure the app service
+
+Click the **app service → Settings**:
+
+- **Root Directory**: repo root (`/`) — it's an npm-workspaces monorepo.
+- Build/start commands come from `railway.json` (no need to set them by hand).
+- **Networking → Generate Domain** → note the `*.up.railway.app` URL.
+
+Then **app service → Variables** (see [`.env.example`](../.env.example)):
+
+```
+DATABASE_URL          = ${{Postgres.DATABASE_URL}}   # reference, keeps traffic on the private network
+DISCORD_CLIENT_ID     = <your app id>
+DISCORD_CLIENT_SECRET = <your secret>
+DISCORD_BOT_TOKEN     = <your bot token>
+JWT_SECRET            = <long random string>
+VITE_DISCORD_CLIENT_ID = <same value as DISCORD_CLIENT_ID>   # baked into the client at BUILD time
+```
+
+> **Do NOT set** `PORT` (Railway injects it; the server reads `process.env.PORT`),
+> `VITE_SERVER_URL` (must stay empty so the client uses the same origin), or
+> `VITE_MOCK_DISCORD` (dev-only). `VITE_*` vars are inlined into the client bundle
+> at build time, so changing them requires a **redeploy**.
+
+### 3. Push the schema to Railway Postgres
+
+Private networking isn't reachable from your laptop, so use the **public** URL
+once (don't commit it). In PowerShell:
+
+```powershell
+$env:DATABASE_URL = "<paste DATABASE_PUBLIC_URL>"
+npm run db:push
+```
+
+Repeat only when the schema changes. Runtime traffic still uses the private
+`DATABASE_URL` from step 2.
+
+### 4. Deploy and point Discord at it
+
+1. Push to your default branch (Railway auto-deploys) or hit **Deploy**.
+   Watch the logs for `[server] listening on port …` and
+   `[server] serving client from …`.
+2. Open the `*.up.railway.app` URL — you should get the client app.
+3. In the Discord Developer Portal → **Activities → URL Mappings**, map root
+   (`/`) → your Railway domain, and add the OAuth2 redirect under that domain.
+
+> **Gotchas:** private networking is IPv6-only and **not available during
+> build** — never run `db:push`/migrations in the build command (do step 3
+> locally). If the server logs `running without persistence`, the
+> `${{Postgres.DATABASE_URL}}` reference name doesn't match your Postgres service
+> name.
+
+---
+
 ## Scripts
 
 Run from the repo root:

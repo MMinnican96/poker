@@ -3,6 +3,9 @@ import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
 import type {
   ServerToClientEvents,
   ClientToServerEvents,
@@ -67,6 +70,27 @@ if (!hasDb) {
 }
 registerSocketHandlers(io, { chips, stats });
 app.use('/api/stats', createStatsRouter(hasDb ? dbStatsRepository : noopStatsRepository));
+
+// Serve the built client for a single-origin deploy (e.g. Railway behind the
+// Discord proxy). Compiled to packages/server/dist, so the client build sits at
+// ../../client/dist. In local dev Vite serves the client, so the build won't
+// exist here and this stays inert.
+const clientDist = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '..',
+  '..',
+  'client',
+  'dist',
+);
+if (fs.existsSync(clientDist)) {
+  app.use(express.static(clientDist));
+  // SPA fallback: hand any non-API, non-socket route to the client's index.html.
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api') || req.path.startsWith('/socket.io')) return next();
+    res.sendFile(path.join(clientDist, 'index.html'));
+  });
+  console.log(`[server] serving client from ${clientDist}`);
+}
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3001;
 httpServer.listen(PORT, () => {
