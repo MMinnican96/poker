@@ -129,6 +129,8 @@ export class GameRoom {
   private readonly onEnd?: (gameId: string) => void;
   /** Set by rooms/index.ts to notify the lobby when the membership roster changes. */
   onMembershipChange?: () => void;
+  /** Set by rooms/index.ts to push a player's updated bankroll to the lobby. */
+  onChipBalanceChange?: (playerId: string, bankroll: number) => void;
 
   private members: Member[] = [];
   private dealerIndex = 0;
@@ -183,6 +185,8 @@ export class GameRoom {
           idempotencyKey: `${this.gameId}:buyin:${m.discordUserId}:${m.seatSession}`,
         });
         m.chipStack = this.config.buyIn;
+        m.bankroll -= this.config.buyIn;
+        this.onChipBalanceChange?.(m.discordUserId, m.bankroll);
       }),
     );
     if (this.stopped) return;
@@ -224,6 +228,8 @@ export class GameRoom {
           idempotencyKey: `${this.gameId}:buyin:${m.discordUserId}:${m.seatSession}`,
         });
         m.chipStack = this.config.buyIn;
+        m.bankroll -= this.config.buyIn;
+        this.onChipBalanceChange?.(m.discordUserId, m.bankroll);
         m.role = 'seated';
         membershipChanged = true;
       } else if (m.pending === 'spectate' && m.role === 'seated') {
@@ -531,6 +537,8 @@ export class GameRoom {
     if (m.chipStack <= 0) return;
     const amount = m.chipStack;
     m.chipStack = 0;
+    m.bankroll += amount;
+    this.onChipBalanceChange?.(m.discordUserId, m.bankroll);
     await this.chips.adjust({
       playerId: m.discordUserId,
       amount,

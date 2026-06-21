@@ -71,6 +71,7 @@ export function registerSocketHandlers(io: LobbyIo, options: SocketHandlerOption
       const lobbyRoom = lobbies.get(room.instanceId);
       lobbyRoom?.setActiveGameProvider(() => ({ summary: game.summary(), memberIds: game.memberIds() }));
       game.onMembershipChange = () => lobbyRoom?.broadcastState();
+      game.onChipBalanceChange = (id, bal) => lobbies.get(room.instanceId)?.updateChipBalance(id, bal);
       void game.start();
       options.onGameStart?.(room, players, gameId);
     },

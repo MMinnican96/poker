@@ -107,3 +107,20 @@ describe('LobbyRoom host model', () => {
     expect(st.players.every((p) => !p.isReady)).toBe(true);
   });
 });
+
+describe('LobbyRoom chip balances', () => {
+  it('updateChipBalance updates the stored balance', () => {
+    const r = room();
+    r.addPlayer(id('a', 3000), 'sa');
+    r.updateChipBalance('a', 1500);
+    expect(r.toState().players.find((p) => p.discordUserId === 'a')!.chipBalance).toBe(1500);
+  });
+
+  it('addPlayer preserves a live balance across a rejoin', () => {
+    const r = room();
+    r.addPlayer(id('a', 3000), 'sa');
+    r.updateChipBalance('a', 500);
+    r.addPlayer(id('a', 3000), 'sa2'); // rejoin with a stale identity balance
+    expect(r.toState().players.find((p) => p.discordUserId === 'a')!.chipBalance).toBe(500);
+  });
+});

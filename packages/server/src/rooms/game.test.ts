@@ -613,3 +613,29 @@ describe('GameRoom waiting view', () => {
     room.stop();
   });
 });
+
+describe('GameRoom chip-balance reporting', () => {
+  it('reports the updated bankroll on buy-in and cash-out', async () => {
+    const io = makeFakeIo();
+    const chips = makeFakeChips();
+    const room = makeRoom(io, chips.service);
+    const updates: { id: string; bal: number }[] = [];
+    room.onChipBalanceChange = (id, bal) => updates.push({ id, bal });
+    await room.start();
+
+    // Buy-in deducts the 3000 stake from each 3000 bankroll → 0.
+    expect(updates).toContainEqual({ id: 'a', bal: 0 });
+    expect(updates).toContainEqual({ id: 'b', bal: 0 });
+
+    // Conclude a hand, then both leave → cash-outs credit their stacks back.
+    const concluded = io.waitFor('hand_result');
+    room.handleAction('a', { type: 'fold' });
+    await concluded;
+    room.leave('a');
+    room.leave('b');
+
+    expect(updates.some((u) => u.id === 'a' && u.bal > 0)).toBe(true);
+    expect(updates.some((u) => u.id === 'b' && u.bal > 0)).toBe(true);
+    room.stop();
+  });
+});
