@@ -395,10 +395,10 @@ interface ActiveGameSummary {
 }
 ```
 
-Table members are **filtered out of the lobby player list** (a `MemberProvider`
-interface is injected into `LobbyRoom` so it can ask the current `GameRoom` which
-players are at the table). `GameRoom` calls `onMembershipChange()` whenever
-membership changes so the lobby re-broadcasts immediately.
+Table members are **no longer filtered out** of the lobby player list; instead the
+client tags each player by their `activeGame.members` role (see *Lobby host model*
+below). `GameRoom` calls `onMembershipChange()` whenever membership changes so the
+lobby re-broadcasts immediately.
 
 ### `joined_table` / `left_table` view-switch protocol
 
@@ -422,11 +422,41 @@ Client→server events that drive transitions:
 | `cancel_pending` | Undo a queued transition |
 | `leave_table` | Leave the table (deferred to hand end if seated; immediate if spectator) |
 
+### Lobby host model (Create a Game)
+
+There is no implicit host. `LobbyRoom` tracks a nullable, transferable `hostId`
+surfaced in `LobbyState`. When `hostId` is null and no game is active, every
+lobby player edits a **local** draft of the table config and can click **Create a
+Game** (`create_game`), which sets them as host. The host can keep editing the
+config (`update_config`, host-only while forming), **Cancel Game** (`cancel_game`)
+to disband back to the open state, or **Start** the countdown (host-only). If the
+host leaves while forming or in countdown, `removeBySocket` transfers `hostId` to
+the next player (or null). When the active game ends, `resetAfterGame` clears the
+host + ready flags and reopens the lobby.
+
+Table members are **no longer filtered out** of `LobbyState.players`; the client
+tags each player by their `activeGame.members` role: `In-Game · At Table`
+(seated) or `In-Game · Spectating` (spectator), falling back to `Ready` /
+`In Lobby`. Live bankroll changes flow from `GameRoom.onChipBalanceChange`
+(fired on every buy-in/sit-in/cash-out) into `LobbyRoom.updateChipBalance`, so the
+lobby chip column stays current without a reload.
+
+### Rendering an idle table
+
+`GameRoom.currentView(viewerId)` returns the live engine view only while a hand is
+in progress with ≥2 seated; otherwise it builds a board-free **waiting view** from
+the *current* seated members. This is what removes a player who left/spectated
+from the table (they no longer appear in `state.players`, only under
+`spectators`). A freshly-mounted or reconnecting client pulls the current view via
+the `request_game_state` event (handled by `GameRoom.sendStateTo`).
+
 ## Lobby & countdown logic
 
 `LobbyManager` ([`rooms/lobby.ts`](../packages/server/src/rooms/lobby.ts)) keys a
-`LobbyRoom` per `instanceId`. The first joiner is **host** (may edit config while
-waiting, before anyone readies). The countdown is a server-side `setTimeout`:
+`LobbyRoom` per `instanceId`. There is **no implicit host** — the lobby opens with
+`hostId: null`, and the host is whoever clicks **Create a Game** (see *Lobby host
+model* above; host edits config while forming, before the countdown). The
+countdown is a server-side `setTimeout`:
 any ready player can cancel it, it does **not** reset when new players ready
 mid-countdown, and at expiry it re-validates that ≥2 players still hold ≥ buy-in
 before creating the game.

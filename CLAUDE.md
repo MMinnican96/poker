@@ -104,10 +104,20 @@ After any change, verify with `npm test` and `npm run build` before claiming don
   `applyPending()`. A busted player is auto-moved to spectator at settle. Table
   idles at exactly 1 seated player (`waitingForPlayers`) and ends at 0, ejecting
   everyone to the lobby via `left_table`. The lobby folds a cards-free
-  `ActiveGameSummary` into `LobbyState.activeGame` and filters table members out
-  of the lobby player list. Client lobby↔table routing is driven by
-  `joined_table` / `left_table` events (not the old `game_start` event). See
-  `docs/ARCHITECTURE.md` → Table membership.
+  `ActiveGameSummary` into `LobbyState.activeGame`. Table members are **no longer
+  filtered out** of `LobbyState.players` — the client tags each by their
+  `activeGame.members` role (`In-Game · At Table` / `In-Game · Spectating`, else
+  `Ready` / `In Lobby`). An **idle table renders a board-free waiting view** built
+  from the current seated members (`GameRoom.currentView`), so a player who
+  left/spectated drops off the table immediately. Live bankroll is pushed to the
+  lobby via `GameRoom.onChipBalanceChange` → `LobbyRoom.updateChipBalance` (fires
+  on buy-in/sit-in/cash-out; works in mock mode). **Host model is explicit**: a
+  nullable, transferable `hostId` in `LobbyState` (no implicit "first joiner is
+  host") with `create_game` / `cancel_game` / `request_game_state` events;
+  `update_config` is host-only while forming. Client lobby↔table routing is driven
+  by `joined_table` / `left_table` events (not the old `game_start` event), and a
+  freshly-mounted/reconnecting client pulls the current table view via
+  `request_game_state` on entry. See `docs/ARCHITECTURE.md` → Table membership.
 - **Security**: the deck is never part of `GameState` (lives in the server-only
   `HandContext`); opponents' hole cards are nulled via `viewFor()` until showdown.
   Identity is resolved server-side from the OAuth code — never trust client claims.

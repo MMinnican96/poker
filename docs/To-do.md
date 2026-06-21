@@ -11,8 +11,8 @@
 - XP/Challenges - Levels. Could relate to unlocks etc.
 - Shop - Titles
 - Admin
-- Host/Player
-- Player Status - 'In-Game, Ready, In Lobby. - Could expand to discord status as well.
+- Host/Player ✅
+- Player Status - 'In-Game, Ready, In Lobby. - Could expand to discord status as well. ✅
 - Recent Acitivity
 - User Settings
 - Full Profile Pages
@@ -43,8 +43,8 @@
 - When a player runs out of money and busts they are left at the table (if there are only two players the table gets stuck and can't start the next hand).
 - There is no way to exit the table back to the lobby
 - When a player goes all in, if a player follows who has more credits and ticks all in it puts them all in as well, whereas instead it should just call with the correct amount of chips.
-- When the game first launches and it is not the players turn the screen is blank until it becomes your turn. Once it is your turn the table shows properly and remains as showing properly. Thjis seems like it can also happen for the initial player.
-- When a player at the table goes into spectate/leaves the table (only tested with 2 players at table and one goes to spectate) the player who went to spectate/left still shows on the table whereas they should be moved off the table.
-- There is no way to cancel spectate/rejoin the table in the UI once a player is in spectate.
-- The status that shows on the player list in the lobby doesn't update when a player returns back to lobby - for example if a player leaves the table the lobby list should show then as In Lobby once they are exited back to the lobby after the hand - it currently shows as In-Game. We should also look at adding additional states like 'In-Game - Spectating' and 'In-Game - At Table'. This seems to be a refresh issue where the lobby isn't actually refreshed with up to date info as chip values didn't change either until I reloaded the game for both players.
-- It also looks like the ability to start a new table after everyone has left an active table doesn't work correctly and doesn't ttrack who should be host/player. I tested with 2 players at the table, the host of the initial game left after the player of the initial game and when back at lobby, the player on the initial game can ready up but the host of the initial game can't start the game. We need to track a new host after they have left. Worth refactoring Host/Player so it is not first person to join the lobby, instead when there is no active game the Table Settings should allow anyone to click 'Create a Game' using the settings they have selected. Once a game is hosted the player view changes to be able to ready up like it is now. That way if a table ends someone can host a game rather than it having to be the first person back to the lobby.
+- ✅ When the game first launches and it is not the players turn the screen is blank until it becomes your turn. Once it is your turn the table shows properly and remains as showing properly. Thjis seems like it can also happen for the initial player.
+- ✅ When a player at the table goes into spectate/leaves the table (only tested with 2 players at table and one goes to spectate) the player who went to spectate/left still shows on the table whereas they should be moved off the table.
+- ✅ There is no way to cancel spectate/rejoin the table in the UI once a player is in spectate.
+- ✅ The status that shows on the player list in the lobby doesn't update when a player returns back to lobby - for example if a player leaves the table the lobby list should show then as In Lobby once they are exited back to the lobby after the hand - it currently shows as In-Game. We should also look at adding additional states like 'In-Game - Spectating' and 'In-Game - At Table'. This seems to be a refresh issue where the lobby isn't actually refreshed with up to date info as chip values didn't change either until I reloaded the game for both players.
+- ✅ It also looks like the ability to start a new table after everyone has left an active table doesn't work correctly and doesn't ttrack who should be host/player. I tested with 2 players at the table, the host of the initial game left after the player of the initial game and when back at lobby, the player on the initial game can ready up but the host of the initial game can't start the game. We need to track a new host after they have left. Worth refactoring Host/Player so it is not first person to join the lobby, instead when there is no active game the Table Settings should allow anyone to click 'Create a Game' using the settings they have selected. Once a game is hosted the player view changes to be able to ready up like it is now. That way if a table ends someone can host a game rather than it having to be the first person back to the lobby.
