@@ -337,5 +337,11 @@ faked chip ledger.
 | Discord can't load the Activity | Re-check the URL override (must be the current tunnel URL) and the `/api` URL mapping. |
 | Tunnel host rejected by Vite | Confirmed allowed via `allowedHosts: ['.trycloudflare.com']` in `packages/client/vite.config.ts`. |
 | `db:push` fails with `column "discord_user_id" is in a primary key` (42P16) | Postgres 17/18 with drizzle-kit < 0.31. Upgrade it: `npm i -D drizzle-kit@^0.31 -w @poker/server` (already pinned in this repo). |
+| **(Railway)** Activity shows `Auth failed: 500` | The server threw during `/api/auth/token`. The browser only shows `500` — read the real error in the Railway app logs (`[auth] token exchange failed: …`) and match it to the rows below. |
+| **(Railway)** Auth log shows `ECONNREFUSED 127.0.0.1:5432` / `::1:5432` | The app service's `DATABASE_URL` isn't resolving to Railway Postgres, so `pg` falls back to localhost. Set it to the reference `${{Postgres.DATABASE_URL}}` (use the variable reference picker; the service name must match). Reveal the resolved value — it should be the private `…@postgres.railway.internal:5432/…` host, never localhost. |
+| **(Railway)** Auth log shows `Discord token exchange failed (401)` / `invalid_client` | Wrong/missing `DISCORD_CLIENT_SECRET` on the app service. Re-copy it from the Discord portal. |
+| **(Railway)** Auth log shows `DISCORD_BOT_TOKEN is not set` | Bot token missing — `fetchGuildMember` needs it when the activity passes a `guildId`. Set `DISCORD_BOT_TOKEN` on the app service. |
+| **(Railway)** No `[server] serving client from …` in logs / blank page at `/` | The client build didn't land at `packages/client/dist`. Confirm `npm run build` ran (it's the `buildCommand` in `railway.json`) and built all three packages. |
+| **(Railway)** Build error: `No start command detected` | Railpack needs a root `start` script — present in `package.json` (`"start": "npm run start --workspace=packages/server"`) and pinned in `railway.json`. |
 
 For how it all fits together, see [ARCHITECTURE.md](./ARCHITECTURE.md).

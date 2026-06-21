@@ -54,9 +54,10 @@ All 7 implementation batches are complete (scaffold → engine → lobby → gam
 backend → Phaser UI → edge cases → docs), plus the Ratbag Poker Night lobby
 redesign (Tailwind v4 + component folder + host-configurable turn timer), player
 statistics tracking, and the **spectate / join / leave table** system. Tests
-pass (server + client); all packages build.
-Current focus: **live setup** — wiring a real Discord application + local
-PostgreSQL so it can launch inside Discord (see `docs/SETUP.md`, path B).
+pass (server + client); all packages build. The app is **deployed to production
+on Railway** (single always-on service serving client + server + WebSocket, with
+Railway Postgres) — see `docs/SETUP.md`, path C.
+Current focus: live operation on Railway + iterating on gameplay/UI.
 
 Player statistics tracking (per-hand fact table + per-player aggregates + read
 APIs at `/api/stats`) is implemented; see
@@ -82,6 +83,10 @@ After any change, verify with `npm test` and `npm run build` before claiming don
   server uses an in-memory chip ledger when `DATABASE_URL` is unset.
 - **Real Discord**: requires a Discord app + local Postgres (the auth route
   upserts players into the DB). Full steps in `docs/SETUP.md` path B.
+- **Production (Railway)**: one always-on Railway service runs the server, which
+  also serves the built client (single origin behind the Discord proxy), backed
+  by a Railway Postgres service in the same project. Full steps in `docs/SETUP.md`
+  path C; hosting methodology in Conventions below.
 
 ## Conventions & gotchas
 
@@ -90,6 +95,28 @@ After any change, verify with `npm test` and `npm run build` before claiming don
   server loads it via `packages/server/src/env.ts` (resolves `../../.env` from the
   workspace cwd); the Vite client reads it via `envDir` → repo root. `.env.example`
   is the template.
+- **Production hosting (Railway)** — the whole app is one **Railway service** plus
+  a **Railway Postgres** service in the same project. Methodology: **single
+  origin** — `packages/server/src/index.ts` serves the built client
+  (`express.static` on `../../client/dist` + SPA fallback, guarded by
+  `fs.existsSync` so local dev/Vite is unaffected), so client + REST + Socket.io
+  all share one domain behind the Discord `*.discordsays.com` proxy. Build/start
+  are pinned in repo-root **`railway.json`** (`builder: RAILPACK`,
+  `buildCommand: npm run build`, `startCommand: npm run start`,
+  `healthcheckPath: /api/health`); the root `package.json` also has a `start`
+  script delegating to `@poker/server` (Railpack needs a root start command).
+  Env vars live on the **app service** (not committed): `DATABASE_URL` is a
+  **Railway reference** `${{Postgres.DATABASE_URL}}` (private `*.railway.internal`
+  host — never a localhost URL, which is what an unresolved/wrong value silently
+  falls back to → `ECONNREFUSED 127.0.0.1:5432`), plus `DISCORD_CLIENT_ID` /
+  `DISCORD_CLIENT_SECRET` / `DISCORD_BOT_TOKEN` / `JWT_SECRET` /
+  `VITE_DISCORD_CLIENT_ID` (the last is **build-time**, inlined into the client
+  bundle — changing it needs a redeploy). **Do not set** `PORT` (Railway injects
+  it; server reads `process.env.PORT`), `VITE_SERVER_URL` (must stay empty so the
+  client uses same-origin), or `VITE_MOCK_DISCORD`. Private networking is
+  IPv6-only and **unavailable at build time**, so `db:push` runs locally against
+  the Postgres service's `DATABASE_PUBLIC_URL`, never in the build. Full runbook:
+  `docs/SETUP.md` path C.
 - **Chip model**: bankroll persists in `players.chip_balance`; chips move via
   `adjustChips()` in a single transaction with a **unique `idempotency_key`**.
   Buy-in/cash-out keys carry a per-seat `seatSession` counter (incremented each
@@ -193,7 +220,9 @@ After any change, verify with `npm test` and `npm run build` before claiming don
 
 - Persisting hand history to the games/hands audit tables (separate from the
   player_hand_stats fact table, which IS written).
-- Production deploy (Railway + Vercel) — migration notes in `docs/ARCHITECTURE.md`.
+- ~~Production deploy~~ — **done**: deployed to Railway (single service + Railway
+  Postgres). See `docs/SETUP.md` path C and the Railway hosting bullet in
+  Conventions.
 - Lobby UI deferred features (all marked Coming Soon / disabled in the current UI):
   player titles and levels; Shop, Leaderboard, and Stats tab data; friends / Add
   Friend; populated Recent Activity; user Settings toggles; full View Profile page;

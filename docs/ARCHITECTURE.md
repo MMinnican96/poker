@@ -532,17 +532,31 @@ from URL params when `import.meta.env.DEV && ?mock`, and the server falls back t
 the in-memory `ChipService` when `DATABASE_URL` is unset. See
 [SETUP.md → Quick local play](./SETUP.md#a-quick-local-play-no-discord-no-database).
 
-## Migration to production (Railway + Vercel)
+## Production hosting (Railway, single origin)
 
-The split is designed so going live is **env-only**:
+The app is deployed to **Railway** as **one always-on service** plus a **Railway
+Postgres** service in the same project. Rather than hosting client and server
+separately, the server **also serves the built client**, so everything lives on a
+single origin behind the Discord `*.discordsays.com` proxy:
 
-1. **Railway** — create a project, add a PostgreSQL service, deploy the `server`
-   package. Set `DATABASE_URL`, `DISCORD_*`, and `JWT_SECRET`. Run `npm run db:push`
-   against the production database.
-2. **Vercel** — deploy the `client` package; set `VITE_DISCORD_CLIENT_ID` and
-   `VITE_SERVER_URL` to the Railway URL.
-3. **Discord Developer Portal** — remove the Activity URL override (the Activity
-   URL becomes the Vercel URL) and point the `/api` URL mapping at the Railway URL.
+- `packages/server/src/index.ts` mounts `express.static` on `../../client/dist`
+  with an SPA fallback (any non-`/api`, non-`/socket.io` route → `index.html`),
+  guarded by `fs.existsSync` so local dev (Vite serves the client) is unaffected.
+- Build/start are pinned in repo-root **`railway.json`** (`builder: RAILPACK`,
+  `buildCommand: npm run build`, `startCommand: npm run start`,
+  `healthcheckPath: /api/health`). The root `package.json` also exposes a `start`
+  script delegating to `@poker/server`, which Railpack requires.
+- **DB connection**: the app service's `DATABASE_URL` is a Railway **reference**
+  (`${{Postgres.DATABASE_URL}}`) resolving to the **private** `*.railway.internal`
+  host (IPv6, no SSL, no egress). Schema is applied with `npm run db:push` run
+  **locally** against the Postgres service's `DATABASE_PUBLIC_URL` — private
+  networking is unavailable during build, so this is never a build step.
+- **Client env** (`VITE_DISCORD_CLIENT_ID`) is inlined at build time;
+  `VITE_SERVER_URL` is left empty so the client connects to the same origin.
+  `PORT` is injected by Railway and read via `process.env.PORT`.
+- **Discord Developer Portal** — map the root (`/`) URL mapping to the
+  `*.up.railway.app` domain; client, REST, and Socket.io all flow through it.
 
 CORS already allows `*.discordsays.com`, `*.trycloudflare.com`, and `localhost`,
-so no server code changes are required to switch environments.
+so no server code changes are required to switch environments. Full runbook:
+[SETUP.md → path C](./SETUP.md#path-c--deploy-to-production-railway--railway-postgres).
