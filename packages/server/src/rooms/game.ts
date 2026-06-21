@@ -481,9 +481,7 @@ export class GameRoom {
     member.socketId = socketId;
     member.disconnected = false;
     member.disconnectedAt = undefined;
-    if (this.ctx) {
-      this.io.to(socketId).emit('game_state_update', this.tableView(playerId));
-    }
+    this.io.to(socketId).emit('game_state_update', this.currentView(playerId));
   }
 
   private async endGame(): Promise<void> {
@@ -568,27 +566,76 @@ export class GameRoom {
     return this.members.filter((m) => m.role === 'spectator' && !m.left);
   }
 
-  /** The viewer's per-recipient view: sanitized cards + table-population fields. */
-  private tableView(viewerId: string): GameState {
-    const base = viewFor(this.ctx!.state, viewerId);
+  /** The viewer's per-recipient view: live engine view mid-hand, else a waiting view. */
+  private currentView(viewerId: string): GameState {
     const me = this.members.find((m) => m.discordUserId === viewerId);
+    if (this.handInProgress && this.ctx && this.seated().length >= 2) {
+      const base = viewFor(this.ctx.state, viewerId);
+      return {
+        ...base,
+        spectators: this.spectatorMembers().map((m) => ({
+          discordUserId: m.discordUserId,
+          displayName: m.displayName,
+          avatarUrl: m.avatarUrl,
+        })),
+        waitingForPlayers: false,
+        viewerPending: me?.pending ?? null,
+      };
+    }
+    return this.waitingView(viewerId);
+  }
+
+  /** A board-free view built from the *current* seated members (idle / between hands). */
+  private waitingView(viewerId: string): GameState {
+    const me = this.members.find((m) => m.discordUserId === viewerId);
+    const seated = this.seated();
     return {
-      ...base,
+      gameId: this.gameId,
+      instanceId: this.instanceId,
+      phase: 'waiting',
+      players: seated.map((m, i) => ({
+        discordUserId: m.discordUserId,
+        displayName: m.displayName,
+        avatarUrl: m.avatarUrl,
+        seatIndex: i,
+        chipStack: m.chipStack,
+        betThisRound: 0,
+        totalBetThisHand: 0,
+        holeCards: null,
+        status: 'active' as const,
+        hasActed: false,
+      })),
+      communityCards: [],
+      pots: [],
+      currentPlayerIndex: 0,
+      dealerIndex: 0,
+      smallBlindIndex: 0,
+      bigBlindIndex: 0,
+      callAmount: 0,
+      minRaise: this.config.bigBlind,
+      handNumber: this.handNumber,
+      config: this.config,
       spectators: this.spectatorMembers().map((m) => ({
         discordUserId: m.discordUserId,
         displayName: m.displayName,
         avatarUrl: m.avatarUrl,
       })),
-      waitingForPlayers: this.seated().length < 2,
+      waitingForPlayers: seated.length < 2,
       viewerPending: me?.pending ?? null,
     };
   }
 
+  /** Push the current view to one player's socket (e.g. on request_game_state). */
+  sendStateTo(playerId: string): void {
+    const m = this.members.find((x) => x.discordUserId === playerId && !x.left);
+    if (!m) return;
+    this.io.to(m.socketId).emit('game_state_update', this.currentView(playerId));
+  }
+
   private broadcastState(): void {
-    if (!this.ctx) return;
     for (const m of this.members) {
       if (m.left) continue;
-      this.io.to(m.socketId).emit('game_state_update', this.tableView(m.discordUserId));
+      this.io.to(m.socketId).emit('game_state_update', this.currentView(m.discordUserId));
     }
   }
 

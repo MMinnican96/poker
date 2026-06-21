@@ -578,3 +578,38 @@ describe('GameRoom bust handling', () => {
     room.stop();
   });
 });
+
+describe('GameRoom waiting view', () => {
+  it('does not render a player who left as seated, and lists them as a spectator', async () => {
+    const io = makeFakeIo();
+    const chips = makeFakeChips();
+    const room = makeRoom(io, chips.service);
+    await room.start();
+
+    // 'a' moves to spectate; finish the hand and resolve → 1 seated, table idles.
+    room.moveToSpectate('a');
+    room.handleAction('a', { type: 'fold' });
+    (room as unknown as { scheduleNextHand(): void }).scheduleNextHand();
+
+    const view = io.records
+      .filter((r) => r.target === 'sb' && r.event === 'game_state_update')
+      .at(-1)!.args[0] as GameState;
+    expect(view.players.some((p) => p.discordUserId === 'a')).toBe(false);
+    expect(view.players.map((p) => p.discordUserId)).toEqual(['b']);
+    expect(view.spectators?.some((s) => s.discordUserId === 'a')).toBe(true);
+    expect(view.waitingForPlayers).toBe(true);
+    room.stop();
+  });
+
+  it('sends the current view to a player who requests it', async () => {
+    const io = makeFakeIo();
+    const room = makeRoom(io, makeFakeChips().service);
+    await room.start();
+
+    const before = io.records.filter((r) => r.target === 'sa' && r.event === 'game_state_update').length;
+    room.sendStateTo('a');
+    const after = io.records.filter((r) => r.target === 'sa' && r.event === 'game_state_update').length;
+    expect(after).toBe(before + 1);
+    room.stop();
+  });
+});

@@ -110,6 +110,10 @@ export function registerSocketHandlers(io: LobbyIo, options: SocketHandlerOption
       const game = gameFor(socket);
       if (game && socket.data.discordUserId) game.handleAction(socket.data.discordUserId, action);
     });
+    socket.on('request_game_state', () => {
+      const game = gameFor(socket);
+      if (game && socket.data.discordUserId) game.sendStateTo(socket.data.discordUserId);
+    });
     socket.on('leave_table', () => {
       const game = gameFor(socket);
       if (game && socket.data.discordUserId) game.leave(socket.data.discordUserId);
