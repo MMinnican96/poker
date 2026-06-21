@@ -4,6 +4,7 @@ import type { ClientSocket } from '../socket';
 import { Header, type LobbyTab } from './Header';
 import { PlayersPanel } from './PlayersPanel';
 import { TableSettings } from './TableSettings';
+import { ActiveGameCard } from './ActiveGameCard';
 import { ComingSoon } from './ComingSoon';
 import { RecentActivity } from './RecentActivity';
 import { UserPopout } from './UserPopout';
@@ -14,10 +15,9 @@ export interface LobbyScreenProps {
   socket: ClientSocket;
   identity: DiscordIdentity;
   instanceId: string;
-  onGameStart: (gameId: string) => void;
 }
 
-export function LobbyScreen({ socket, identity, instanceId, onGameStart }: LobbyScreenProps) {
+export function LobbyScreen({ socket, identity, instanceId }: LobbyScreenProps) {
   const [lobby, setLobby] = useState<LobbyState | null>(null);
   const [now, setNow] = useState(Date.now());
   const [tab, setTab] = useState<LobbyTab>('home');
@@ -27,15 +27,12 @@ export function LobbyScreen({ socket, identity, instanceId, onGameStart }: Lobby
   const { stats: myStats } = useStats(userOpen ? identity.discordUserId : null);
 
   useEffect(() => {
-    const handleGameStart = ({ gameId }: { gameId: string }) => onGameStart(gameId);
     socket.emit('join_lobby', { instanceId, identity });
     socket.on('lobby_state_update', setLobby);
-    socket.on('game_start', handleGameStart);
     return () => {
       socket.off('lobby_state_update', setLobby);
-      socket.off('game_start', handleGameStart);
     };
-  }, [socket, instanceId, identity, onGameStart]);
+  }, [socket, instanceId, identity]);
 
   useEffect(() => {
     if (lobby?.status !== 'countdown') return;
@@ -99,24 +96,27 @@ export function LobbyScreen({ socket, identity, instanceId, onGameStart }: Lobby
         />
 
         <section className="min-w-[336px] flex-1 overflow-y-auto overflow-x-hidden p-1">
-          {tab === 'home' && (
-            <TableSettings
-              config={lobby.config}
-              canEditConfig={canEditConfig}
-              isHost={isHost}
-              status={lobby.status}
-              readyCount={readyCount}
-              playerCount={lobby.players.length}
-              secondsLeft={secondsLeft}
-              meIsReady={me?.isReady ?? false}
-              canStart={canStart}
-              insufficientChips={insufficientChips}
-              onUpdateConfig={updateConfig}
-              onReadyToggle={() => socket.emit(me?.isReady ? 'player_unready' : 'player_ready')}
-              onStartCountdown={startCountdown}
-              onCancelCountdown={() => socket.emit('cancel_countdown')}
-              onLeave={() => socket.emit('leave_table')}
-            />
+          {tab === 'home' && (lobby.activeGame
+            ? <ActiveGameCard activeGame={lobby.activeGame} onJoinTable={() => socket.emit('join_table')} />
+            : (
+              <TableSettings
+                config={lobby.config}
+                canEditConfig={canEditConfig}
+                isHost={isHost}
+                status={lobby.status}
+                readyCount={readyCount}
+                playerCount={lobby.players.length}
+                secondsLeft={secondsLeft}
+                meIsReady={me?.isReady ?? false}
+                canStart={canStart}
+                insufficientChips={insufficientChips}
+                onUpdateConfig={updateConfig}
+                onReadyToggle={() => socket.emit(me?.isReady ? 'player_unready' : 'player_ready')}
+                onStartCountdown={startCountdown}
+                onCancelCountdown={() => socket.emit('cancel_countdown')}
+                onLeave={() => socket.emit('leave_table')}
+              />
+            )
           )}
           {tab === 'leaderboard' && <ComingSoon title="Leaderboard" />}
           {tab === 'stats' && <ComingSoon title="Stats" />}

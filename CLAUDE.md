@@ -35,7 +35,8 @@ packages/
 - **engine/** — pure poker rules (deck, hand-evaluator, pot, blinds, actions,
   game-state, showdown). No I/O. Fully unit-tested. Keep it pure.
 - **rooms/** — `LobbyManager` (ready/countdown), `GameRoom` (drives the engine,
-  turn timer, chip ledger, per-viewer state sanitization, **stats capture**),
+  turn timer, chip ledger, per-viewer state sanitization, **stats capture**,
+  **table membership** — seated + spectators, hand-boundary transition resolver),
   `hand-stats.ts` (pure per-hand stat tracker + fact assembly), `state-view.ts`.
 - **db/** — `schema.ts`, `index.ts` (pool + `adjustChips`), and the stats layer:
   `stats.ts` (DB-backed `StatsService` writer + `StatsRepository` reads),
@@ -48,7 +49,8 @@ See `docs/ARCHITECTURE.md` for the full picture and `docs/SETUP.md` to run it.
 
 All 7 implementation batches are complete (scaffold → engine → lobby → game
 backend → Phaser UI → edge cases → docs), plus the Ratbag Poker Night lobby
-redesign (Tailwind v4 + component folder + host-configurable turn timer). Tests
+redesign (Tailwind v4 + component folder + host-configurable turn timer), player
+statistics tracking, and the **spectate / join / leave table** system. Tests
 pass (server + client); all packages build.
 Current focus: **live setup** — wiring a real Discord application + local
 PostgreSQL so it can launch inside Discord (see `docs/SETUP.md`, path B).
@@ -87,10 +89,25 @@ After any change, verify with `npm test` and `npm run build` before claiming don
   is the template.
 - **Chip model**: bankroll persists in `players.chip_balance`; chips move via
   `adjustChips()` in a single transaction with a **unique `idempotency_key`**.
-  Buy-in deducted at game start (`${gameId}:buyin:${id}`), remaining stack cashed
-  out on leave/game-end (`${gameId}:cashout:${id}`). Live game state is in memory;
-  bankroll + ledger + **player stats** are persisted (the `games`/`hands` audit
-  tables exist but still aren't written — stats use their own tables, below).
+  Buy-in/cash-out keys carry a per-seat `seatSession` counter (incremented each
+  time a player takes a seat) so a player who leaves and rejoins the same game
+  re-deducts correctly:
+  `${gameId}:buyin:${id}:${seatSession}` / `${gameId}:cashout:${id}:${seatSession}`.
+  Live game state is in memory; bankroll + ledger + **player stats** are persisted
+  (the `games`/`hands` audit tables exist but still aren't written — stats use
+  their own tables, below).
+- **Table membership (spectate / join / leave)**: `GameRoom` owns the full table
+  population as role-tagged `Member[]` (`role: 'seated' | 'spectator'`).
+  Spectators receive a sanitized table view but are never dealt in. Transitions
+  (spectator→seated `sit_in`, seated→spectator `sit_out`, deferred/immediate
+  `leave_table`, `cancel_pending`) resolve at **hand boundaries** via
+  `applyPending()`. A busted player is auto-moved to spectator at settle. Table
+  idles at exactly 1 seated player (`waitingForPlayers`) and ends at 0, ejecting
+  everyone to the lobby via `left_table`. The lobby folds a cards-free
+  `ActiveGameSummary` into `LobbyState.activeGame` and filters table members out
+  of the lobby player list. Client lobby↔table routing is driven by
+  `joined_table` / `left_table` events (not the old `game_start` event). See
+  `docs/ARCHITECTURE.md` → Table membership.
 - **Security**: the deck is never part of `GameState` (lives in the server-only
   `HandContext`); opponents' hole cards are nulled via `viewFor()` until showdown.
   Identity is resolved server-side from the OAuth code — never trust client claims.

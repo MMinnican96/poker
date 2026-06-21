@@ -12,7 +12,7 @@ type Status =
 
 export function App() {
   const [status, setStatus] = useState<Status>({ phase: 'connecting' });
-  const [gameId, setGameId] = useState<string | null>(null);
+  const [atTable, setAtTable] = useState(false);
   const socketRef = useRef<ClientSocket | null>(null);
 
   useEffect(() => {
@@ -33,6 +33,19 @@ export function App() {
     };
   }, []);
 
+  useEffect(() => {
+    if (status.phase !== 'ready') return;
+    const socket = socketRef.current!;
+    const onJoined = () => setAtTable(true);
+    const onLeft = () => setAtTable(false);
+    socket.on('joined_table', onJoined);
+    socket.on('left_table', onLeft);
+    return () => {
+      socket.off('joined_table', onJoined);
+      socket.off('left_table', onLeft);
+    };
+  }, [status.phase]);
+
   if (status.phase === 'connecting') return <Centered>Connecting to Discord…</Centered>;
 
   if (status.phase === 'error') {
@@ -50,7 +63,7 @@ export function App() {
     );
   }
 
-  if (gameId) {
+  if (atTable) {
     return <GameCanvas socket={socketRef.current!} identity={status.identity} />;
   }
 
@@ -59,7 +72,6 @@ export function App() {
       socket={socketRef.current!}
       identity={status.identity}
       instanceId={status.instanceId}
-      onGameStart={setGameId}
     />
   );
 }

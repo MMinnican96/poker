@@ -1,6 +1,7 @@
 import type { Server } from 'socket.io';
 import { randomUUID } from 'node:crypto';
 import type {
+  ActiveGameSummary,
   ClientToServerEvents,
   DiscordIdentity,
   InterServerEvents,
@@ -42,6 +43,7 @@ export class LobbyRoom {
   private countdownTimer: ReturnType<typeof setTimeout> | null = null;
   /** First player to join is the host (may edit config before anyone readies). */
   private hostId: string | null = null;
+  private activeGameProvider: (() => { summary: ActiveGameSummary; memberIds: string[] } | null) | null = null;
 
   constructor(
     instanceId: string,
@@ -160,13 +162,25 @@ export class LobbyRoom {
     this.options.onGameStart?.(this, funded, gameId);
   }
 
+  setActiveGameProvider(fn: (() => { summary: ActiveGameSummary; memberIds: string[] } | null) | null): void {
+    this.activeGameProvider = fn;
+  }
+
+  /** Public re-broadcast hook (used when game membership changes). */
+  broadcastState(): void {
+    this.broadcast();
+  }
+
   toState(): LobbyState {
+    const active = this.activeGameProvider?.() ?? null;
+    const tableIds = new Set(active?.memberIds ?? []);
     return {
       instanceId: this.instanceId,
-      players: [...this.players.values()],
+      players: [...this.players.values()].filter((p) => !tableIds.has(p.discordUserId)),
       status: this.status,
       countdownEndsAt: this.countdownEndsAt,
       config: this.config,
+      activeGame: active?.summary ?? null,
     };
   }
 

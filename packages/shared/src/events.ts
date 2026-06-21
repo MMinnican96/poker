@@ -4,6 +4,7 @@ import type {
   PlayerAction,
   TableConfig,
   DiscordIdentity,
+  TableRole,
 } from './types.js';
 
 export interface ServerToClientEvents {
@@ -21,6 +22,8 @@ export interface ServerToClientEvents {
     finalState: GameState;
   }) => void;
   error: (data: { message: string }) => void;
+  joined_table: (data: { gameId: string; role: TableRole }) => void;
+  left_table: () => void;
 }
 
 export interface ClientToServerEvents {
@@ -32,6 +35,10 @@ export interface ClientToServerEvents {
   update_config: (config: Partial<TableConfig>) => void;
   player_action: (action: PlayerAction) => void;
   leave_table: () => void;
+  join_table: () => void;
+  sit_in: () => void;
+  sit_out: () => void;
+  cancel_pending: () => void;
 }
 
 export interface InterServerEvents {
@@ -43,4 +50,5 @@ export interface SocketData {
   instanceId: string;
   displayName: string;
   avatarUrl: string;
+  chipBalance: number;
 }

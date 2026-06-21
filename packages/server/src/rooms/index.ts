@@ -55,15 +55,22 @@ export function registerSocketHandlers(io: LobbyIo, options: SocketHandlerOption
           displayName: p.displayName,
           avatarUrl: p.avatarUrl,
           socketId: p.socketId,
+          bankroll: p.chipBalance,
         })),
         chips: options.chips,
         stats: options.stats,
         timing: { ...options.gameTiming, turnMs: options.gameTiming?.turnMs ?? config.turnSeconds * 1000 },
         onEnd: (id) => {
           if (games.get(room.instanceId)?.gameId === id) games.delete(room.instanceId);
+          const lr = lobbies.get(room.instanceId);
+          lr?.setActiveGameProvider(null);
+          lr?.broadcastState();
         },
       });
       games.set(room.instanceId, game);
+      const lobbyRoom = lobbies.get(room.instanceId);
+      lobbyRoom?.setActiveGameProvider(() => ({ summary: game.summary(), memberIds: game.memberIds() }));
+      game.onMembershipChange = () => lobbyRoom?.broadcastState();
       void game.start();
       options.onGameStart?.(room, players, gameId);
     },
@@ -76,6 +83,7 @@ export function registerSocketHandlers(io: LobbyIo, options: SocketHandlerOption
       socket.data.discordUserId = identity.discordUserId;
       socket.data.displayName = identity.displayName;
       socket.data.avatarUrl = identity.avatarUrl;
+      socket.data.chipBalance = identity.chipBalance;
 
       void socket.join(instanceId);
       lobbies.getOrCreate(instanceId).addPlayer(identity, socket.id);
@@ -103,6 +111,21 @@ export function registerSocketHandlers(io: LobbyIo, options: SocketHandlerOption
       if (game && socket.data.discordUserId) game.leave(socket.data.discordUserId);
     });
 
+    socket.on('join_table', () => {
+      const game = gameFor(socket);
+      if (!game || !socket.data.discordUserId) return;
+      game.addSpectator({
+        discordUserId: socket.data.discordUserId,
+        displayName: socket.data.displayName,
+        avatarUrl: socket.data.avatarUrl,
+        socketId: socket.id,
+        bankroll: socket.data.chipBalance ?? 0,
+      });
+    });
+    socket.on('sit_in', () => routeMember(socket, (g, id) => g.requestSeat(id)));
+    socket.on('sit_out', () => routeMember(socket, (g, id) => g.moveToSpectate(id)));
+    socket.on('cancel_pending', () => routeMember(socket, (g, id) => g.cancelPending(id)));
+
     socket.on('disconnect', () => {
       withLobby(socket, (room) => room.removeBySocket(socket.id));
       gameFor(socket)?.handleDisconnect(socket.id);
@@ -119,6 +142,11 @@ export function registerSocketHandlers(io: LobbyIo, options: SocketHandlerOption
   function gameFor(socket: LobbySocket): GameRoom | undefined {
     const instanceId = socket.data.instanceId;
     return instanceId ? games.get(instanceId) : undefined;
+  }
+
+  function routeMember(socket: LobbySocket, fn: (g: GameRoom, id: string) => void) {
+    const game = gameFor(socket);
+    if (game && socket.data.discordUserId) fn(game, socket.data.discordUserId);
   }
 
   return lobbies;

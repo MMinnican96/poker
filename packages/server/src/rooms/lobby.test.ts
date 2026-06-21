@@ -139,6 +139,24 @@ describe('lobby flow', () => {
     expect((await applied).config.turnSeconds).toBe(45);
   });
 
+  // un-skipped in Task 9
+  it('moves a join_table spectator out of the player list and into activeGame', async () => {
+    const a = await connect(); const b = await connect(); const c = await connect();
+    a.emit('join_lobby', { instanceId: 'spec', identity: identity('a', 5000) });
+    b.emit('join_lobby', { instanceId: 'spec', identity: identity('b', 5000) });
+    c.emit('join_lobby', { instanceId: 'spec', identity: identity('c', 5000) });
+    a.emit('player_ready'); b.emit('player_ready');
+    // Wait until a and b are ready (c stays unready, remains in lobby as watcher).
+    await waitForState(c, (s) => s.players.length === 3 && s.players.filter((p) => p.isReady).length === 2);
+    a.emit('start_countdown');
+    await once(c, 'game_start');
+    // c is still in lobby; join the running game as a spectator.
+    c.emit('join_table');
+    const s = await waitForState(c, (st) => st.activeGame?.spectatingCount === 1);
+    expect(s.players.some((p) => p.discordUserId === 'c')).toBe(false);
+    expect(s.activeGame?.members.some((m) => m.discordUserId === 'c' && m.role === 'spectator')).toBe(true);
+  });
+
   it('rejects out-of-range or non-step turnSeconds', async () => {
     const instanceId = 'flow-turnseconds-invalid';
     const host = await connect();
