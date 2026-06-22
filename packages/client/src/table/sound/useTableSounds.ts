@@ -19,6 +19,7 @@ export function rateForRaiseStep(step: number): number {
  * detect aggression by a rise in callAmount (robust to the same player
  * re-raising, whose lastAction stays 'raise'), reset the suspense streak at each
  * new street, and read passive/terminal actions from lastAction transitions.
+ * @param manager must be a stable reference across renders (e.g. created via useRef/useMemo); it is in the effect dependency array.
  */
 export function useTableSounds(view: GameState | null, manager: SoundManager): void {
   const prevRef = useRef<GameState | null>(null);

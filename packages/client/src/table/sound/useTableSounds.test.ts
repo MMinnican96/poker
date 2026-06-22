@@ -99,6 +99,16 @@ describe('useTableSounds', () => {
     expect(names()).toContain('bet');
   });
 
+  it('plays bet and resets the streak on a passive (call-size) all-in', () => {
+    const f0 = base();
+    const f1 = withLast(frame({ callAmount: 100 }), 'a', 'raise');   // a raises → suspense 1.0
+    const f2 = withLast(frame({ callAmount: 100 }), 'b', 'all-in');  // b shoves the call amount; callAmount flat
+    const f3 = withLast(frame({ callAmount: 200 }), 'a', 'raise');   // a raises again → should be base pitch again
+    run([f0, f1, f2, f3]);
+    expect(fm.calls.filter((c) => c.name === 'bet')).toHaveLength(3); // raise + all-in(call) + raise
+    expect(suspense().pop()!.rate).toBeCloseTo(1.0);                 // streak reset by the passive all-in
+  });
+
   it('plays check and fold sounds', () => {
     run([base(), withLast(base(), 'a', 'check')]);
     expect(names()).toContain('check');
