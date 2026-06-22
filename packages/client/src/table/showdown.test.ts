@@ -27,4 +27,9 @@ describe('showdownBanner', () => {
     const sd: ShowdownSummary = { winnerIds: ['a', 'b'], hands: { a: { category: 'straight', label: 'Straight' }, b: { category: 'straight', label: 'Straight' } } };
     expect(showdownBanner(sd, players)).toBe('Split pot — Alice & Bob · Straight');
   });
+
+  it('describes a split pot without a hand label', () => {
+    const sd: ShowdownSummary = { winnerIds: ['a', 'b'], hands: {} };
+    expect(showdownBanner(sd, players)).toBe('Split pot — Alice & Bob');
+  });
 });
