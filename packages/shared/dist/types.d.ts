@@ -87,6 +87,19 @@ export interface GameState {
     viewerPending?: 'leave' | 'spectate' | 'seat' | null;
     /** This viewer's authoritative bankroll (off-table chips), pushed live by the server. */
     viewerBankroll?: number;
+    /** Present only at hand end (showdown / fold-out); drives the reveal UI. */
+    showdown?: ShowdownSummary | null;
+}
+/** One player's revealed hand at showdown (shown players only). */
+export interface ShownHand {
+    category: WonHandCategory;
+    label: string;
+}
+/** Showdown outcome attached to the hand-end state for the reveal UI. */
+export interface ShowdownSummary {
+    winnerIds: string[];
+    /** Keyed by player id; contested/shown players only. Folded/uncontested absent. */
+    hands: Record<string, ShownHand>;
 }
 export type ActionType = 'fold' | 'check' | 'call' | 'raise' | 'all-in';
 export interface PlayerAction {

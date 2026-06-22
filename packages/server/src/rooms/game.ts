@@ -7,9 +7,11 @@ import type {
   PlayerAction,
   PlayerHandStat,
   ServerToClientEvents,
+  ShowdownSummary,
   SocketData,
   TableConfig,
   TableMember,
+  WonHandCategory,
 } from '@poker/shared';
 import {
   startHand,
@@ -70,6 +72,8 @@ export interface GameTiming {
   tickMs?: number;
   /** Pause between hands. */
   handDelayMs?: number;
+  /** Pause AFTER a settled hand so the reveal/celebration is readable. */
+  showdownMs?: number;
 }
 
 export interface GameRoomPlayer {
@@ -128,6 +132,7 @@ export class GameRoom {
   private readonly turnMs: number;
   private readonly tickMs: number;
   private readonly handDelayMs: number;
+  private readonly showdownMs: number;
   private readonly onEnd?: (gameId: string) => void;
   /** Set by rooms/index.ts to notify the lobby when the membership roster changes. */
   onMembershipChange?: () => void;
@@ -161,6 +166,7 @@ export class GameRoom {
     this.turnMs = opts.timing?.turnMs ?? 10_000;
     this.tickMs = opts.timing?.tickMs ?? 500;
     this.handDelayMs = opts.timing?.handDelayMs ?? 3_000;
+    this.showdownMs = opts.timing?.showdownMs ?? 6_500;
     this.onEnd = opts.onEnd;
     const now = Date.now();
     this.members = opts.players.map((p) => ({
@@ -396,11 +402,20 @@ export class GameRoom {
     const potAmount = result.awards.reduce((sum, a) => sum + a.amount, 0);
     const winnerIds = [...new Set(result.awards.flatMap((a) => a.winnerIds))];
     const handName = result.hands[winnerIds[0]]?.name;
+    const showdown: ShowdownSummary = {
+      winnerIds,
+      hands: Object.fromEntries(
+        Object.entries(result.hands).map(([id, r]) => [
+          id,
+          { category: r.category as WonHandCategory, label: r.name },
+        ]),
+      ),
+    };
     this.io.to(this.instanceId).emit('hand_result', {
       winnerIds,
       potAmount,
       handName,
-      finalState: viewFor(state, null),
+      finalState: { ...viewFor(state, null), showdown },
     });
 
     if (this.tracker) {
@@ -417,10 +432,10 @@ export class GameRoom {
       );
     }
 
-    this.scheduleNextHand();
+    this.scheduleNextHand(this.showdownMs);
   }
 
-  private scheduleNextHand(): void {
+  private scheduleNextHand(delayMs: number = this.handDelayMs): void {
     if (this.stopped) return;
     if (this.nextHandTimeout) { clearTimeout(this.nextHandTimeout); this.nextHandTimeout = null; }
     this.applyPending();
@@ -436,7 +451,7 @@ export class GameRoom {
       return;
     }
     this.dealerIndex = this.nextDealer();
-    this.nextHandTimeout = setTimeout(() => this.startHand(), this.handDelayMs);
+    this.nextHandTimeout = setTimeout(() => this.startHand(), delayMs);
   }
 
   private nextDealer(): number {
