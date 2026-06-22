@@ -1,6 +1,7 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import type { DiscordIdentity } from '@poker/shared';
 import { UserPopout } from './UserPopout';
+import { getSoundSettings, setMuted, setVolume, DEFAULT_SOUND_SETTINGS } from '../table/sound/soundStore';
 
 const identity: DiscordIdentity = {
   discordUserId: 'u1',
@@ -9,11 +10,11 @@ const identity: DiscordIdentity = {
   chipBalance: 42500,
 };
 
-it('shows Profile stats by default and switches to a Coming Soon Settings tab', () => {
+it('shows Profile stats by default and switches to the Settings tab', () => {
   render(<UserPopout identity={identity} stats={null} onClose={vi.fn()} />);
   expect(screen.getByText('WIN RATE')).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
-  expect(screen.getByText(/coming soon/i)).toBeInTheDocument();
+  expect(screen.getByLabelText(/volume/i)).toBeInTheDocument();
 });
 
 describe('UserPopout seat actions', () => {
@@ -49,5 +50,28 @@ describe('UserPopout seat actions', () => {
     );
     expect(screen.getByRole('button', { name: /Join Table/i })).toBeDisabled();
     expect(screen.getByText('Not enough chips')).toBeInTheDocument();
+  });
+});
+
+describe('UserPopout — audio settings', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    setMuted(DEFAULT_SOUND_SETTINGS.muted);
+    setVolume(DEFAULT_SOUND_SETTINGS.volume);
+  });
+
+  const identity = { discordUserId: 'u', displayName: 'U', avatarUrl: '', chipBalance: 100 };
+
+  it('renders volume + mute controls in Settings and updates the store', () => {
+    render(<UserPopout identity={identity} stats={null} onClose={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+
+    const slider = screen.getByLabelText(/volume/i) as HTMLInputElement;
+    fireEvent.change(slider, { target: { value: '0.4' } });
+    expect(getSoundSettings().volume).toBeCloseTo(0.4);
+
+    const mute = screen.getByRole('button', { name: /mute/i });
+    fireEvent.click(mute);
+    expect(getSoundSettings().muted).toBe(true);
   });
 });
