@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import type { GameState, ActionType } from '@poker/shared';
+import type { GameState } from '@poker/shared';
 import type { SoundManager } from './SoundManager';
 
 const STEP = 0.07;
@@ -11,94 +11,75 @@ export function rateForRaiseStep(step: number): number {
   return Math.min(1.0 + (step - 1) * STEP, MAX_RATE);
 }
 
+/**
+ * Fire table sound effects by diffing successive game states. The server
+ * broadcasts exactly one applied action per state update, and closes a betting
+ * round by resetting every lastAction to null in the same frame that deals the
+ * next street — so the street-closing call/check is never visible. We therefore
+ * detect aggression by a rise in callAmount (robust to the same player
+ * re-raising, whose lastAction stays 'raise'), reset the suspense streak at each
+ * new street, and read passive/terminal actions from lastAction transitions.
+ */
 export function useTableSounds(view: GameState | null, manager: SoundManager): void {
   const prevRef = useRef<GameState | null>(null);
   const raiseStep = useRef(0);
-  // After call/check, the next render clears processedRaisers so a player whose
-  // lastAction is already 'raise' in the state (no raw diff change) can still
-  // trigger the suspense sting at the freshly-reset pitch.
-  const pendingResetRef = useRef(false);
-  // Tracks which players we have counted as raisers in the current streak, so
-  // we don't double-fire if the same raise appears across multiple broadcasts.
-  const processedRaisersRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     const prev = prevRef.current;
     prevRef.current = view;
     if (!view) return;
 
-    // First view or a brand-new hand: reset, stay silent.
+    // First view or a brand-new hand: reset the streak, stay silent.
     if (!prev || view.handNumber !== prev.handNumber) {
       raiseStep.current = 0;
-      pendingResetRef.current = false;
-      processedRaisersRef.current = new Set();
       return;
     }
 
     // Showdown just resolved: celebrate, and skip diffing so the cardless
-    // waiting→reveal rebroadcast doesn't replay deal/bet sounds.
+    // waiting→reveal rebroadcast can't replay deal/bet sounds.
     if (view.showdown && !prev.showdown) {
       manager.play('win');
       return;
     }
 
-    // If the previous render saw a call/check, clear our raise-tracker so that
-    // any player currently sitting at 'raise' fires the suspense sting again at
-    // the reset pitch.
-    if (pendingResetRef.current) {
-      pendingResetRef.current = false;
-      processedRaisersRef.current = new Set();
-    }
-
-    // Community cards revealed (flop/turn/river).
+    // New street: deal sound, and the betting streak resets. This frame carries
+    // no actionable lastAction (the engine nulls them when it advances).
     if (view.communityCards.length > prev.communityCards.length) {
       manager.play('deal');
+      raiseStep.current = 0;
+      return;
     }
 
-    // Process each player's action.
-    for (const p of view.players) {
-      const prevAction = prev.players.find((q) => q.discordUserId === p.discordUserId)?.lastAction;
-      const now = p.lastAction;
-      const isNew = now !== prevAction; // changed in the raw state diff
+    // A raise/bet (incl. a raising all-in) is the only thing that lifts
+    // callAmount within a street — and it catches the same player re-raising,
+    // whose lastAction never changes from 'raise'.
+    if (view.callAmount > prev.callAmount) {
+      manager.play('bet');
+      raiseStep.current += 1;
+      manager.play('suspense', { rate: rateForRaiseStep(raiseStep.current) });
+      return;
+    }
 
+    // Otherwise: a passive/terminal action (one per frame). Chips moving on a
+    // call (or a non-raising all-in) settle the streak; a check settles it too.
+    for (const p of view.players) {
+      const before = prev.players.find((q) => q.discordUserId === p.discordUserId)?.lastAction;
+      const now = p.lastAction;
+      if (!now || now === before) continue;
       switch (now) {
-        case 'raise':
-        case 'all-in': {
-          // Play the bet chip sound only when the raise is genuinely new in the
-          // state diff.  Always fire the suspense sting when the player hasn't
-          // been counted in the current streak (covers the post-reset re-open).
-          if (!processedRaisersRef.current.has(p.discordUserId)) {
-            if (isNew) manager.play('bet');
-            raiseStep.current += 1;
-            manager.play('suspense', { rate: rateForRaiseStep(raiseStep.current) });
-            processedRaisersRef.current.add(p.discordUserId);
-          }
+        case 'call':
+        case 'all-in':
+          manager.play('bet');
+          raiseStep.current = 0;
           break;
-        }
-        case 'call': {
-          if (isNew) {
-            manager.play('bet');
-            raiseStep.current = 0;
-            pendingResetRef.current = true;
-          }
+        case 'check':
+          manager.play('check');
+          raiseStep.current = 0;
           break;
-        }
-        case 'check': {
-          if (isNew) {
-            manager.play('check');
-            raiseStep.current = 0;
-            pendingResetRef.current = true;
-          }
+        case 'fold':
+          manager.play('fold');
           break;
-        }
-        case 'fold': {
-          if (isNew) {
-            manager.play('fold');
-          }
-          break;
-        }
-        default:
-          break;
+        // 'raise' without a callAmount rise shouldn't occur; ignore.
       }
     }
   }, [view, manager]);

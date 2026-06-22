@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { renderHook } from '@testing-library/react';
-import type { GameState, ActionType } from '@poker/shared';
+import type { GameState } from '@poker/shared';
 import { rateForRaiseStep, useTableSounds } from './useTableSounds';
 import type { SoundManager, SoundName } from './SoundManager';
 
@@ -29,11 +29,17 @@ function base(): GameState {
   };
 }
 
-function withAction(s: GameState, id: string, action: ActionType): GameState {
-  return {
-    ...s,
-    players: s.players.map((p) => (p.discordUserId === id ? { ...p, lastAction: action } : p)),
-  };
+const FLOP = [
+  { rank: '2', suit: 'clubs' as const },
+  { rank: '7', suit: 'hearts' as const },
+  { rank: 'K', suit: 'spades' as const },
+];
+
+function frame(over: Partial<GameState>): GameState {
+  return { ...base(), ...over };
+}
+function withLast(s: GameState, id: string, action: GameState['players'][number]['lastAction']): GameState {
+  return { ...s, players: s.players.map((p) => (p.discordUserId === id ? { ...p, lastAction: action } : p)) };
 }
 
 describe('rateForRaiseStep', () => {
@@ -50,70 +56,72 @@ describe('useTableSounds', () => {
   beforeEach(() => { fm = fakeManager(); });
 
   function run(views: (GameState | null)[]) {
-    const { rerender } = renderHook(({ v }) => useTableSounds(v, fm.manager), {
-      initialProps: { v: views[0] },
-    });
+    const { rerender } = renderHook(({ v }) => useTableSounds(v, fm.manager), { initialProps: { v: views[0] } });
     for (const v of views.slice(1)) rerender({ v });
   }
+  const names = () => fm.calls.map((c) => c.name);
+  const suspense = () => fm.calls.filter((c) => c.name === 'suspense');
 
   it('plays no sound for the first view', () => {
     run([base()]);
     expect(fm.calls).toHaveLength(0);
   });
 
-  it('plays the deal sound when community cards appear', () => {
-    const flop = { ...base(), phase: 'flop' as const, communityCards: [
-      { rank: '2', suit: 'clubs' as const }, { rank: '7', suit: 'hearts' as const }, { rank: 'K', suit: 'spades' as const },
-    ] };
-    run([base(), flop]);
-    expect(fm.calls.map((c) => c.name)).toContain('deal');
+  it('plays the deal sound when a new street appears', () => {
+    run([base(), frame({ phase: 'flop', communityCards: FLOP })]);
+    expect(names()).toContain('deal');
   });
 
-  it('escalates suspense pitch on consecutive raises and resets on call', () => {
-    const s0 = base();
-    const s1 = withAction(s0, 'a', 'raise');
-    const s2 = withAction(s1, 'b', 'raise');
-    const s3 = withAction(s2, 'a', 'call'); // resets
-    const s4 = withAction({ ...s3, players: s3.players.map((p) => ({ ...p, lastAction: null })) }, 'b', 'raise');
-    run([s0, s1, s2, s3, s4]);
+  it('escalates pitch across consecutive raises (incl. same player re-raising) and resets on the next street', () => {
+    const f0 = base();
+    const f1 = withLast(frame({ callAmount: 100 }), 'a', 'raise');
+    const f2 = withLast(withLast(frame({ callAmount: 200 }), 'a', 'raise'), 'b', 'raise');
+    const f3 = withLast(withLast(frame({ callAmount: 300 }), 'a', 'raise'), 'b', 'raise'); // a re-raises; lastAction unchanged
+    const f4 = frame({ phase: 'flop', communityCards: FLOP, callAmount: 0 }); // street closes
+    const f5 = withLast(frame({ phase: 'flop', communityCards: FLOP, callAmount: 100 }), 'b', 'raise');
+    run([f0, f1, f2, f3, f4, f5]);
 
-    const suspense = fm.calls.filter((c) => c.name === 'suspense');
-    expect(suspense.length).toBe(3);
-    expect(suspense[0].rate).toBeCloseTo(1.0); // first raise
-    expect(suspense[1].rate).toBeCloseTo(1.07); // second consecutive raise
-    expect(suspense[2].rate).toBeCloseTo(1.0); // after a call → reset
-    expect(fm.calls.filter((c) => c.name === 'bet').length).toBe(3); // 2 raises + 1 call
+    expect(suspense().map((c) => c.rate)).toEqual([
+      expect.closeTo(1.0), expect.closeTo(1.07), expect.closeTo(1.14), expect.closeTo(1.0),
+    ]);
+    expect(fm.calls.filter((c) => c.name === 'bet')).toHaveLength(4);
+    expect(fm.calls.filter((c) => c.name === 'deal')).toHaveLength(1);
+  });
+
+  it('resets the streak on an observed call, then a new raise starts at base pitch', () => {
+    const f0 = base();
+    const f1 = withLast(frame({ callAmount: 100 }), 'a', 'raise');
+    const f2 = withLast(frame({ callAmount: 100 }), 'b', 'call');
+    const f3 = withLast(frame({ callAmount: 200 }), 'a', 'raise');
+    run([f0, f1, f2, f3]);
+    const s = suspense();
+    expect(s[s.length - 1].rate).toBeCloseTo(1.0);
+    expect(names()).toContain('bet');
   });
 
   it('plays check and fold sounds', () => {
-    const s0 = base();
-    run([s0, withAction(s0, 'a', 'check')]);
-    expect(fm.calls.map((c) => c.name)).toContain('check');
+    run([base(), withLast(base(), 'a', 'check')]);
+    expect(names()).toContain('check');
     fm.calls.length = 0;
-    run([s0, withAction(s0, 'b', 'fold')]);
-    expect(fm.calls.map((c) => c.name)).toContain('fold');
+    run([base(), withLast(base(), 'b', 'fold')]);
+    expect(names()).toContain('fold');
   });
 
   it('plays the win sound once when showdown appears, without replaying deal/bet', () => {
-    const river = { ...base(), phase: 'river' as const, communityCards: [
-      { rank: '2', suit: 'clubs' as const }, { rank: '7', suit: 'hearts' as const }, { rank: 'K', suit: 'spades' as const },
-      { rank: '9', suit: 'diamonds' as const }, { rank: 'J', suit: 'clubs' as const },
-    ], players: base().players.map((p) => ({ ...p, lastAction: 'check' as const })) };
-    // Cardless waiting rebroadcast, then the revealed showdown finalState.
-    const waiting = { ...base(), phase: 'waiting' as const, communityCards: [], players: base().players.map((p) => ({ ...p, lastAction: null })) };
+    const river = frame({ phase: 'river', communityCards: [...FLOP, { rank: '9', suit: 'diamonds' }, { rank: 'J', suit: 'clubs' }], callAmount: 0 });
+    const waiting = frame({ phase: 'waiting', communityCards: [], callAmount: 0 });
     const final = { ...river, phase: 'hand-complete' as const, showdown: { winnerIds: ['a'], hands: { a: { category: 'pair' as const, label: 'Pair' } } } };
     run([river, waiting, final]);
     expect(fm.calls.filter((c) => c.name === 'win')).toHaveLength(1);
-    expect(fm.calls.map((c) => c.name)).not.toContain('deal');
+    expect(names()).not.toContain('deal');
   });
 
-  it('resets the raise counter on a new hand', () => {
-    const s0 = base();
-    const s1 = withAction(s0, 'a', 'raise');
-    const hand2 = { ...base(), handNumber: 2 };
-    const s2 = withAction(hand2, 'a', 'raise');
-    run([s0, s1, hand2, s2]);
-    const suspense = fm.calls.filter((c) => c.name === 'suspense');
-    expect(suspense[suspense.length - 1].rate).toBeCloseTo(1.0); // fresh hand → base pitch
+  it('resets the streak on a new hand', () => {
+    const f0 = base();
+    const f1 = withLast(frame({ callAmount: 100 }), 'a', 'raise');
+    const hand2 = frame({ handNumber: 2 });
+    const f2 = withLast(frame({ handNumber: 2, callAmount: 100 }), 'a', 'raise');
+    run([f0, f1, hand2, f2]);
+    expect(suspense().pop()!.rate).toBeCloseTo(1.0);
   });
 });
