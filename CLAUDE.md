@@ -59,6 +59,13 @@ on Railway** (single always-on service serving client + server + WebSocket, with
 Railway Postgres) — see `docs/SETUP.md`, path C.
 Current focus: live operation on Railway + iterating on gameplay/UI.
 
+The table now has a **sound-effects layer** (chips on bet/call/raise/all-in,
+knock on check, deal on flop/turn/river, fold sound, and escalating-suspense
+pitch across consecutive raises), **audio settings** (mute toggle + volume
+slider — the first live Settings feature), and a **celebrated showdown** (longer
+~6.5 s reveal via `GameTiming.showdownMs`, winner banner, per-player hand labels,
+and gold confetti from the winner's seat).
+
 Player statistics tracking (per-hand fact table + per-player aggregates + read
 APIs at `/api/stats`) is implemented; see
 `docs/superpowers/specs/2026-06-20-player-statistics-tracking-design.md`.
@@ -204,6 +211,14 @@ After any change, verify with `npm test` and `npm run build` before claiming don
   rendered as React/Tailwind DOM (no Phaser); seat geometry comes from
   `table/SeatLayout.ts`; the hero hand name is computed client-side via the shared
   `describeBestHand`; `GamePlayer.lastAction` drives the per-seat action pill.
+  Sounds live in `table/sound/` (`SoundManager`, `useTableSounds`, `soundStore`);
+  the showdown reveal is driven by `GameState.showdown` (set in
+  `GameRoom.concludeHand`) and held for `GameTiming.showdownMs` (~6.5 s); raises
+  are detected via a `callAmount` rise diff and feed an escalating-suspense pitch
+  that resets per street/call/check; confetti is rendered by `ConfettiLayer`
+  (wraps `canvas-confetti`). The fold/suspense/win clips are synthesized `.wav`
+  placeholders in `packages/client/public/audio/` (other clips are `.mp3`) and
+  are swappable without code changes.
 - **`TableConfig.turnSeconds`** — a host-configurable turn timer (integer 10–120,
   multiple of 5, default 30). `sanitizeConfig` in `rooms/lobby.ts` validates it.
   `rooms/index.ts` threads it into `GameRoom` timing at construction:

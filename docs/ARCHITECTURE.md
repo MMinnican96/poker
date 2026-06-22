@@ -154,6 +154,56 @@ Two supporting changes back this view:
 simply renders whatever hole cards the sanitized state contains. Revealing *all*
 remaining hands at hand-end is a **future phase**.
 
+### Showdown polish (`GameState.showdown` + `showdownMs`)
+
+When a hand ends, `GameRoom.concludeHand` populates `GameState.showdown`:
+
+```ts
+interface ShowdownSummary {
+  winnerIds: string[];           // one or more player IDs (split-pot aware)
+  potAmount: number;
+  handName?: string;             // best hand description for the winner(s)
+  shownHands: ShownHand[];       // { playerId, cards, handName } for every non-folded player
+}
+```
+
+The state is broadcast for `GameTiming.showdownMs` (default ~6 500 ms) before
+`GameRoom` advances to the next hand. During this window:
+
+- **`ShowdownBanner`** renders the winner's name and hand name at the centre of
+  the felt.
+- Each non-folded `Seat` shows a per-player **hand label** below the hole cards
+  (driven by `shownHands`).
+- **`ConfettiLayer`** (wraps `canvas-confetti`) fires a gold burst anchored to
+  the winner's seat element (located via `data-seat-id`).
+
+### Client sound layer (`table/sound/`)
+
+Three modules in `packages/client/src/table/sound/` form the audio stack:
+
+| Module | Role |
+|---|---|
+| `SoundManager.ts` | Thin `HTMLAudioElement` pool — loads, plays, and volume-scales named clips |
+| `soundStore.ts` | Zustand store for `{ muted, volume }` — persisted to `localStorage`; the first live Settings feature |
+| `useTableSounds.ts` | React hook — diffs incoming `GameState` and calls `SoundManager` on changes |
+
+**Sound triggers** (all produced by `useTableSounds`):
+
+| Game event | Clip |
+|---|---|
+| Bet / raise / all-in | `bet.mp3` (chips) |
+| Call (detected as `callAmount` rise → 0) | `bet.mp3` |
+| Check | `check.mp3` (knock) |
+| New street card dealt | `deal.mp3` |
+| Fold | `fold.wav` |
+| Consecutive raises (escalating suspense) | `suspense.wav` at rising playback rate; resets on call/check/new street |
+| Winner revealed at showdown | `win.wav` |
+
+The fold/suspense/win clips are synthesized `.wav` placeholders in
+`packages/client/public/audio/`; chip/check/deal clips are `.mp3`. All are
+swappable without code changes — `SoundManager` maps `SoundName` strings to
+`/audio/<file>` paths.
+
 ## Data flow
 
 1. **Identity** — The client runs the Discord Embedded App SDK handshake, gets an
