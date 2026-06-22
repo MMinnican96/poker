@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { DiscordIdentity, GameState, PlayerAction, LobbyPlayer } from '@poker/shared';
 import type { ClientSocket } from '../socket';
 import { TableHeader } from './TableHeader';
@@ -11,6 +11,11 @@ import { arrangeSeats, seatPositions } from './SeatLayout';
 import { UserPopout, type SeatActions } from '../lobby/UserPopout';
 import { PlayerProfileModal } from '../lobby/PlayerProfileModal';
 import { useStats } from '../lobby/useStats';
+import { createSoundManager } from './sound/SoundManager';
+import { useSoundSettings } from './sound/soundStore';
+import { useTableSounds } from './sound/useTableSounds';
+import { showdownBanner } from './showdown';
+import { ConfettiLayer } from './ConfettiLayer';
 
 const BETTING_PHASES: GameState['phase'][] = ['pre-flop', 'flop', 'turn', 'river'];
 
@@ -25,6 +30,13 @@ export function TableScreen({ socket, identity }: Props) {
   const [timer, setTimer] = useState<{ playerId: string; remainingMs: number } | null>(null);
   const [userOpen, setUserOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  const managerRef = useRef(createSoundManager());
+  const soundSettings = useSoundSettings();
+  useEffect(() => {
+    managerRef.current.setSettings({ muted: soundSettings.muted, volume: soundSettings.volume });
+  }, [soundSettings.muted, soundSettings.volume]);
+  useTableSounds(view, managerRef.current);
 
   const { stats } = useStats(userOpen ? viewerId : null);
 
@@ -43,7 +55,10 @@ export function TableScreen({ socket, identity }: Props) {
     };
   }, [socket]);
 
-  const act = (a: PlayerAction) => socket.emit('player_action', a);
+  const act = (a: PlayerAction) => {
+    managerRef.current.unlock();
+    socket.emit('player_action', a);
+  };
 
   const { hero, opponents, positions } = useMemo(() => {
     if (!view) return { hero: null, opponents: [], positions: [] as ReturnType<typeof seatPositions> };
@@ -74,6 +89,8 @@ export function TableScreen({ socket, identity }: Props) {
       : seatIndex === view.bigBlindIndex ? 'BB' : null;
 
   const reveal = view.phase === 'showdown' || view.phase === 'hand-complete';
+  const banner = showdownBanner(view.showdown, view.players);
+  const winnerIds = view.showdown?.winnerIds ?? [];
   const bank = view.viewerBankroll ?? identity.chipBalance;
   const seatFull = view.players.length >= view.config.maxPlayers;
   const underfunded = bank < view.config.buyIn;
@@ -118,7 +135,7 @@ export function TableScreen({ socket, identity }: Props) {
               WAITING FOR PLAYERS…
             </div>
           ) : (
-            <CenterCluster phase={view.phase} community={view.communityCards} pots={view.pots} />
+            <CenterCluster phase={view.phase} community={view.communityCards} pots={view.pots} banner={banner} />
           )}
 
           {opponents.map((p, i) => (
@@ -130,6 +147,8 @@ export function TableScreen({ socket, identity }: Props) {
               isActive={p.discordUserId === activeId && BETTING_PHASES.includes(view.phase)}
               timerPct={timerPctFor(p.discordUserId)}
               reveal={reveal}
+              handLabel={view.showdown?.hands[p.discordUserId]?.label ?? null}
+              isWinner={winnerIds.includes(p.discordUserId)}
               onOpen={() => setSelectedId(p.discordUserId)}
             />
           ))}
@@ -141,6 +160,7 @@ export function TableScreen({ socket, identity }: Props) {
               isActive={!!isMyTurn}
               timerPct={isMyTurn ? timerPctFor(viewerId) : null}
               isSpectating={isSpectating}
+              isWinner={winnerIds.includes(viewerId)}
             />
           )}
         </div>
@@ -168,6 +188,8 @@ export function TableScreen({ socket, identity }: Props) {
           onClose={() => setSelectedId(null)}
         />
       )}
+
+      <ConfettiLayer winnerIds={winnerIds} />
     </div>
   );
 }
