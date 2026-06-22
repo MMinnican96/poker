@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { DiscordIdentity, PlayerStatsSummary } from '@poker/shared';
 import { StatTile } from './StatTile';
+import { useSoundSettings } from '../table/sound/soundStore';
 
 type UserTab = 'profile' | 'settings' | 'howto';
 
@@ -33,6 +34,7 @@ export interface UserPopoutProps {
 
 export function UserPopout({ identity, stats, onClose, seat }: UserPopoutProps) {
   const [tab, setTab] = useState<UserTab>('profile');
+  const sound = useSoundSettings();
 
   const tabBtn = (id: UserTab, label: string) => (
     <button
@@ -84,11 +86,36 @@ export function UserPopout({ identity, stats, onClose, seat }: UserPopoutProps) 
           )}
 
           {tab === 'settings' && (
-            <div className="flex flex-col items-center justify-center gap-2 py-8 text-center">
-              <span className="rounded-pill border-2 border-gold-border bg-gold px-3 py-1 text-xs font-extrabold text-[#2a1c00]">
-                COMING SOON
-              </span>
-              <p className="text-sm font-bold text-sage-muted">Settings are on the way.</p>
+            <div className="flex flex-col gap-4 py-2">
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-extrabold tracking-[0.12em] text-sage">SOUND VOLUME</span>
+                  <span className="font-display text-sm font-bold text-gold-soft">{Math.round(sound.volume * 100)}%</span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={sound.volume}
+                  aria-label="Sound volume"
+                  onChange={(e) => sound.setVolume(Number(e.target.value))}
+                  className="w-full accent-gold"
+                />
+              </div>
+              <button
+                onClick={() => sound.setMuted(!sound.muted)}
+                aria-label={sound.muted ? 'Unmute sound' : 'Mute sound'}
+                className={`flex w-full items-center gap-3 rounded-2xl border-2 px-3.5 py-3 text-left font-display text-base font-semibold ${sound.muted ? 'border-red/40 bg-red/15 text-white' : 'border-black/30 bg-felt-600 text-white hover:bg-felt-700'}`}
+              >
+                <span className="flex h-[34px] w-[34px] flex-none items-center justify-center rounded-[10px] border-2 border-black/30 bg-black/15 text-[17px]">
+                  {sound.muted ? '🔇' : '🔊'}
+                </span>
+                <span className="flex flex-col leading-tight">
+                  <span>{sound.muted ? 'Sound muted' : 'Sound on'}</span>
+                  <span className="text-xs font-bold text-sage-muted">Tap to {sound.muted ? 'unmute' : 'mute'} table sounds</span>
+                </span>
+              </button>
             </div>
           )}
 

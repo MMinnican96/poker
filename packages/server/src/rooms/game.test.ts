@@ -124,6 +124,59 @@ describe('GameRoom', () => {
     room.stop();
   });
 
+  it('attaches a showdown summary with winner ids and hand labels', async () => {
+    const io = makeFakeIo();
+    const chips = makeFakeChips();
+    const room = makeRoom(io, chips.service);
+    await room.start();
+
+    const result = io.waitFor('hand_result');
+    room.handleAction('a', { type: 'all-in' });
+    room.handleAction('b', { type: 'all-in' });
+    const rec = await result;
+    const { finalState } = rec.args[0] as { finalState: GameState };
+
+    expect(finalState.showdown).toBeTruthy();
+    expect(finalState.showdown!.winnerIds.length).toBeGreaterThanOrEqual(1);
+    // Both players reached showdown, so both have a labelled hand.
+    expect(Object.keys(finalState.showdown!.hands)).toHaveLength(2);
+    for (const shown of Object.values(finalState.showdown!.hands)) {
+      expect(typeof shown.label).toBe('string');
+      expect(shown.label.length).toBeGreaterThan(0);
+    }
+    room.stop();
+  });
+
+  it('attaches a fold-out showdown (winner, no shown hands) and uses showdownMs for the next deal', async () => {
+    const io = makeFakeIo();
+    const chips = makeFakeChips();
+    // showdownMs tiny so the next hand deals quickly; handDelayMs stays huge.
+    const room = makeRoom(io, chips.service, { showdownMs: 25 });
+    await room.start();
+
+    const firstResult = io.waitFor('hand_result');
+    room.handleAction('a', { type: 'fold' }); // heads-up button folds → b wins blinds
+    const rec = await firstResult;
+    const { finalState } = rec.args[0] as { finalState: GameState };
+
+    expect(finalState.showdown).toBeTruthy();
+    expect(finalState.showdown!.winnerIds).toEqual(['b']);
+    expect(Object.keys(finalState.showdown!.hands)).toHaveLength(0);
+
+    // Nobody busted on a fold-out, so a second hand must deal — driven by the
+    // 25ms showdownMs, NOT the 1e9 handDelayMs.
+    await new Promise((r) => setTimeout(r, 90));
+    const dealtHand2 = io.records.some(
+      (r) =>
+        r.event === 'game_state_update' &&
+        (r.args[0] as GameState).handNumber === 2 &&
+        (r.args[0] as GameState).phase !== 'waiting',
+    );
+    expect(dealtHand2).toBe(true);
+
+    room.stop();
+  });
+
   it('awards the pot to the last player standing on a fold-out', async () => {
     const io = makeFakeIo();
     const chips = makeFakeChips();

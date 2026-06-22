@@ -7,6 +7,7 @@ interface Props {
   isActive: boolean;
   timerPct: number | null;
   isSpectating: boolean;
+  isWinner?: boolean;
 }
 
 /**
@@ -15,7 +16,7 @@ interface Props {
  * name/stack panel or hole-card fan, which live in the HUD below. When the
  * viewer is spectating it shows the watch indicator instead.
  */
-export function HeroToken({ player, role, isActive, timerPct, isSpectating }: Props) {
+export function HeroToken({ player, role, isActive, timerPct, isSpectating, isWinner }: Props) {
   if (isSpectating || !player) {
     return (
       <div className="absolute left-1/2 top-[90%] z-[6] flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-1">
@@ -33,7 +34,11 @@ export function HeroToken({ player, role, isActive, timerPct, isSpectating }: Pr
       : undefined;
 
   return (
-    <div className="absolute left-1/2 top-[90%] z-[6] flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-1">
+    <div
+      data-seat-id={player?.discordUserId}
+      data-winner={isWinner ? 'true' : undefined}
+      className={`absolute left-1/2 top-[90%] z-[6] flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-1 ${isWinner ? 'rounded-2xl ring-4 ring-gold animate-pulse' : ''}`}
+    >
       <div data-testid="hero-avatar" data-ring={ringStyle ? 'true' : 'false'} className="relative h-[54px] w-[54px] rounded-[15px] border-[3px] border-ink shadow-hard-ink" style={ringStyle}>
         <img src={player.avatarUrl} alt="" className="h-full w-full rounded-[12px] object-cover" />
         {role && (

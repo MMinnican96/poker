@@ -4,6 +4,8 @@ import { EventEmitter } from 'events';
 import { TableScreen } from './TableScreen';
 import type { DiscordIdentity, GameState } from '@poker/shared';
 
+vi.mock('canvas-confetti', () => ({ default: vi.fn() }));
+
 function fakeSocket() {
   const ee = new EventEmitter();
   return {
@@ -41,5 +43,32 @@ describe('TableScreen', () => {
     expect(screen.getByText('Bandit')).toBeInTheDocument();
     expect(screen.getByText('1,450')).toBeInTheDocument();
     expect(screen.getByText(/Hand #7/)).toBeInTheDocument();
+  });
+
+  it('shows the winner banner and opponent hand label at showdown', () => {
+    const socket = fakeSocket();
+    render(<TableScreen socket={socket as any} identity={identity} />);
+    act(() => { socket.__ee.emit('game_state_update', state()); });
+
+    const final: GameState = {
+      ...state(),
+      phase: 'hand-complete',
+      players: state().players.map((p) =>
+        p.discordUserId === 'b'
+          ? { ...p, holeCards: [{ rank: 'Q', suit: 'hearts' }, { rank: 'Q', suit: 'clubs' }] }
+          : p,
+      ),
+      showdown: {
+        winnerIds: ['b'],
+        hands: {
+          b: { category: 'pair', label: 'Pair' },
+          me: { category: 'high-card', label: 'High Card' },
+        },
+      },
+    };
+    act(() => { socket.__ee.emit('hand_result', { winnerIds: ['b'], potAmount: 1450, finalState: final }); });
+
+    expect(screen.getByText(/Bandit wins with a Pair/)).toBeInTheDocument();
+    expect(screen.getAllByText('Pair').length).toBeGreaterThanOrEqual(2);
   });
 });

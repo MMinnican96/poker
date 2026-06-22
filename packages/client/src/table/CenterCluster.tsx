@@ -10,9 +10,10 @@ interface Props {
   phase: GamePhase;
   community: Card[];
   pots: Pot[];
+  banner?: string | null;
 }
 
-export function CenterCluster({ phase, community, pots }: Props) {
+export function CenterCluster({ phase, community, pots, banner }: Props) {
   const main = pots[0]?.amount ?? 0;
   const sidePots = pots.slice(1);
 
@@ -21,6 +22,13 @@ export function CenterCluster({ phase, community, pots }: Props) {
       <div className="inline-flex items-center gap-2 rounded-pill border-[2.5px] border-gold-border bg-gold px-4 py-1.5 font-display text-[13px] font-semibold tracking-[0.18em] text-felt-900 shadow-hard-gold">
         {PHASE_LABEL[phase] ?? ''}
       </div>
+
+      {banner && (
+        <div className="inline-flex items-center gap-2 rounded-pill border-[2.5px] border-gold-border bg-felt-900/85 px-4 py-1.5 font-display text-sm font-bold tracking-[0.04em] text-gold-soft shadow-hard-gold animate-pop">
+          <span aria-hidden>🏆</span>
+          <span>{banner}</span>
+        </div>
+      )}
 
       <div className="flex h-[112px] items-center gap-2.5">
         {Array.from({ length: 5 }).map((_, i) =>

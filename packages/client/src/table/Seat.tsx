@@ -10,10 +10,12 @@ interface Props {
   isActive: boolean;
   timerPct: number | null;
   reveal: boolean;
+  handLabel?: string | null;
+  isWinner?: boolean;
   onOpen: () => void;
 }
 
-export function Seat({ player, pos, role, isActive, timerPct, reveal, onOpen }: Props) {
+export function Seat({ player, pos, role, isActive, timerPct, reveal, handLabel, isWinner, onOpen }: Props) {
   const folded = player.status === 'folded';
   const pill = actionPill(player);
   const showCards = !folded;
@@ -23,7 +25,9 @@ export function Seat({ player, pos, role, isActive, timerPct, reveal, onOpen }: 
   return (
     <>
       <div
-        className="absolute z-[4] flex w-[106px] -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-1"
+        data-seat-id={player.discordUserId}
+        data-winner={isWinner ? 'true' : undefined}
+        className={`absolute z-[4] flex w-[106px] -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-1 ${isWinner ? 'rounded-2xl ring-4 ring-gold animate-pulse' : ''}`}
         style={{ left: `${pos.leftPct}%`, top: `${pos.topPct}%`, opacity: folded ? 0.45 : 1 }}
       >
         {showCards && (
@@ -65,6 +69,10 @@ export function Seat({ player, pos, role, isActive, timerPct, reveal, onOpen }: 
 
         {pill && (
           <span className={`rounded-pill border-2 px-2.5 py-0.5 text-[11px] font-extrabold ${TONE_CLASS[pill.tone]}`}>{pill.text}</span>
+        )}
+
+        {reveal && handLabel && (
+          <span className="rounded-pill border-2 border-gold-border bg-felt-900/85 px-2.5 py-0.5 text-[11px] font-extrabold text-gold-soft">{handLabel}</span>
         )}
       </div>
 
