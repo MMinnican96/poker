@@ -13,6 +13,24 @@ function player(over: Partial<GamePlayer> = {}): GamePlayer {
   };
 }
 
+function p(over: Partial<GamePlayer> = {}): GamePlayer {
+  return { discordUserId: 'b', displayName: 'Bandit', avatarUrl: '', seatIndex: 1, chipStack: 1000, betThisRound: 0, totalBetThisHand: 0, holeCards: [{ rank: 'A', suit: 'spades' }, { rank: 'K', suit: 'spades' }], status: 'active', hasActed: false, lastAction: null, ...over };
+}
+
+describe('Seat — showdown', () => {
+  it('shows the hand label under revealed cards', () => {
+    render(<Seat player={p()} pos={pos} role={null} isActive={false} timerPct={null} reveal handLabel="Two Pair" isWinner={false} onOpen={() => {}} />);
+    expect(screen.getByText('Two Pair')).toBeInTheDocument();
+  });
+
+  it('marks the root with the seat id and a winner flag', () => {
+    const { container } = render(<Seat player={p()} pos={pos} role={null} isActive={false} timerPct={null} reveal handLabel={null} isWinner onOpen={() => {}} />);
+    const root = container.querySelector('[data-seat-id="b"]');
+    expect(root).not.toBeNull();
+    expect(root).toHaveAttribute('data-winner', 'true');
+  });
+});
+
 describe('Seat', () => {
   it('shows name, stack, the action pill and a role badge', () => {
     render(<Seat player={player()} pos={pos} role="BB" isActive={false} timerPct={null} reveal={false} onOpen={() => {}} />);
