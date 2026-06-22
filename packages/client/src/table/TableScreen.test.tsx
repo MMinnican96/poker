@@ -69,6 +69,6 @@ describe('TableScreen', () => {
     act(() => { socket.__ee.emit('hand_result', { winnerIds: ['b'], potAmount: 1450, finalState: final }); });
 
     expect(screen.getByText(/Bandit wins with a Pair/)).toBeInTheDocument();
-    expect(screen.getAllByText('Pair').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('Pair').length).toBeGreaterThanOrEqual(2);
   });
 });
