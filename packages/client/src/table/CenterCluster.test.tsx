@@ -24,4 +24,9 @@ describe('CenterCluster', () => {
     expect(screen.getByText(/SIDE/)).toBeInTheDocument();
     expect(screen.getByText('600')).toBeInTheDocument();
   });
+
+  it('renders a winner banner when provided', () => {
+    render(<CenterCluster phase="hand-complete" community={board} pots={[{ amount: 100, eligiblePlayerIds: ['a'] }]} banner="Alice wins with a Flush" />);
+    expect(screen.getByText('Alice wins with a Flush')).toBeInTheDocument();
+  });
 });
