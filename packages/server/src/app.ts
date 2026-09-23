@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { type NextFunction, type Request, type Response } from 'express';
 import cors from 'cors';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -29,6 +29,20 @@ export interface App {
   close(): Promise<void>;
 }
 
+/**
+ * Malformed or oversized JSON bodies get a JSON error. Without this they fall
+ * through to Express's default HTML page, which includes a stack trace unless
+ * NODE_ENV is 'production' (not guaranteed on Railway).
+ */
+function bodyErrors(err: unknown, _req: Request, res: Response, next: NextFunction): void {
+  const status = (err as { status?: unknown } | null)?.status;
+  if (typeof status === 'number' && status >= 400 && status < 500) {
+    res.status(status).json({ error: status === 413 ? 'Request too large.' : 'Malformed request body.' });
+    return;
+  }
+  next(err);
+}
+
 const ALLOWED_ORIGINS = [/\.discordsays\.com$/, /^https?:\/\/localhost(:\d+)?$/, /\.trycloudflare\.com$/];
 
 /** Build the HTTP + Socket.io server around a set of services (no listening). */
@@ -39,6 +53,7 @@ export function createApp(opts: AppOptions): App {
     origin: (origin, cb) => cb(null, !origin || ALLOWED_ORIGINS.some((p) => p.test(origin))),
   }));
   app.use(express.json({ limit: '32kb' }));
+  app.use(bodyErrors);
 
   const http = createServer(app);
   const io: Io = new Server(http, { cors: { origin: ALLOWED_ORIGINS } });

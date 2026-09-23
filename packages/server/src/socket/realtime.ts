@@ -1,6 +1,8 @@
 import type { Server, Socket } from 'socket.io';
 import {
+  DEFAULT_RULES,
   dmChannel,
+  dmPartner,
   roomChannel,
   type Ack,
   type AckFn,
@@ -8,6 +10,7 @@ import {
   type InterServerEvents,
   type ServerToClientEvents,
   type SocketData,
+  type TableRules,
 } from '@poker/shared';
 import type { Auth } from '../auth.js';
 import type { Services } from '../services/index.js';
@@ -22,6 +25,25 @@ type ClientSocket = Socket<ClientToServerEvents, ServerToClientEvents, InterServ
 const instRoom = (instanceId: string) => `inst:${instanceId}`;
 const memberRoom = (instanceId: string, playerId: string) => `inst:${instanceId}:user:${playerId}`;
 const userRoom = (playerId: string) => `user:${playerId}`;
+
+/** A number from the wire, or NaN for anything else (so `null`, `''` or `true` never become 0 or 1). */
+const num = (v: unknown): number => (typeof v === 'number' ? v : NaN);
+
+/** Only the known rule fields: unknown keys would otherwise ride along in every viewer's table state. */
+function pickRules(raw: unknown): Partial<TableRules> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(DEFAULT_RULES)) {
+    if (Object.hasOwn(raw, key)) out[key] = (raw as Record<string, unknown>)[key];
+  }
+  return out as Partial<TableRules>;
+}
+
+/** True when `channel` is exactly the (canonical) DM channel between `playerId` and someone else. */
+export function isOwnDm(playerId: string, channel: string): boolean {
+  const partner = dmPartner(channel, playerId);
+  return !!partner && partner !== playerId && channel === dmChannel(playerId, partner);
+}
 
 export interface Realtime {
   rooms: RoomManager;
@@ -45,6 +67,18 @@ export function attachRealtime(io: Io, opts: RealtimeOptions): Realtime {
   const { services, auth } = opts;
   const refreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const chatLimit = new RateLimiter(5, 5000);
+  const queues = new Map<string, Promise<unknown>>();
+
+  /** Run a player's membership commands one at a time, across all their sockets. */
+  function exclusively<T>(playerId: string, task: () => Promise<T>): Promise<T> {
+    const next = (queues.get(playerId) ?? Promise.resolve()).then(task, task);
+    const tail = next.catch(() => undefined);
+    queues.set(playerId, tail);
+    void tail.then(() => {
+      if (queues.get(playerId) === tail) queues.delete(playerId);
+    });
+    return next;
+  }
 
   const outbox: Outbox = {
     lobby: (instanceId, state) => io.to(instRoom(instanceId)).emit('lobby_state', state),
@@ -88,7 +122,9 @@ export function attachRealtime(io: Io, opts: RealtimeOptions): Realtime {
   io.on('connection', (socket: ClientSocket) => {
     const playerId = socket.data.playerId;
     void socket.join(userRoom(playerId));
-    void services.profiles.self(playerId).then((me) => me && socket.emit('me', me));
+    services.profiles.self(playerId)
+      .then((me) => me && socket.emit('me', me))
+      .catch((err) => console.error('[realtime] initial profile failed', err));
 
     const respond = (ack: unknown, result: Result | Ack) => {
       if (typeof ack === 'function') (ack as AckFn)(result);
@@ -138,32 +174,34 @@ export function attachRealtime(io: Io, opts: RealtimeOptions): Realtime {
       return { ok: true };
     }));
 
-    socket.on('open_table', handle(async (data: { rules: object }) => {
+    socket.on('open_table', handle(async (data: { rules: unknown }) => {
       const r = room();
       if (!r) return { ok: false, error: 'Join the room first.' };
-      return r.openTable(playerId, (data?.rules ?? {}) as object);
+      return r.openTable(playerId, pickRules(data?.rules));
     }));
-    socket.on('update_rules', handle((data: { rules: object }) => needTable((t) => t.updateRules(playerId, (data?.rules ?? {}) as object))));
+    socket.on('update_rules', handle((data: { rules: unknown }) => needTable((t) => t.updateRules(playerId, pickRules(data?.rules)))));
     socket.on('start_table', handle(() => needTable((t) => t.start(playerId))));
     socket.on('close_table', handle(() => needTable((t) => t.close(playerId))));
-    socket.on('watch_table', handle(async () => {
+    socket.on('watch_table', handle(() => exclusively(playerId, async () => {
       const r = room();
       const t = table();
       if (!r || !t) return { ok: false, error: 'There is no table open.' };
       const row = await getPlayerRow(services.db, playerId);
       if (!row) return { ok: false, error: 'Unknown player.' };
       return t.watch(toPublic(row));
-    }));
-    socket.on('take_seat', handle(async (data: { seat: number; buyIn: number }) => {
+    })));
+    // Joining then buying in spans awaits: a double-tapped take_seat must not run
+    // two joins at once (the second would replace the freshly seated member).
+    socket.on('take_seat', handle((data: { seat: number; buyIn: number }) => exclusively(playerId, async () => {
       const t = table();
       if (!t) return { ok: false, error: 'There is no table open.' };
       if (!t.isMember(playerId)) {
         const row = await getPlayerRow(services.db, playerId);
         if (row) await t.watch(toPublic(row));
       }
-      return t.takeSeat(playerId, Number(data?.seat), Number(data?.buyIn));
-    }));
-    socket.on('top_up', handle((data: { amount: number }) => needTable((t) => t.topUp(playerId, Number(data?.amount)))));
+      return t.takeSeat(playerId, num(data?.seat), num(data?.buyIn));
+    })));
+    socket.on('top_up', handle((data: { amount: number }) => needTable((t) => t.topUp(playerId, num(data?.amount)))));
     socket.on('stand_up', handle(() => needTable((t) => t.standUp(playerId))));
     socket.on('leave_table', handle(() => needTable((t) => t.leave(playerId))));
     socket.on('sit_out', handle((data: { sittingOut: boolean }) => needTable((t) => t.setSittingOut(playerId, !!data?.sittingOut))));
@@ -178,10 +216,13 @@ export function attachRealtime(io: Io, opts: RealtimeOptions): Realtime {
       if (t?.isMember(playerId)) t.connect(playerId);
     });
 
-    socket.on('chat_send', handle(async (data: { to: { room?: true; dm?: string }; body: string }) => {
+    socket.on('chat_send', handle(async (data: { to: unknown; body: unknown }) => {
       if (!chatLimit.allow(playerId)) return { ok: false, error: "You're sending messages too quickly." };
-      if (data?.to && 'dm' in data.to && typeof data.to.dm === 'string') {
-        const other = data.to.dm;
+      // A target that isn't clearly the room must never fall through to a room broadcast.
+      const to = (data?.to && typeof data.to === 'object' ? data.to : {}) as { room?: unknown; dm?: unknown };
+      if (to.dm !== undefined) {
+        if (typeof to.dm !== 'string' || !to.dm) return { ok: false, error: 'That player does not exist.' };
+        const other = to.dm;
         if (other === playerId) return { ok: false, error: "You can't message yourself." };
         if (!(await getPlayerRow(services.db, other))) return { ok: false, error: 'That player does not exist.' };
         const res = await services.chat.send(dmChannel(playerId, other), playerId, data.body);
@@ -190,6 +231,7 @@ export function attachRealtime(io: Io, opts: RealtimeOptions): Realtime {
         refreshMe(other);
         return { ok: true };
       }
+      if (to.room !== true) return { ok: false, error: 'Pick who to send that to.' };
       const instanceId = socket.data.instanceId;
       if (!instanceId) return { ok: false, error: 'Join the room first.' };
       const res = await services.chat.send(roomChannel(instanceId), playerId, data?.body);
@@ -198,8 +240,12 @@ export function attachRealtime(io: Io, opts: RealtimeOptions): Realtime {
       return { ok: true };
     }));
     socket.on('chat_read', (data) => {
-      if (typeof data?.channel !== 'string') return;
-      void services.chat.markRead(playerId, data.channel).then(() => refreshMe(playerId)).catch(() => undefined);
+      // Only your own DMs or the room you're in; anything else would just store junk rows.
+      const channel = data?.channel;
+      if (typeof channel !== 'string') return;
+      const inRoom = !!socket.data.instanceId && channel === roomChannel(socket.data.instanceId);
+      if (!inRoom && !isOwnDm(playerId, channel)) return;
+      void services.chat.markRead(playerId, channel).then(() => refreshMe(playerId)).catch(() => undefined);
     });
 
     socket.on('disconnect', () => {

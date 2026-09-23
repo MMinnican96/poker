@@ -2,7 +2,6 @@ import { Router, type NextFunction, type Request, type Response } from 'express'
 import {
   LEADERBOARD_METRICS,
   LOADOUT_SLOTS,
-  dmPartner,
   type AuthResponse,
   type LeaderboardMetric,
   type LeaderboardPeriod,
@@ -11,7 +10,7 @@ import {
 import type { Auth } from '../auth.js';
 import { mockAuthAllowed, mockAvatar, mockIdentity } from '../auth.js';
 import type { Services } from '../services/index.js';
-import type { Realtime } from '../socket/realtime.js';
+import { isOwnDm, type Realtime } from '../socket/realtime.js';
 import { exchangeCode, fetchGuildMember, fetchUser, resolveIdentity } from '../discord.js';
 
 type Authed = Request & { playerId: string };
@@ -181,10 +180,14 @@ export function createApi(opts: ApiOptions): Router {
   }));
 
   function canRead(playerId: string, channel: string): boolean {
-    if (channel.startsWith('dm:')) return dmPartner(channel, playerId) !== null;
+    if (channel.startsWith('dm:')) return isOwnDm(playerId, channel);
     if (channel.startsWith('room:')) return !!realtime.rooms.get(channel.slice(5))?.isPresent(playerId);
     return false;
   }
+
+  api.use((_req, res) => {
+    res.status(404).json({ error: 'Not found' });
+  });
 
   api.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
     console.error('[api] request failed', err);

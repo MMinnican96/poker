@@ -15,14 +15,16 @@ export interface Auth {
 }
 
 const TOKEN_TTL = '24h';
+/** Sessions are only ever signed with this; tokens using any other algorithm are refused. */
+const ALGORITHM = 'HS256';
 
 export function createAuth(secret: string): Auth {
   return {
-    sign: (claims) => jwt.sign(claims, secret, { expiresIn: TOKEN_TTL }),
+    sign: (claims) => jwt.sign(claims, secret, { algorithm: ALGORITHM, expiresIn: TOKEN_TTL }),
     verify(token) {
       if (typeof token !== 'string' || token.length === 0) return null;
       try {
-        const decoded = jwt.verify(token, secret);
+        const decoded = jwt.verify(token, secret, { algorithms: [ALGORITHM] });
         if (typeof decoded !== 'object' || typeof decoded.sub !== 'string') return null;
         return { sub: decoded.sub, name: String(decoded.name ?? ''), avatar: String(decoded.avatar ?? '') };
       } catch {
