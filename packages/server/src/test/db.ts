@@ -1,15 +1,19 @@
 import { afterAll, beforeAll } from 'vitest';
-import { openPglite, type Db, type DbHandle } from '../db/client.js';
+import { openDatabase, openPglite, type Db, type DbHandle } from '../db/client.js';
 import { Bank } from '../services/bank.js';
 
 /**
  * A fresh in-memory Postgres (PGlite) with the schema applied, shared by the
  * tests in one file. Use unique player ids per test to keep them independent.
+ *
+ * Set TEST_DATABASE_URL to run against a real Postgres instead (migrated on
+ * open; run with --no-file-parallelism since files then share one database).
  */
 export function useTestDb(): { get db(): Db } {
   let handle: DbHandle;
   beforeAll(async () => {
-    handle = await openPglite();
+    const url = process.env.TEST_DATABASE_URL;
+    handle = url ? await openDatabase({ url }) : await openPglite();
   }, 60_000);
   afterAll(async () => {
     await handle?.close();

@@ -2,6 +2,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { drizzle as drizzlePg } from 'drizzle-orm/node-postgres';
+import { migrate as migratePg } from 'drizzle-orm/node-postgres/migrator';
 import type { PgDatabase, PgQueryResultHKT } from 'drizzle-orm/pg-core';
 import type { ExtractTablesWithRelations } from 'drizzle-orm';
 import * as schema from './schema.js';
@@ -24,16 +25,18 @@ const MIGRATIONS = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '.
 
 /**
  * Connect to Postgres when `DATABASE_URL` is set; otherwise start an embedded
- * PGlite database (in memory, or on disk at `PGLITE_DATA_DIR`) and apply the
- * generated migrations. Both expose the same Drizzle API, so every service has a
- * single implementation.
+ * PGlite database (in memory, or on disk at `PGLITE_DATA_DIR`). Either way the
+ * migrations in `drizzle/` are applied first, so a deploy upgrades its own
+ * database. Both expose the same Drizzle API, so every service has a single
+ * implementation.
  */
 export async function openDatabase(opts: { url?: string; pgliteDir?: string } = {}): Promise<DbHandle> {
   const url = opts.url ?? process.env.DATABASE_URL;
   if (url) {
     const pool = new pg.Pool({ connectionString: url });
-    const db = drizzlePg(pool, { schema }) as unknown as Db;
-    return { db, kind: 'postgres', close: () => pool.end() };
+    const db = drizzlePg(pool, { schema });
+    await migratePg(db, { migrationsFolder: MIGRATIONS });
+    return { db: db as unknown as Db, kind: 'postgres', close: () => pool.end() };
   }
   return openPglite(opts.pgliteDir ?? process.env.PGLITE_DATA_DIR);
 }
