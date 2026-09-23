@@ -1,48 +1,54 @@
+import type { PlayerAction, TableFx, TableRules, TableView } from './table.js';
 import type {
+  ActivityEvent,
+  ChannelId,
+  ChatMessage,
   LobbyState,
-  GameState,
-  PlayerAction,
-  TableConfig,
-  DiscordIdentity,
-  TableRole,
-} from './types.js';
+  Notice,
+  PlayerSelf,
+} from './social.js';
+
+/** Every client command is acknowledged with this. */
+export type Ack = { ok: true } | { ok: false; error: string };
+export type AckFn = (result: Ack) => void;
 
 export interface ServerToClientEvents {
-  lobby_state_update: (state: LobbyState) => void;
-  countdown_start: (data: { endsAt: number }) => void;
-  countdown_cancel: () => void;
-  game_start: (data: { gameId: string }) => void;
-  game_state_update: (state: GameState) => void;
-  timer_tick: (data: { playerId: string; remainingMs: number }) => void;
-  action_rejected: (data: { reason: string }) => void;
-  hand_result: (data: {
-    winnerIds: string[];
-    potAmount: number;
-    handName?: string;
-    finalState: GameState;
-  }) => void;
-  error: (data: { message: string }) => void;
-  joined_table: (data: { gameId: string; role: TableRole }) => void;
-  left_table: () => void;
-  sit_in_rejected: (data: { reason: string }) => void;
+  /** Your own profile/balance changed. */
+  me: (me: PlayerSelf) => void;
+  lobby_state: (state: LobbyState) => void;
+  /** The table as you may see it; sent while you are a table member. */
+  table_state: (view: TableView) => void;
+  /** You are no longer at the table (left, closed, removed). */
+  table_left: (data: { reason: string }) => void;
+  table_fx: (fx: TableFx) => void;
+  chat_message: (msg: ChatMessage) => void;
+  chat_history: (data: { channel: ChannelId; messages: ChatMessage[] }) => void;
+  activity: (event: ActivityEvent) => void;
+  activity_history: (events: ActivityEvent[]) => void;
+  notice: (notice: Notice) => void;
 }
 
+export type ChatTarget = { room: true } | { dm: string };
+
 export interface ClientToServerEvents {
-  join_lobby: (data: { instanceId: string; identity: DiscordIdentity }) => void;
-  player_ready: () => void;
-  player_unready: () => void;
-  start_countdown: () => void;
-  cancel_countdown: () => void;
-  update_config: (config: Partial<TableConfig>) => void;
-  create_game: (config: TableConfig) => void;
-  cancel_game: () => void;
-  player_action: (action: PlayerAction) => void;
-  leave_table: () => void;
-  join_table: () => void;
-  sit_in: () => void;
-  sit_out: () => void;
-  cancel_pending: () => void;
-  request_game_state: () => void;
+  join_room: (data: { instanceId: string }, ack: AckFn) => void;
+  open_table: (data: { rules: Partial<TableRules> }, ack: AckFn) => void;
+  update_rules: (data: { rules: Partial<TableRules> }, ack: AckFn) => void;
+  start_table: (ack: AckFn) => void;
+  close_table: (ack: AckFn) => void;
+  watch_table: (ack: AckFn) => void;
+  take_seat: (data: { seat: number; buyIn: number }, ack: AckFn) => void;
+  top_up: (data: { amount: number }, ack: AckFn) => void;
+  stand_up: (ack: AckFn) => void;
+  leave_table: (ack: AckFn) => void;
+  sit_out: (data: { sittingOut: boolean }, ack: AckFn) => void;
+  cancel_pending: (ack: AckFn) => void;
+  act: (action: PlayerAction, ack: AckFn) => void;
+  emote: (data: { emote: string }, ack: AckFn) => void;
+  throw_item: (data: { itemId: string; targetId: string }, ack: AckFn) => void;
+  chat_send: (data: { to: ChatTarget; body: string }, ack: AckFn) => void;
+  chat_read: (data: { channel: ChannelId }) => void;
+  request_state: () => void;
 }
 
 export interface InterServerEvents {
@@ -50,9 +56,8 @@ export interface InterServerEvents {
 }
 
 export interface SocketData {
-  discordUserId: string;
-  instanceId: string;
-  displayName: string;
+  playerId: string;
+  name: string;
   avatarUrl: string;
-  chipBalance: number;
+  instanceId?: string;
 }

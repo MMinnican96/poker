@@ -13,13 +13,15 @@
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
-    "stats:recompute": "tsx src/db/stats-recompute.ts"
+    "db:generate": "drizzle-kit generate",
+    "stats:recompute": "tsx src/services/recompute.ts"
   },
   "dependencies": {
+    "@electric-sql/pglite": "^0.5.8",
     "@poker/shared": "*",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
-    "drizzle-orm": "^0.39.1",
+    "drizzle-orm": "^0.45.3",
     "express": "^4.21.2",
     "jsonwebtoken": "^9.0.2",
     "pg": "^8.13.1",
@@ -33,10 +35,10 @@
     "@types/node": "^22.10.7",
     "@types/pg": "^8.11.10",
     "@types/uuid": "^10.0.0",
-    "drizzle-kit": "^0.31.10",
+    "drizzle-kit": "^0.31.11",
     "socket.io-client": "^4.8.3",
     "tsx": "^4.19.2",
     "typescript": "*",
-    "vitest": "^3.0.4"
+    "vitest": "^5.0.1"
   }
 }
