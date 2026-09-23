@@ -262,7 +262,7 @@ describe('chip conservation (randomised)', () => {
           res = applyAction(hand, id, { type: 'raise', amount: legal.minRaiseTo + random(span + 1) });
         } else res = applyAction(hand, id, { type: legal.canCheck ? 'check' : 'call' });
         expect(res.ok).toBe(true);
-        if (hand.state.phase !== 'complete') {
+        if ((hand.state.phase as string) !== 'complete') {
           // Mid-hand invariant: stacks + committed chips are conserved.
           const mid = hand.state.players.reduce((s, p) => s + p.stack + p.total, 0);
           expect(mid).toBe(before);

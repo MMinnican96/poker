@@ -95,7 +95,7 @@ export interface PlayerAction {
 export type TableStatus = 'open' | 'running';
 
 /** A queued change that applies when the current hand ends. */
-export type PendingChange = 'leave' | 'stand' | 'sit-out' | 'close' | null;
+export type PendingChange = 'leave' | 'stand' | null;
 
 export interface PublicPlayer {
   id: string;
@@ -121,6 +121,8 @@ export interface SeatPlayer extends PublicPlayer {
   hasHiddenCards: boolean;
   lastAction: { type: ActionType; amount: number } | null;
   pending: PendingChange;
+  /** Sits out from the next hand on. */
+  sittingOut: boolean;
   /** Chips queued to be added before the next hand. */
   pendingTopUp: number;
 }
@@ -201,7 +203,10 @@ export interface ViewerInfo {
   bankroll: number;
   pending: PendingChange;
   sittingOut: boolean;
+  pendingTopUp: number;
   legal: LegalActions | null;
+  /** Emotes this viewer may send. */
+  emotes: string[];
 }
 
 export interface TableView {
@@ -215,6 +220,8 @@ export interface TableView {
   hand: HandView | null;
   /** Hands dealt so far at this table. */
   handsDealt: number;
+  /** The host is closing the table after this hand. */
+  closing: boolean;
   you: ViewerInfo;
   /** Server clock at send time, so clients can correct deadline countdowns. */
   serverNow: number;

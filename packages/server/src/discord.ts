@@ -101,3 +101,19 @@ function requireEnv(name: string): string {
   if (!value) throw new Error(`${name} is not set`);
   return value;
 }
+
+/**
+ * Whether `userId` is currently in the Activity instance, via the bot token.
+ * Used when VERIFY_ACTIVITY_INSTANCE=1 to stop players joining other rooms.
+ */
+export async function isInActivityInstance(instanceId: string, userId: string): Promise<boolean> {
+  const clientId = requireEnv('DISCORD_CLIENT_ID');
+  const botToken = requireEnv('DISCORD_BOT_TOKEN');
+  const res = await fetch(`${DISCORD_API}/applications/${clientId}/activity-instances/${encodeURIComponent(instanceId)}`, {
+    headers: { Authorization: `Bot ${botToken}` },
+  });
+  if (res.status === 404) return false;
+  if (!res.ok) throw new Error(`Discord activity instance lookup failed (${res.status})`);
+  const data = (await res.json()) as { users?: string[] };
+  return Array.isArray(data.users) && data.users.includes(userId);
+}
