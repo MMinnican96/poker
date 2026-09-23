@@ -1,115 +1,78 @@
-import { useEffect, useRef, useState } from 'react';
-import type { DiscordIdentity } from '@poker/shared';
-import { setupDiscord } from './discord';
-import { createSocket, type ClientSocket } from './socket';
-import { LobbyScreen } from './lobby/LobbyScreen';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { BootErrorScreen, ConnectingScreen, ExpiredScreen } from './app/Boot';
+import { ClientProvider, createClient, useAppState, useStore, useTable, type Client } from './app/client';
+import { NavProvider, ProfileCardProvider, useNav } from './app/nav';
+import { startSession } from './app/session';
+import { Toaster } from './app/Toaster';
+import { Shell } from './lobby/Shell';
 import { TableScreen } from './table/TableScreen';
 
-type Status =
-  | { phase: 'connecting' }
-  | { phase: 'ready'; identity: DiscordIdentity; instanceId: string }
-  | { phase: 'error'; message: string };
+type Boot = { status: 'loading' } | { status: 'error'; error: unknown } | { status: 'ready'; client: Client };
 
+/** Signs in, connects, and hands a ready client to the app. */
 export function App() {
-  const [status, setStatus] = useState<Status>({ phase: 'connecting' });
-  const [atTable, setAtTable] = useState(false);
-  const socketRef = useRef<ClientSocket | null>(null);
+  const [boot, setBoot] = useState<Boot>({ status: 'loading' });
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
-    setupDiscord()
-      .then(({ identity, instanceId }) => {
+    let client: Client | null = null;
+    startSession()
+      .then((session) => {
         if (cancelled) return;
-        socketRef.current = createSocket();
-        setStatus({ phase: 'ready', identity, instanceId });
+        client = createClient(session);
+        setBoot({ status: 'ready', client });
       })
-      .catch((err: unknown) => {
-        console.error('[poker] setup failed:', err);
-        if (!cancelled) setStatus({ phase: 'error', message: formatError(err) });
+      .catch((error: unknown) => {
+        if (!cancelled) setBoot({ status: 'error', error });
       });
     return () => {
       cancelled = true;
-      socketRef.current?.disconnect();
+      client?.dispose();
     };
+  }, [attempt]);
+
+  const retry = useCallback(() => {
+    setBoot({ status: 'loading' });
+    setAttempt((n) => n + 1);
   }, []);
 
+  if (boot.status === 'loading') return <ConnectingScreen />;
+  if (boot.status === 'error') return <BootErrorScreen error={boot.error} onRetry={retry} />;
+  return (
+    <ClientProvider client={boot.client}>
+      <NavProvider>
+        <ProfileCardProvider>
+          <Main />
+          <Toaster />
+        </ProfileCardProvider>
+      </NavProvider>
+    </ClientProvider>
+  );
+}
+
+/**
+ * Routing: while you're a table member and on the table section, the table
+ * screen takes over; everything else lives in the shell.
+ */
+export function Main() {
+  const table = useTable();
+  const connection = useAppState((s) => s.connection);
+  const leftReason = useAppState((s) => s.tableLeftReason);
+  const nav = useNav();
+  const store = useStore();
+  const atTable = table !== null;
+  const wasAtTable = useRef(atTable);
+
   useEffect(() => {
-    if (status.phase !== 'ready') return;
-    const socket = socketRef.current!;
-    const onJoined = () => {
-      setAtTable(true);
-      socket.emit('request_game_state');
-    };
-    const onLeft = () => setAtTable(false);
-    socket.on('joined_table', onJoined);
-    socket.on('left_table', onLeft);
-    return () => {
-      socket.off('joined_table', onJoined);
-      socket.off('left_table', onLeft);
-    };
-  }, [status.phase]);
-
-  if (status.phase === 'connecting') return <Centered>Connecting to Discord…</Centered>;
-
-  if (status.phase === 'error') {
-    return (
-      <Centered>
-        <div style={{ maxWidth: 420, textAlign: 'center' }}>
-          <h1>Couldn't start</h1>
-          <p style={{ opacity: 0.8 }}>{status.message}</p>
-          <p style={{ opacity: 0.5, fontSize: 13 }}>
-            This screen is expected outside of Discord — launch the Activity inside a Discord
-            voice channel.
-          </p>
-        </div>
-      </Centered>
-    );
-  }
-
-  if (atTable) {
-    return <TableScreen socket={socketRef.current!} identity={status.identity} />;
-  }
-
-  return (
-    <LobbyScreen
-      socket={socketRef.current!}
-      identity={status.identity}
-      instanceId={status.instanceId}
-    />
-  );
-}
-
-/** Turn any thrown value (incl. Discord SDK error objects) into readable text. */
-function formatError(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  if (typeof err === 'string') return err;
-  if (err && typeof err === 'object') {
-    const o = err as Record<string, unknown>;
-    const detail = o.message ?? o.error ?? o.code;
-    if (detail != null) return String(detail);
-    try {
-      return JSON.stringify(err);
-    } catch {
-      return 'Unknown error';
+    if (atTable && !wasAtTable.current) nav.go('table');
+    if (!atTable && wasAtTable.current && leftReason && leftReason !== 'You left the table.') {
+      store.notify({ tone: 'info', title: leftReason });
     }
-  }
-  return String(err);
-}
+    wasAtTable.current = atTable;
+  }, [atTable, leftReason, nav, store]);
 
-function Centered({ children }: { children: React.ReactNode }) {
-  return (
-    <main
-      style={{
-        fontFamily: 'system-ui, sans-serif',
-        color: '#fff',
-        background: '#1b1f3b',
-        minHeight: '100vh',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-      }}
-    >
-      {children}
-    </main>
-  );
+  if (connection === 'unauthorized') return <ExpiredScreen />;
+  if (atTable && nav.section === 'table') return <TableScreen />;
+  return <Shell />;
 }

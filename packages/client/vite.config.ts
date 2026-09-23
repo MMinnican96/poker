@@ -5,10 +5,10 @@ import path from 'node:path';
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  envDir: path.resolve(__dirname, '../..'),
+  envDir: path.resolve(import.meta.dirname, '../..'),
   resolve: {
     alias: {
-      '@poker/shared': path.resolve(__dirname, '../shared/src/index.ts'),
+      '@poker/shared': path.resolve(import.meta.dirname, '../shared/src/index.ts'),
     },
   },
   server: {

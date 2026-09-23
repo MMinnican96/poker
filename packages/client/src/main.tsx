@@ -1,8 +1,12 @@
-// Self-hosted fonts (bundled, not a runtime CDN fetch) so the chunky display
-// type renders reliably offline, behind privacy blockers, and inside Discord's
-// CSP-restricted Activity iframe. Variable fonts cover all weights we use.
-import '@fontsource-variable/fredoka';
-import '@fontsource-variable/nunito';
+// Self-hosted fonts (bundled, never a runtime CDN fetch): Discord's Activity
+// iframe CSP blocks external font origins.
+import '@fontsource/alfa-slab-one/400.css';
+import '@fontsource/barlow/400.css';
+import '@fontsource/barlow/500.css';
+import '@fontsource/barlow/600.css';
+import '@fontsource/barlow/700.css';
+import '@fontsource/barlow-condensed/600.css';
+import '@fontsource/barlow-condensed/700.css';
 import './index.css';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
