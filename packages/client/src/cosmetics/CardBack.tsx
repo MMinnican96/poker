@@ -61,6 +61,25 @@ function Pattern({ v, pid }: { v: CardBackVisual; pid: string }): ReactNode {
   }
 }
 
+/**
+ * A card back's pattern as a fill for any box (e.g. the art window of a profile
+ * card). Fills its container; `scale` enlarges the pattern (default 3).
+ */
+export function CardBackPattern({ backId, scale = 3, className }: { backId: string; scale?: number; className?: string }) {
+  const v = cardBackVisual(backId);
+  const pid = `backfill-${useId().replace(/:/g, '')}`;
+  return (
+    <svg className={className} width="100%" height="100%" preserveAspectRatio="none" aria-hidden="true" data-card-back={backId}>
+      <defs>
+        <Pattern v={v} pid={pid} />
+      </defs>
+      <g transform={`scale(${scale})`}>
+        <rect width="100%" height="100%" fill={`url(#${pid})`} />
+      </g>
+    </svg>
+  );
+}
+
 /** The back of a playing card, drawn from the catalog's pattern + colours. */
 export function CardBack({ backId, width = 56, className }: CardBackProps) {
   const v = cardBackVisual(backId);

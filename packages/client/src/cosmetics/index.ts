@@ -1,6 +1,6 @@
 /** Cosmetic renderers driven by the shared shop catalog. All sized by props. */
 export { Felt, type FeltProps } from './Felt';
-export { CardBack, CARD_RATIO, type CardBackProps } from './CardBack';
+export { CardBack, CardBackPattern, CARD_RATIO, type CardBackProps } from './CardBack';
 export { PlayingCard, SuitIcon, cardName, isRedSuit, CARD_WIDTH, SUIT_PATH, type CardSize, type PlayingCardProps } from './PlayingCard';
 export { AvatarFrame, type AvatarFrameProps } from './AvatarFrame';
 export { TitleTag, titleText, type TitleTagProps } from './TitleTag';

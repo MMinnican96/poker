@@ -1,4 +1,4 @@
-import { useId, useRef, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useId, useRef, type KeyboardEvent, type ReactNode } from 'react';
 import { cx } from './cx';
 
 export interface TabItem<T extends string> {
@@ -36,6 +36,16 @@ export function Tabs<T extends string>({ tabs, value, onChange, label, fill, cla
   const base = idBase ?? auto;
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
   const enabled = tabs.filter((t) => !t.disabled);
+  // Keep the selected tab in view when the row scrolls sideways (narrow screens).
+  const mounted = useRef(false);
+  useEffect(() => {
+    if (!mounted.current) {
+      mounted.current = true;
+      return;
+    }
+    refs.current[tabs.findIndex((t) => t.id === value)]?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
 
   const onKeyDown = (e: KeyboardEvent) => {
     const i = enabled.findIndex((t) => t.id === value);
