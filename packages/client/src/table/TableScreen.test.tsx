@@ -212,6 +212,10 @@ describe('showdown', () => {
     setup(view);
     expect(screen.getByText('Bob wins 1,200')).toBeInTheDocument();
     expect(screen.getAllByText('Two pair, aces and kings').length).toBeGreaterThan(0);
+    // Under each seat only the hand type, so long labels can't be cut off.
+    const seats = screen.getByRole('list', { name: 'Seats' });
+    expect(within(seats).getByText('Two pair')).toBeInTheDocument();
+    expect(within(seats).queryByText('Two pair, aces and kings')).toBeNull();
     expect(screen.getByRole('group', { name: "Bob's cards" })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Seat 3, Bob, .*won 1,200/ })).toBeInTheDocument();
     const cara = screen.getByRole('group', { name: "Cara's cards, face down" });

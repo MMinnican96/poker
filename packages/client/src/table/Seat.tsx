@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react';
-import { formatChips, formatChipsShort, type Card, type SeatPlayer, type ShownHand } from '@poker/shared';
+import { CATEGORY_NAME, formatChips, formatChipsShort, type Card, type SeatPlayer, type ShownHand } from '@poker/shared';
 import { PlayingCard, TitleTag, titleText } from '../cosmetics';
 import { Avatar, cx } from '../ui';
 import { actionText } from './actions';
@@ -237,7 +237,8 @@ export function Seat({ seat, player: p, slot, layout, hero, toAct, actionEndsAt,
               )}
               style={{ fontSize: m.tagFont, lineHeight: 1.35 }}
             >
-              {outcome.shown.label}
+              {/* Just the hand type fits under the name; the full label is on the table. */}
+              {CATEGORY_NAME[outcome.shown.category]}
             </span>
           )}
         </div>
