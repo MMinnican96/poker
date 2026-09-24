@@ -1,12 +1,16 @@
 import type { ReactNode } from 'react';
 import { describeBestHand, type SeatPlayer, type TableView } from '@poker/shared';
 import { useCommands } from '../app/client';
-import { Button, ChipAmount, SeatIcon, cx } from '../ui';
+import { Button, ChipAmount, EyeIcon, IconButton, SeatIcon, cx } from '../ui';
 import { ActionBar } from './ActionBar';
 import { EmotePicker } from './EmotePicker';
 import { useRun } from './hooks';
+import { EyeOffIcon } from './icons';
 import { PreActions, usePreAction } from './PreActions';
 import { PendingNote } from './TableMenu';
+
+/** Answers to a show/hide that arrived after the hand ended: nothing to tell the player. */
+const SHOW_TOO_LATE = new Set(['That hand has already moved on.', 'No hand is in play.']);
 
 export interface HeroDockProps {
   view: TableView;
@@ -34,6 +38,20 @@ export function HeroDock({ view, narrow, onTakeSeat, sitBlockedReason }: HeroDoc
   const label = heroHandLabel(me, hand);
   const shownLabel = me && hand?.result?.shown[me.id]?.label;
   const cancel = () => void run('cancel', commands.cancelPending);
+  // Showing your cards: open to anyone dealt in, except cards already tabled at showdown.
+  const canShow = !!me && !!hand && me.inHand && !!me.holeCards && !hand.result?.shown[me.id];
+  const showing = you.showCards;
+  const toggleShow = () => void run('show', async () => {
+    const ack = await commands.showCards(!showing, hand?.handNumber);
+    // A late tap as the result clears isn't worth an error toast.
+    return !ack.ok && SHOW_TOO_LATE.has(ack.error) ? { ok: true } : ack;
+  });
+  // In an all-in run-out your live hand is tabled at showdown anyway.
+  const runout = !!hand && !hand.result && !!me && !me.folded
+    && view.seats.some((s) => s.player && s.player.id !== me.id && s.player.inHand && !s.player.folded && !!s.player.holeCards);
+  // Mid-hand it's a pre-selection; on phones your turn's action bar comes first.
+  const showPreselect = canShow && !hand!.result && !runout && !(narrow && yourTurn);
+  const preselectIcon = showing ? <EyeIcon size={16} /> : <EyeOffIcon size={16} />;
 
   let main: ReactNode;
   if (!me) {
@@ -64,6 +82,17 @@ export function HeroDock({ view, narrow, onTakeSeat, sitBlockedReason }: HeroDoc
   } else {
     let text: string;
     let action: ReactNode = null;
+    const showButton = canShow && hand?.result ? (
+      <Button
+        variant="ghost"
+        size="sm"
+        icon={showing ? <EyeOffIcon size={16} /> : <EyeIcon size={16} />}
+        onClick={toggleShow}
+        loading={busy === 'show'}
+      >
+        {showing ? 'Hide cards' : 'Show cards'}
+      </Button>
+    ) : null;
     if (me.sittingOut) {
       text = "You're sitting out.";
       action = (
@@ -71,7 +100,8 @@ export function HeroDock({ view, narrow, onTakeSeat, sitBlockedReason }: HeroDoc
           I'm back
         </Button>
       );
-    } else if (hand?.result) text = hand.result.payouts[me.id] ? 'Nice hand.' : 'Next hand coming up.';
+    } else if (hand?.result && canShow && showing) text = 'Your cards are face up.';
+    else if (hand?.result) text = hand.result.payouts[me.id] ? 'Nice hand.' : 'Next hand coming up.';
     else if (hand && me.inHand && me.folded) text = 'You folded. Next hand soon.';
     else if (hand && me.allIn) text = "You're all in.";
     else if (hand && !me.inHand) text = "You're dealt in next hand.";
@@ -80,7 +110,12 @@ export function HeroDock({ view, narrow, onTakeSeat, sitBlockedReason }: HeroDoc
     main = (
       <div className={cx('flex items-center gap-3', narrow && 'w-full justify-between')}>
         <p className="text-[14px] text-stock-dim" role="status">{text}</p>
-        {action}
+        {(action || showButton) && (
+          <div className="flex shrink-0 items-center gap-2">
+            {showButton}
+            {action}
+          </div>
+        )}
       </div>
     );
   }
@@ -105,6 +140,24 @@ export function HeroDock({ view, narrow, onTakeSeat, sitBlockedReason }: HeroDoc
           </p>
         )}
         {me && !label && !shownLabel && yourTurn && <p className="font-display text-[15px] text-brass-light">Your turn</p>}
+        {showPreselect && (narrow ? (
+          <IconButton label="Show cards at the end" pressed={showing} size="sm" variant="ghost" onClick={toggleShow} disabled={busy === 'show'}>
+            {preselectIcon}
+          </IconButton>
+        ) : (
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={preselectIcon}
+            aria-pressed={showing}
+            title="Show your cards to the table when the hand ends"
+            onClick={toggleShow}
+            loading={busy === 'show'}
+            className={cx('shrink-0', showing && 'bg-brass/15! text-brass-light! ring-brass!')}
+          >
+            Show cards at the end
+          </Button>
+        ))}
         {pending && (
           <div className="ml-auto flex min-w-0 flex-wrap gap-1.5">
             <PendingNote you={you} onCancel={cancel} busy={busy === 'cancel'} />

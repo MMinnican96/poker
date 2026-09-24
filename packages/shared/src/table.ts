@@ -127,10 +127,20 @@ export interface SeatPlayer extends PublicPlayer {
   allIn: boolean;
   /** Chips put in on the current street. */
   committed: number;
-  /** Visible hole cards (own, or revealed at showdown); null when hidden or none. */
+  /**
+   * Visible hole cards (own, tabled at showdown, turned up for an all-in
+   * run-out, or shown by choice once the hand is complete); null when hidden or none.
+   */
   holeCards: [Card, Card] | null;
   /** True when the player holds cards the viewer can't see. */
   hasHiddenCards: boolean;
+  /**
+   * The player chose to show their cards (`show_cards`) and the hand is
+   * complete, so every viewer gets their `holeCards` — even after a fold or a
+   * fold-out win. Never true mid-hand: a choice made during the hand waits for
+   * the end. Showdown hands are face up regardless (see `HandResultView.shown`).
+   */
+  revealed: boolean;
   lastAction: { type: ActionType; amount: number } | null;
   pending: PendingChange;
   /** Sits out from the next hand on. */
@@ -221,6 +231,11 @@ export interface ViewerInfo {
   legal: LegalActions | null;
   /** Emotes this viewer may send. */
   emotes: string[];
+  /**
+   * You asked to show your cards this hand (`show_cards`). Set during the hand
+   * it applies when the hand ends; it resets when the next hand is dealt.
+   */
+  showCards: boolean;
 }
 
 export interface TableView {

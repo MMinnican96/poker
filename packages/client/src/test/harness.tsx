@@ -70,7 +70,7 @@ export function makeTableView(patch: Partial<TableView> = {}): TableView {
     hand: null,
     handsDealt: 0,
     closing: false,
-    you: { id: 'p1', role: 'spectator', seat: null, bankroll: 10_000, pending: null, sittingOut: false, pendingTopUp: 0, legal: null, emotes: [] },
+    you: { id: 'p1', role: 'spectator', seat: null, bankroll: 10_000, pending: null, sittingOut: false, pendingTopUp: 0, legal: null, emotes: [], showCards: false },
     serverNow: Date.now(),
     ...patch,
   };

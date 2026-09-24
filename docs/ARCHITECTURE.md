@@ -154,8 +154,9 @@ Rooms are pruned when nobody is present and no table is open. Lobby presence is
   the table's serial queue, which re-checks eligibility. So a hand is never dealt
   while a buy-in, top-up or cash-out is in flight.
 - **Pacing** (`DEFAULT_TIMING`): 700 ms before the next street, 1.5 s per street
-  in an all-in run-out, result held 6.5 s after a showdown or 2.5 s after a
-  fold-out, 1.5 s between hands.
+  in an all-in run-out, result held 6.5 s after a showdown or 3.5 s after a
+  fold-out (at least 2.5 s more after someone turns on showing their cards
+  during it, once per player), 1.5 s between hands.
 
 ### Changes at hand boundaries
 
@@ -171,6 +172,37 @@ when the hand ends; otherwise they apply at once:
 
 `sit_out { sittingOut }` applies immediately: the player keeps the seat and
 isn't dealt in. Spectators can leave at any time.
+
+### Showing cards by choice
+
+`show_cards { show, handNumber? }` lets anyone dealt into the current hand
+(folded, all-in, or the player everyone folded to) show their hole cards to the
+whole table. The choice lives on the `TableRoom` (a set of player ids), is
+cleared when the next hand is dealt (and when the finished hand is cleared),
+and can be toggled back to hide.
+
+- **Mid-hand** it is a pre-selection: only the chooser's own view changes
+  (`you.showCards`), and nothing about it reaches anyone else until the hand is
+  complete.
+- **In the result window** (from the hand completing until `conclude()` clears
+  it after `showdownMs`/`foldWinMs`) it is broadcast at once. Turning showing
+  on here also keeps the result up at least `showGraceMs` (2.5 s) longer, so
+  the table gets to see the cards: `showCards()` pushes out a `resultUntil`
+  deadline that `conclude()` waits for before resolving the boundary. Each
+  player can extend it once per hand, so toggling can't hold the table open.
+- **Showdown is respected.** Cards tabled at showdown stay face up: hiding them
+  is refused ("Cards shown at showdown stay face up."), showing them is a no-op.
+  Winners, payouts, hand history and stats are untouched; this is only
+  visibility.
+- **The hand boundary.** `showCards()` is synchronous (no chips move, no await),
+  so it acts on the hand exactly as it stands. Once `conclude()` has cleared the
+  hand it answers "No hand is in play."; if `handNumber` doesn't match the
+  current hand (a late request meant for the previous one) it answers "That hand
+  has already moved on." rather than pre-selecting the next hand (the client
+  drops both quietly). A `handNumber` that isn't a positive integer is refused
+  with "That isn't a valid hand number." Spectators and players not dealt in
+  get "You weren't dealt into this hand."; toggles are rate limited ("Slow down
+  a little.").
 
 Boundary resolution runs in the serial queue in this order: retry failed
 cash-outs; then for each seated player, pending leave, pending stand, queued
@@ -236,7 +268,7 @@ by default, seeded in tests). The hand's deck lives only in the server-side
 | Uncalled bets | Returned to the bettor before pots are built (`returned` in the result). |
 | Pots | Built from contribution layers; folded chips stay in but folded players are never eligible; adjacent layers with the same contenders merge. |
 | Run-out | When fewer than two players can still bet, remaining streets are dealt one at a time, paced by the room. |
-| Showdown | Every live hand is tabled automatically (no muck option). Best five of seven; ties split. |
+| Showdown | Every live hand is tabled automatically (no muck option). Best five of seven; ties split. Anyone dealt in may also show their cards by choice once the hand ends (`show_cards`). |
 | Odd chips | Go to the first winner clockwise from the button's left. |
 | Conservation | A randomised property test checks chips are conserved every hand. |
 
@@ -484,6 +516,7 @@ answer. Try again." and refuses immediately while offline.
 | `sit_out` | `{ sittingOut }` | Immediate |
 | `cancel_pending` | none | Clears pending leave/stand and queued top-up |
 | `act` | `{ type: 'fold'\|'check'\|'call'\|'raise'\|'all-in', amount? }` | `amount` is the raise-to total for this street |
+| `show_cards` | `{ show: boolean, handNumber? }` | Dealt-in players only; mid-hand a pre-selection, broadcast once the hand is complete. See [Showing cards by choice](#showing-cards-by-choice) |
 | `emote` | `{ emote }` | Must own it; rate limited |
 | `throw_item` | `{ itemId, targetId }` | Consumes one; target seated, not you |
 | `chat_send` | `{ to: { room: true } \| { dm: playerId }, body }` | Rate and length limited |
@@ -505,11 +538,12 @@ answer. Try again." and refuses immediately while offline.
 | `notice` | `{ id, tone, title, body? }` | To one player (level-ups, sat out, top-up trimmed, host transfer, ...) |
 
 `TableView` carries the rules, status, host, all seats (`SeatPlayer` with stack,
-state, connection, cards when visible, last action, pending change), spectators,
+state, connection, cards when visible, `revealed` when shown by choice, last
+action, pending change), spectators,
 the hand (`HandView`: street, board, settled pots, pot total, button and blind
 seats, seat to act, turn start and deadline, current bet, result), and `you`
 (`ViewerInfo`: role, seat, bankroll, pending change, legal actions when it's
-your turn, your emotes).
+your turn, your emotes, whether you chose to show your cards this hand).
 
 ## Privacy guarantees
 
@@ -517,12 +551,15 @@ your turn, your emotes).
 - `TableRoom.viewFor(viewerId)` sets `holeCards` for a seat only when it's the
   viewer's own, or the player is live and either the hand ended at showdown with
   their hand tabled, or betting is over with an all-in run-out (live hands turn
-  face up). Folded cards are never shown. Otherwise `holeCards` is null and
+  face up). Beyond that, a player who chose to show (`show_cards`) has their
+  cards (folded or not) sent to every viewer with `revealed: true`, but only
+  once the hand is complete; a choice made mid-hand reveals nothing early.
+  Otherwise folded cards are never shown, `holeCards` is null and
   `hasHiddenCards` says whether cards are there.
 - Spectators get the same view as any non-owner.
 - `lobby_state` never carries cards.
 - `GET /me/hands` returns only hands you played, with other players' cards only
-  if they were shown at showdown.
+  if they were shown at showdown (cards shown by choice aren't recorded).
 - The e2e suite plays full multi-client games and asserts no client ever
   receives an opponent's unshown cards.
 
@@ -538,7 +575,7 @@ App ── startSession() ──▶ Session { mode, token, me, instanceId, sdk? 
           ├─ createCommands(socket)    typed, ack'd, 10 s timeout
           ├─ bindSocket(...)           server events → store; on (re)connect: join_room, request_state
           └─ createApi(token)          typed REST client, 401 → "session expired"
-     └─ ClientProvider → NavProvider → ProfileCardProvider → Main + Toaster
+     └─ ClientProvider → NavProvider → ProfileCardProvider → Main + Toaster + AppSounds
 ```
 
 - `app/session.ts`: Discord SDK or mock sign-in (dev build + `?mock`, optional
@@ -565,7 +602,7 @@ the profile card are separate chunks, preloaded when the page is idle.
 ### Design system and cosmetics
 
 - `ui/`: store-free primitives (Button, IconButton, Surface, Panel, Modal,
-  Drawer, Tabs, Segmented, Field, AmountInput, Slider, ChipAmount, Avatar,
+  Drawer, Tabs, Segmented, Switch, Field, AmountInput, Slider, ChipAmount, Avatar,
   LevelBadge, Placard, CountBadge, Toasts, EmptyState, Spinner, icons). See
   DESIGN_STANDARDS.
 - `cosmetics/`: renderers driven by the shared catalog: `Felt` (with the
@@ -597,10 +634,58 @@ the profile card are separate chunks, preloaded when the page is idle.
   dialogs.
 - `TopBar`, `TableMenu` (seat, host controls, sound, the rest of the app, one
   combined pending-change note with "Cancel all"), `HeroDock` (your hand's
-  name), `SeatMenu` (profile, throwables), `EditRulesDialog`, `TopUpDialog`.
-- `table/sound/`: `cues.ts` diffs consecutive views into sound cues (pure),
-  `SoundManager` plays them with Web Audio, `soundStore` keeps mute and volume in
-  localStorage. Clips are in `packages/client/public/audio/`.
+  name, and the show/hide controls for your cards: a "Show cards at the end"
+  toggle during the hand, hidden in an all-in run-out where your hand is tabled
+  anyway and on a phone during your turn, then "Show cards"/"Hide cards" beside
+  the result), `SeatMenu` (profile, throwables), `EditRulesDialog`, `TopUpDialog`.
+- `table/sound/`: all app audio.
+  - `catalog.ts` names every sound, its group (chips and actions, cards, your
+    turn and timer, wins and stings, messages), its variant files and its pitch
+    jitter.
+  - `cues.ts` diffs consecutive views into cues (pure): new hand → `deal`;
+    board +3 → `flop`, +1 → `card`; another seat's `holeCards` going from
+    null to cards within a hand → `flip` (showdown, run-out or shown by
+    choice; up to three, staggered); last actions → `check`, `call`, `bet`,
+    `raise`, `allin`, `fold`; raises in a row → `suspense` at a rising
+    rate; a result → `pot`, plus `win` if you were paid; your turn → `turn`.
+    `useTableSounds` plays them; the first view after mounting, or after the
+    table view was gone (a reconnect), is only a baseline.
+  - `turnTicks.ts` ticks the last 5 seconds of your turn (urgent for the last
+    3). It plans from `actionEndsAt` against the store's `serverNow()` (local
+    time plus the offset measured when the view arrived), so any turn length
+    works and a late plan (remount, ticks switched back on) still lands on the
+    right seconds. Timers are cleared when the deadline changes, the turn ends
+    or ticks are switched off.
+  - `useAppSounds` (mounted once in `App` as `<AppSounds />`) runs all of it
+    from the store: `useTableSounds` on the store's table view, so your turn
+    chime and ticks sound whichever section you're on (the table screen plays
+    nothing itself), and `appCues.ts`: a pop for a single new chat message or
+    DM from someone else (history loads are quiet), a chime for a new `good`
+    notice.
+  - `SoundManager` is the mixer: source → cue gain → group gain → master gain →
+    `DynamicsCompressor` limiter (threshold -1 dB, hard knee, ratio 20) →
+    makeup trim → speakers. The spec gives the compressor a fixed makeup gain of
+    (1 / curve(0 dBFS))^0.6 (+0.57 dB here); the trim cancels it, so the mix is
+    unchanged unless it would clip. Gains follow an audio taper
+    (slider²) and ramp with `setTargetAtTime`, so changes apply live without
+    clicks. It picks a random variant (never the same twice running), jitters
+    pitch, throttles the same sound within 45 ms, drops cues that can't start
+    within 350 ms (except samples the player asked for), and preloads every clip
+    on the first gesture (or on unmute, if muted then). The context is never
+    suspended when idle: resuming without a gesture isn't reliable everywhere. The
+    AudioContext and fetch are injectable for tests.
+  - `soundStore` keeps `{ muted, master, categories, timerTicks }` in
+    localStorage (`poker.sound`, version 2), validated field by field; the v1
+    `{ muted, volume }` value is migrated (`master` = √`volume`, since v1's volume
+    was linear gain and the mixer now squares the slider). A `storage` event
+    from another tab reloads it.
+  - `SoundSettingsDialog` (all settings, a sample button per group, timer
+    ticks switch, reset) opens from the table menu's Sound section and from the
+    lobby header's sound button (from 480 px up; the header has no room on
+    narrower phones). The top bar keeps a one-tap mute.
+  - Clips live in `packages/client/public/audio/` and are synthesized by
+    `packages/client/scripts/gen-sounds.mjs` (`npm run sounds:generate -w
+    @poker/client`); see its `CREDITS.md`.
 
 ## Testing
 
@@ -609,7 +694,7 @@ the profile card are separate chunks, preloaded when the page is idle.
 | `server/src/engine/*.test.ts` | Rules, with stacked decks (`test-helpers.ts`: `setupHand`, `play`) and the randomised chip-conservation test |
 | `server/src/services/*.test.ts` | Bank, recorder, shop, rewards, chat, stats on PGlite (`test/db.ts`: `useTestDb`, `makePlayer`) |
 | `server/src/rooms/*.test.ts` | `TableRoom` and `InstanceRoom` through `test/table-harness.ts` (`Harness`, `FAST` timing, `chipsInPlay`) |
-| `server/src/test/e2e/` | A real app on a random port driven by `fetch` + `socket.io-client` (`helpers.ts`: `startServer`, `signIn`, `TestClient`, `driveUntil`, `playHands`): API, realtime, table, lifecycle |
+| `server/src/test/e2e/` | A real app on a random port driven by `fetch` + `socket.io-client` (`helpers.ts`: `startServer`, `signIn`, `TestClient`, `driveUntil`, `playHands`): API, realtime, table, lifecycle, show-cards |
 | `client/src/**/*.test.ts(x)` | Vitest + React Testing Library on jsdom; `test/harness.tsx` renders screens with a fake socket and API |
 | `shared/src/*.test.ts` | Hand evaluator, progression, shop, rules; run with `npm test -w @poker/shared` |
 

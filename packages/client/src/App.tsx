@@ -7,6 +7,7 @@ import { NavProvider, ProfileCardProvider, useNav } from './app/nav';
 import { startSession } from './app/session';
 import { Toaster } from './app/Toaster';
 import { Shell } from './lobby/Shell';
+import { AppSounds } from './table/sound/useAppSounds';
 import { Spinner } from './ui';
 
 /** The table screen is its own chunk, fetched in the background after sign-in. */
@@ -59,6 +60,7 @@ export function App() {
         <ProfileCardProvider>
           <Main />
           <Toaster />
+          <AppSounds />
         </ProfileCardProvider>
       </NavProvider>
     </ClientProvider>

@@ -223,6 +223,9 @@ describe('bindSocket + commands', () => {
     expect(socket.events('take_seat')[0].args[0]).toEqual({ seat: 2, buyIn: 1500 });
     await expect(commands.act({ type: 'raise', amount: 200 })).resolves.toEqual({ ok: true });
     expect(socket.events('act')[0].args[0]).toEqual({ type: 'raise', amount: 200 });
+    await expect(commands.showCards(true, 7)).resolves.toEqual({ ok: true });
+    await commands.showCards(false);
+    expect(socket.events('show_cards').map((e) => e.args[0])).toEqual([{ show: true, handNumber: 7 }, { show: false }]);
     await commands.sendChat({ dm: 'p2' }, 'hello');
     expect(socket.events('chat_send')[0].args[0]).toEqual({ to: { dm: 'p2' }, body: 'hello' });
     await commands.startTable();

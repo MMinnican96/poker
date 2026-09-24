@@ -48,9 +48,11 @@ packages/
     cosmetics/  catalog-driven renderers (Felt, CardBack, PlayingCard, AvatarFrame...)
     lobby/      Shell, NavBar, Header, RoomPanel, TableHome, MiniTable, dialogs
     table/      TableScreen, TableStage, layout.ts (geometry engine), Seat, ActionBar,
-                PreActions, FxLayer, TopBar, TableMenu, HeroDock, sound/
+                PreActions, FxLayer, TopBar, TableMenu, HeroDock,
+                sound/ (catalog, cues, turn-timer ticks, mixer, settings store + dialog)
     features/   leaderboard, stats, challenges, shop, messages, profile (lazy chunks)
     index.css   every design token (@theme)
+  client/scripts/gen-sounds.mjs   synthesizes every clip in client/public/audio/
 ```
 
 ## Running
@@ -70,6 +72,7 @@ packages/
 | `npm run build` | Type-check and build shared, server, client |
 | `npm test` | Server (type-checks tests, then Vitest incl. e2e on PGlite) and client (Vitest + RTL) |
 | `npm test -w @poker/shared` | Shared package tests (the root `npm test` leaves these out) |
+| `npm run sounds:generate -w @poker/client` | Re-synthesize the sound clips (deterministic; prints loudness per clip) |
 | `npm run db:migrate` | Apply migrations to `DATABASE_URL` by hand (boot does this too) |
 | `npm run db:generate -w @poker/server` | Generate a migration from `schema.ts` |
 | `npm run stats:recompute` | Rebuild `player_stats` from the `player_hand_stats` facts |
@@ -113,8 +116,10 @@ idempotent). There is no `db:push`.
   `Authorization: Bearer`. Mock sign-in is refused whenever `NODE_ENV=production`
   or a Railway env var is present, and the client offers it only in dev builds.
 - **Card privacy.** The deck lives only in the server-side `Hand`. `viewFor()`
-  shows a player their own cards, and others' only at showdown or in an all-in
-  run-out. Hand history hides opponents' unshown cards.
+  shows a player their own cards, and others' only at showdown, in an all-in
+  run-out, or when that player chose to show them (`show_cards`), and then only
+  once the hand is complete. Hand history hides opponents' unshown cards (cards
+  shown by choice included).
 
 ## Conventions
 

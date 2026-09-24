@@ -44,6 +44,14 @@ export interface ClientToServerEvents {
   sit_out: (data: { sittingOut: boolean }, ack: AckFn) => void;
   cancel_pending: (ack: AckFn) => void;
   act: (action: PlayerAction, ack: AckFn) => void;
+  /**
+   * Show (or hide again) your hole cards to the whole table once the hand is
+   * complete. Any player dealt into the hand may ask, folded or not, from the
+   * deal until the result clears; mid-hand it is a pre-selection that reveals
+   * nothing until the end. Cards tabled at showdown can't be hidden. Pass
+   * `handNumber` so a late request can't apply to the next hand.
+   */
+  show_cards: (data: { show: boolean; handNumber?: number }, ack: AckFn) => void;
   emote: (data: { emote: string }, ack: AckFn) => void;
   throw_item: (data: { itemId: string; targetId: string }, ack: AckFn) => void;
   chat_send: (data: { to: ChatTarget; body: string }, ack: AckFn) => void;

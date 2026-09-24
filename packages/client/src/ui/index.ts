@@ -15,6 +15,7 @@ export { AmountInput, Slider, clampAmount, type AmountInputProps, type SliderPro
 export { Placard, PlacardRow, type PlacardProps } from './Placard';
 export { Field, TextInput, useField, useFieldControlProps, type FieldProps } from './Field';
 export { Segmented, type SegmentedOption, type SegmentedProps } from './Segmented';
+export { Switch, type SwitchProps } from './Switch';
 export { CountBadge, countLabel } from './CountBadge';
 export { cx } from './cx';
 export * from './icons';
