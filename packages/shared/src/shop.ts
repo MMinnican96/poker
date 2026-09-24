@@ -3,6 +3,8 @@
  * client (rendering). Items with price 0 are owned by everyone.
  */
 
+import { getAchievementTitle } from './achievements.js';
+
 export type ItemCategory = 'felt' | 'card-back' | 'frame' | 'title' | 'celebration' | 'emote-pack' | 'throwable';
 export type Rarity = 'common' | 'rare' | 'epic' | 'legendary';
 
@@ -155,9 +157,28 @@ export interface Cosmetics {
   celebration: string;
 }
 
+/** An equippable title: bought in the shop (`title-*`) or earned from an achievement (`ach:*`). */
+export interface TitleInfo {
+  id: string;
+  /** Display text ('' for "No title"). */
+  text: string;
+  source: 'shop' | 'achievement';
+  /** Achievement titles: which achievement and tier unlock it. */
+  achievementId?: string;
+  tier?: number;
+}
+
+/** Resolve a title id of either kind; undefined for unknown ids and non-title items. */
+export function getTitle(id: string): TitleInfo | undefined {
+  const item = BY_ID.get(id);
+  if (item) return item.visual.kind === 'title' ? { id, text: item.visual.text, source: 'shop' } : undefined;
+  const earned = getAchievementTitle(id);
+  if (earned) return { id, text: earned.text, source: 'achievement', achievementId: earned.achievementId, tier: earned.tier };
+  return undefined;
+}
+
 export function cosmeticsFor(loadout: Loadout): Cosmetics {
-  const title = getItem(loadout.title);
-  const text = title?.visual.kind === 'title' ? title.visual.text : '';
+  const text = getTitle(loadout.title)?.text ?? '';
   return {
     frame: loadout.frame,
     cardBack: loadout['card-back'],
@@ -180,4 +201,9 @@ export function emotesFor(owned: Record<string, number>): string[] {
 
 export function isPermanent(item: ShopItem): boolean {
   return item.quantity === undefined;
+}
+
+/** Permanent items that cost chips: the most a player can own (the collector's ceiling). */
+export function permanentPaidItemCount(): number {
+  return CATALOG.filter((i) => isPermanent(i) && i.price > 0).length;
 }

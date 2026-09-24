@@ -229,15 +229,18 @@ Leave these unset:
 2. Watch the logs for `using Postgres (DATABASE_URL)`,
    `serving client from …/client/dist` and `listening on port …`. Migrations run
    before the server listens; nothing needs to run in the build (private
-   networking isn't available at build time anyway).
+   networking isn't available at build time anyway). The first boot after the
+   achievements upgrade also logs `[achievements] backfilled …` (see E).
 3. In the Developer Portal, set the root (`/`) URL mapping to the Railway domain.
 
-To run migrations or `stats:recompute` from your machine against Railway
-Postgres, use the public URL for that one command and don't commit it:
+To run migrations, `stats:recompute` or `achievements:recompute` from your
+machine against Railway Postgres, use the public URL for that one command and
+don't commit it:
 
 ```powershell
 $env:DATABASE_URL = "<DATABASE_PUBLIC_URL>"
 npm run db:migrate          # or: npm run stats:recompute
+npm run achievements:recompute -w @poker/server
 ```
 
 ### Restarts and deploys
@@ -283,6 +286,37 @@ quiet moment is still kinder.
 Players keep their bankroll, ledger and lifetime stats. XP, levels, items and
 challenges start from zero for everyone.
 
+### Achievements upgrade
+
+`0002_achievements.sql` adds `player_achievements`,
+`player_achievement_unlocks` and `app_meta`, `players.showcase`,
+`player_challenges.current` and nullable fact columns on `player_hand_stats`.
+It's idempotent like the others and needs no manual step.
+
+After migrations and seat recovery, once its lease heartbeat is running and
+before it listens, the server runs a one-time **backfill** that credits past
+play to career challenges and feats: player by player, it folds every stored
+hand fact (with hole cards and board from hand history, read in bounded
+batches) plus current state (level, daily streak, claimed challenges, items
+owned) and pays the tiers already reached, without notices. The `app_meta` key
+`achievements-backfill-v1` records that it ran; it's set only on success, so a
+failure is logged and retried on the next boot, and the server starts either
+way. Metrics that need the new fact columns (knockouts, check-raises,
+three-bets, split pots, behind-on-the-turn wins, ...) count only hands played
+after the upgrade.
+
+During a rolling deploy the old process keeps playing while the new one boots.
+A hand the old process records after the backfill has read that player's facts
+isn't credited to the metrics the backfill folds (the old build doesn't record
+achievements itself). Deploying at a quiet moment keeps that gap empty.
+
+To run it again by hand (it only ever raises progress and pays each tier once):
+`npm run achievements:recompute -w @poker/server`. Best run with the server
+stopped: it reads each player's facts before writing that player's progress,
+so a hand a live server records in between may be missed by the metrics the
+fold recomputes (progress never goes down, and an existing row keeps its
+streak in progress).
+
 ## Scripts
 
 Root scripts (`npm run <name>`):
@@ -292,7 +326,7 @@ Root scripts (`npm run <name>`):
 | `dev` | Build shared, then watch shared, server and client |
 | `build` | Type-check and build shared, server, client |
 | `start` | Start the built server (`packages/server/dist/index.js`) |
-| `test` | Server tests (type-check, then Vitest incl. e2e on PGlite) and client tests |
+| `test` | Shared tests, server tests (type-check, then Vitest incl. e2e on PGlite) and client tests |
 | `db:migrate` | Apply migrations to `DATABASE_URL` |
 | `db:studio` | Drizzle Studio |
 | `stats:recompute` | Rebuild `player_stats` from `player_hand_stats` |
@@ -300,12 +334,16 @@ Root scripts (`npm run <name>`):
 | `test:pg` | Server tests against `TEST_DATABASE_URL`, files run serially |
 
 Workspace scripts: `npm run db:generate -w @poker/server`,
+`npm run achievements:recompute -w @poker/server` (rebuild achievement progress
+from facts and current state, paying tiers not yet paid),
 `npm run test:pg -w @poker/server`, `npm run typecheck -w @poker/server`,
-`npm test -w @poker/shared` (shared's own tests; the root `test` doesn't run
-them).
+`npm test -w @poker/shared` (shared's tests alone; the root `test` runs them
+too).
 
-`db:migrate` and `stats:recompute` use `DATABASE_URL`. With it blank they run
-against a throwaway in-memory PGlite unless `PGLITE_DATA_DIR` is set.
+`db:migrate`, `stats:recompute` and `achievements:recompute` use `DATABASE_URL`,
+or the on-disk PGlite database at `PGLITE_DATA_DIR` when that is blank. With
+neither set they exit with an error rather than work on a throwaway in-memory
+database.
 
 ## Troubleshooting
 

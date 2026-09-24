@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertDatabaseConfigured, openDatabase } from './db/client.js';
 import { createServices } from './services/index.js';
+import { backfillAchievementsOnce } from './services/achievements-backfill.js';
 import { LEASE_RECOVERY_MS, ServerLease } from './services/leases.js';
 import { createApp, SHUTDOWN_CASHOUT_MS } from './app.js';
 import { isProduction, mockAuthAllowed, resolveSecret } from './auth.js';
@@ -63,6 +64,12 @@ const app = createApp({
 // before the heartbeat starts so a loss is never missed.
 guardTablesWithLease(lease, services.bank, app.realtime.rooms);
 lease.start();
+
+// One-time: credit past play to career challenges and feats (guarded by an
+// app_meta marker; a failure is logged and retried at the next boot). After the
+// heartbeat starts, so a long backfill can't let the lease go stale, and before
+// listen, so no hand is recorded live on this process while it folds history.
+await backfillAchievementsOnce(handle.db);
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3001;
 app.http.listen(PORT, () => {

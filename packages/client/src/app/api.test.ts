@@ -43,6 +43,19 @@ describe('createApi', () => {
     expect(other).not.toHaveBeenCalled();
   });
 
+  it('loads achievements and puts the showcase, returning a 409 refusal as a result', async () => {
+    const fetch = vi.fn(async (_url: string, init?: RequestInit) =>
+      init?.method === 'PUT' ? json({ ok: false, error: "You haven't unlocked that emblem yet." }, 409) : json({ achievements: [], showcase: [] }));
+    const api = createApi('tok', { fetch });
+    await expect(api.achievements()).resolves.toEqual({ achievements: [], showcase: [] });
+    expect(fetch.mock.calls[0][0]).toBe('/api/achievements');
+    await expect(api.setShowcase(['grinder', 'royalty'])).resolves.toEqual({ ok: false, error: "You haven't unlocked that emblem yet." });
+    const [url, init] = fetch.mock.calls[1] as unknown as [string, RequestInit];
+    expect(url).toBe('/api/achievements/showcase');
+    expect(init.method).toBe('PUT');
+    expect(JSON.parse(init.body as string)).toEqual({ ids: ['grinder', 'royalty'] });
+  });
+
   it('encodes channel ids for history', async () => {
     const fetch = vi.fn(async () => json([]));
     await createApi('tok', { fetch }).history('dm:a:b', '2026-01-01T00:00:00.000Z');

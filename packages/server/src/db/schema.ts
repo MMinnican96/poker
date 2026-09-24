@@ -35,6 +35,8 @@ export const players = pgTable(
   loadoutFrame: text('loadout_frame').notNull().default('frame-none'),
   loadoutTitle: text('loadout_title').notNull().default('title-none'),
   loadoutCelebration: text('loadout_celebration').notNull().default('cele-confetti'),
+  /** Achievement ids pinned to the trophy cabinet, in order (empty = automatic pick). */
+  showcase: text('showcase').array().notNull().default(sql`'{}'::text[]`),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -131,6 +133,16 @@ export const playerHandStats = pgTable(
     wasAllIn: boolean('was_all_in').notNull(),
     finalStreet: text('final_street').notNull(),
     durationMs: integer('duration_ms').notNull(),
+    // Newer facts (achievements). Null on rows recorded before they existed.
+    playersDealt: integer('players_dealt'),
+    startingStack: integer('starting_stack'),
+    knockouts: integer('knockouts'),
+    checkRaise: boolean('check_raise'),
+    threeBet: boolean('three_bet'),
+    allInPreflop: boolean('all_in_preflop'),
+    behindOnTurn: boolean('behind_on_turn'),
+    splitPot: boolean('split_pot'),
+    showdownOpponents: integer('showdown_opponents'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -215,11 +227,61 @@ export const playerChallenges = pgTable(
     periodKey: text('period_key').notNull(),
     challengeId: text('challenge_id').notNull(),
     progress: doublePrecision('progress').notNull().default(0),
+    /** Streak challenges: consecutive hits so far this period (progress is the best). */
+    current: doublePrecision('current').notNull().default(0),
     completedAt: timestamp('completed_at', { withTimezone: true }),
     claimedAt: timestamp('claimed_at', { withTimezone: true }),
   },
   (t) => [uniqueIndex('player_challenges_unique').on(t.playerId, t.periodKey, t.challengeId)],
 );
+
+/**
+ * player_achievements — progress on one career challenge or feat. `progress`
+ * is the metric's running value (sum, best streak or max); `current` is the
+ * streak in progress; `tier` is the highest tier paid out (0 = locked).
+ */
+export const playerAchievements = pgTable(
+  'player_achievements',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    playerId: text('player_id').notNull().references(() => players.discordUserId),
+    achievementId: text('achievement_id').notNull(),
+    progress: doublePrecision('progress').notNull().default(0),
+    current: doublePrecision('current').notNull().default(0),
+    tier: integer('tier').notNull().default(0),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('player_achievements_unique').on(t.playerId, t.achievementId),
+    check('player_achievements_tier_range', sql`${t.tier} between 0 and 5`),
+  ],
+);
+
+/**
+ * player_achievement_unlocks — one row per tier reached. Unique per
+ * (player, achievement, tier): only the insert that creates the row pays.
+ */
+export const playerAchievementUnlocks = pgTable(
+  'player_achievement_unlocks',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    playerId: text('player_id').notNull().references(() => players.discordUserId),
+    achievementId: text('achievement_id').notNull(),
+    tier: integer('tier').notNull(),
+    unlockedAt: timestamp('unlocked_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('player_achievement_unlocks_unique').on(t.playerId, t.achievementId, t.tier),
+    index('player_achievement_unlocks_player_idx').on(t.playerId, t.unlockedAt),
+  ],
+);
+
+/** app_meta — small key/value markers (e.g. one-time backfills that have run). */
+export const appMeta = pgTable('app_meta', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
+});
 
 /** chat_messages — room chat and direct messages. */
 export const chatMessages = pgTable(

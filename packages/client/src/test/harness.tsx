@@ -138,6 +138,8 @@ export function fakeApi(patch: Partial<Api> = {}): Api {
     leaderboard: notCalled(),
     purchase: notCalled(),
     equip: notCalled(),
+    achievements: notCalled(),
+    setShowcase: notCalled(),
     challenges: notCalled(),
     claimChallenge: notCalled(),
     conversations: notCalled(),

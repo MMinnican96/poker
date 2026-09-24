@@ -101,9 +101,18 @@ export function createApi(opts: ApiOptions): Router {
     else res.json(self);
   }));
 
+  /** Tell the player (and their rooms) about level-ups and unlocks paid by a REST action. */
+  function announce(outcome: Parameters<Realtime['announce']>[0]) {
+    if ((outcome.levelUps?.length ?? 0) + (outcome.unlocks?.length ?? 0) === 0) return;
+    void realtime.announce(outcome).catch((err) => console.error('[api] announcing rewards failed', err));
+  }
+
   api.post('/me/daily', wrap(async (req, res) => {
     const r = await services.rewards.claimDaily(me(req));
-    if (r.ok) realtime.refreshMe(me(req));
+    if (r.ok) {
+      realtime.refreshMe(me(req));
+      announce(r);
+    }
     res.status(r.ok ? 200 : 409).json(r);
   }));
 
@@ -138,7 +147,10 @@ export function createApi(opts: ApiOptions): Router {
   api.post('/shop/purchase', wrap(async (req, res) => {
     const { itemId, nonce } = req.body as { itemId?: unknown; nonce?: unknown };
     const r = await services.shop.purchase(me(req), String(itemId ?? ''), String(nonce ?? ''));
-    if (r.ok) realtime.refreshMe(me(req));
+    if (r.ok) {
+      realtime.refreshMe(me(req));
+      announce(r);
+    }
     res.status(r.ok ? 200 : 409).json(r);
   }));
 
@@ -160,7 +172,22 @@ export function createApi(opts: ApiOptions): Router {
   api.post('/challenges/claim', wrap(async (req, res) => {
     const { periodKey, challengeId } = req.body as { periodKey?: unknown; challengeId?: unknown };
     const r = await services.rewards.claimChallenge(me(req), String(periodKey ?? ''), String(challengeId ?? ''));
-    if (r.ok) realtime.refreshMe(me(req));
+    if (r.ok) {
+      realtime.refreshMe(me(req));
+      announce(r);
+    }
+    res.status(r.ok ? 200 : 409).json(r);
+  }));
+
+  /** Career challenges and feats: every one in the catalog with your progress, and your showcase. */
+  api.get('/achievements', wrap(async (req, res) => {
+    res.json(await services.achievements.forPlayer(me(req)));
+  }));
+
+  /** Pin up to five unlocked emblems to your trophy cabinet (`{ ids: string[] }`, in order). */
+  api.put('/achievements/showcase', wrap(async (req, res) => {
+    const body = req.body as { ids?: unknown } | undefined;
+    const r = await services.achievements.setShowcase(me(req), body && typeof body === 'object' ? body.ids : undefined);
     res.status(r.ok ? 200 : 409).json(r);
   }));
 

@@ -21,6 +21,7 @@
     "canvas-confetti": "^1.9.4",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
+    "react-icons": "^5.7.0",
     "socket.io-client": "^4.8.1",
     "tailwindcss": "^4.3.3"
   },

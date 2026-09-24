@@ -29,6 +29,7 @@ import {
   type Hand,
   type RandomInt,
 } from '../engine/index.js';
+import { unlockActivityText, unlockNotice } from '../services/achievements.js';
 import { buildHandFacts, buildHistory } from '../services/hand-facts.js';
 import type { Bank } from '../services/bank.js';
 import type { HandRecorder } from '../services/recorder.js';
@@ -746,6 +747,11 @@ export class TableRoom {
         for (const done of outcome.completed) {
           this.deps.hooks.notice(done.playerId, { tone: 'good', title: 'Challenge complete', body: `${done.challenge.title} — claim your reward.` });
           this.deps.hooks.activity({ kind: 'challenge', playerId: done.playerId, playerName: this.nameOf(done.playerId), text: `completed “${done.challenge.title}”` });
+        }
+        for (const unlock of outcome.unlocks) {
+          this.deps.hooks.notice(unlock.playerId, unlockNotice(unlock));
+          const text = unlockActivityText(unlock);
+          if (text) this.deps.hooks.activity({ kind: 'achievement', playerId: unlock.playerId, playerName: this.nameOf(unlock.playerId), text });
         }
       } catch (err) {
         this.log('recording the hand failed', err);

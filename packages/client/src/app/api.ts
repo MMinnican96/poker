@@ -1,4 +1,5 @@
 import type {
+  AchievementsResponse,
   Card,
   ChallengeStatus,
   ChatMessage,
@@ -12,6 +13,7 @@ import type {
   PlayerSelf,
   PlayerStatsSummary,
   ProfileCard,
+  ShowcaseResult,
 } from '@poker/shared';
 
 /** A non-2xx response that isn't a business-rule refusal. */
@@ -53,15 +55,20 @@ export interface LevelUp { playerId: string; level: number; reward: number }
 /** Typed REST client. Every call carries `Authorization: Bearer <token>`. */
 export interface Api {
   me(): Promise<PlayerSelf>;
-  claimDaily(): Promise<ApiResult<{ amount: number; balance: number; streak: number }>>;
+  claimDaily(): Promise<ApiResult<{ amount: number; balance: number; streak: number; levelUps: LevelUp[] }>>;
   profile(playerId: string): Promise<ProfileCard>;
   playerStats(playerId: string): Promise<{ summary: PlayerStatsSummary; curve: ProfitPoint[] }>;
   myHands(limit?: number): Promise<HandHistoryView[]>;
   /** The top `limit` entries, plus your own entry wherever you rank. */
   leaderboard(metric: LeaderboardMetric, period?: LeaderboardPeriod, limit?: number): Promise<LeaderboardResponse>;
   /** `nonce` makes retries idempotent; one is generated when omitted. */
-  purchase(itemId: string, nonce?: string): Promise<ApiResult<{ balance: number; quantity: number }>>;
+  purchase(itemId: string, nonce?: string): Promise<ApiResult<{ balance: number; quantity: number; levelUps: LevelUp[] }>>;
+  /** Equip an owned shop item, or (slot `title`) an earned achievement title id. */
   equip(slot: LoadoutSlot, itemId: string): Promise<ApiResult<{ loadout: Loadout }>>;
+  /** Your progress on every career challenge and feat, and your chosen showcase. */
+  achievements(): Promise<AchievementsResponse>;
+  /** Pin up to 5 unlocked emblems to your trophy cabinet, in order ([] = automatic pick). */
+  setShowcase(ids: string[]): Promise<ShowcaseResult>;
   challenges(): Promise<ChallengeStatus[]>;
   claimChallenge(periodKey: string, challengeId: string): Promise<ApiResult<{
     chips: number; xp: number; balance: number; levelUps: LevelUp[];
@@ -90,7 +97,7 @@ export function createApi(token: string, opts: ApiOptions = {}): Api {
   const base = opts.base ?? '/api';
   const f: typeof fetch = opts.fetch ?? ((input, init) => window.fetch(input, init));
 
-  async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown, allow409 = false): Promise<T> {
+  async function request<T>(method: 'GET' | 'POST' | 'PUT', path: string, body?: unknown, allow409 = false): Promise<T> {
     let res: Response;
     try {
       res = await f(base + path, {
@@ -126,6 +133,8 @@ export function createApi(token: string, opts: ApiOptions = {}): Api {
     leaderboard: (metric, period = 'all', limit) => request('GET', `/leaderboard${q({ metric, period, limit })}`),
     purchase: (itemId, nonce = newNonce()) => request('POST', '/shop/purchase', { itemId, nonce }, true),
     equip: (slot, itemId) => request('POST', '/shop/equip', { slot, itemId }, true),
+    achievements: () => request('GET', '/achievements'),
+    setShowcase: (ids) => request('PUT', '/achievements/showcase', { ids }, true),
     challenges: () => request('GET', '/challenges'),
     claimChallenge: (periodKey, challengeId) => request('POST', '/challenges/claim', { periodKey, challengeId }, true),
     conversations: () => request('GET', '/messages/conversations'),

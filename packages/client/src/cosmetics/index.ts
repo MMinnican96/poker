@@ -8,3 +8,6 @@ export { CelebrationPreview, celebrationOptions, fireCelebration, prefersReduced
 export { ItemPreview, type ItemPreviewProps } from './ItemPreview';
 export { RatbagCrest, type RatbagCrestProps } from './RatbagCrest';
 export { feltVisual, cardBackVisual, frameVisual, celebrationVisual, owns, ownedOfCategory } from './catalog';
+// Emblem, TrophyShelf and emblemGlyphs are imported by path, not from here: they
+// carry the icon set, which should load with the screens that show emblems
+// rather than with the app.
