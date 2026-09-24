@@ -61,7 +61,7 @@ export function StatsScreen() {
           ) : hands.data.length === 0 ? (
             <p className="px-2 py-6 text-center text-sm text-muted">Your hands show up here once they finish.</p>
           ) : (
-            <ol className="flex flex-col gap-2" aria-label="Recent hands">
+            <ol className="@container flex flex-col gap-2" aria-label="Recent hands">
               {hands.data.map((h) => <HandRow key={`${h.tableId}:${h.handNumber}:${h.playedAt}`} hand={h} meId={me.id} />)}
             </ol>
           )}
@@ -176,12 +176,14 @@ function HandRow({ hand, meId }: { hand: HandHistoryView; meId: string }) {
           <ChipAmount value={net} signed size="lg" bare />
         </p>
       </header>
-      <div className="mt-1 flex flex-wrap items-start gap-x-6 gap-y-2">
-        <div className="flex min-w-36 flex-col gap-1">
+      {/* Fixed tracks, so a long hand label wraps in its column instead of moving
+          the board; rows stack together when the list is too narrow for both. */}
+      <div className="mt-1 grid grid-cols-1 items-start gap-y-2 @min-[26rem]:grid-cols-[9rem_auto] @min-[26rem]:justify-start @min-[26rem]:gap-x-6">
+        <div className="flex min-w-0 flex-col gap-1">
           <div className="flex gap-1" aria-label="Your cards" role="group">
             {mine?.cards ? mine.cards.map((c, i) => <PlayingCard key={i} card={c} size="sm" dim={mine.result === 'folded'} />) : null}
           </div>
-          <p className="text-[13px] text-stock-dim">
+          <p className="text-[13px] leading-snug text-stock-dim">
             {mine?.result === 'folded' ? 'You folded' : mine?.handLabel ?? (mine?.result === 'won' ? 'Won uncontested' : 'Mucked')}
           </p>
         </div>
@@ -199,8 +201,8 @@ function HandRow({ hand, meId }: { hand: HandHistoryView; meId: string }) {
         </div>
       </div>
 
-      <div className="mt-3 flex flex-col gap-2 border-t border-walnut-800 pt-2 @xl:flex-row @xl:items-start @xl:gap-6">
-        <ul className="flex flex-col gap-0.5 text-[13px] text-stock-dim @xl:max-w-[45%]" aria-label="Pots">
+      <div className="mt-3 grid grid-cols-1 items-start gap-2 border-t border-walnut-800 pt-2 @min-[40rem]:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] @min-[40rem]:gap-x-6">
+        <ul className="flex min-w-0 flex-col gap-0.5 text-[13px] text-stock-dim" aria-label="Pots">
           {hand.pots.map((p, i) => (
             <li key={i}>
               <span className="text-stock">{hand.pots.length > 1 ? (i === 0 ? 'Main pot' : `Side pot ${i}`) : 'Pot'} <ChipAmount value={p.amount} size="sm" /></span>
@@ -210,16 +212,17 @@ function HandRow({ hand, meId }: { hand: HandHistoryView; meId: string }) {
           ))}
         </ul>
         {others.length > 0 && (
-          <ul className="flex flex-wrap gap-x-4 gap-y-2 @xl:ml-auto" aria-label="Opponents">
+          // Equal cells from the left edge, so each opponent's cards line up from row to row.
+          <ul className="grid grid-cols-[repeat(auto-fill,minmax(10.5rem,1fr))] gap-x-4 gap-y-2" aria-label="Opponents">
             {others.map((o) => (
-              <li key={o.id} className="flex items-center gap-2">
-                <span className="flex gap-0.5">
+              <li key={o.id} className="flex min-w-0 items-center gap-2">
+                <span className="flex shrink-0 gap-0.5">
                   {o.cards
                     ? o.cards.map((c, i) => <PlayingCard key={i} card={c} size="xs" />)
                     : [0, 1].map((i) => <PlayingCard key={i} card={null} backId={o.cardBack} size="xs" dim={o.result === 'folded'} />)}
                 </span>
-                <span className="flex flex-col leading-tight">
-                  <span className="max-w-28 truncate text-[13px] font-semibold text-stock">{o.name}</span>
+                <span className="flex min-w-0 flex-col leading-tight">
+                  <span className="truncate text-[13px] font-semibold text-stock" title={o.name}>{o.name}</span>
                   <span className="text-[12px] text-muted">
                     {o.result === 'folded' ? 'Folded' : o.handLabel ?? (o.result === 'won' ? 'Won' : 'Lost')}
                   </span>

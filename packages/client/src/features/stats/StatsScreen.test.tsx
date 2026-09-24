@@ -60,6 +60,22 @@ describe('StatsScreen', () => {
     expect(within(hand).getByText(/to You, pair of aces/)).toBeInTheDocument();
   });
 
+  it('keeps long hand labels and names in their own columns', async () => {
+    const hand = makeHand();
+    const long = 'Full house, kings full of threes';
+    hand.players = hand.players.map((p) =>
+      p.id === 'p1' ? { ...p, handLabel: long } : p.name === 'Bob' ? { ...p, name: 'Bartholomew Longname' } : p,
+    );
+    renderWithClient(<StatsScreen />, { api: { playerStats: async () => ({ summary: makeSummary(), curve: [] }), myHands: async () => [hand] } });
+    const yours = await screen.findByRole('group', { name: 'Your cards' });
+    // The label sits under your cards in the same fixed column, not beside the board.
+    expect(yours.parentElement).toHaveTextContent(long);
+    expect(yours.parentElement).not.toContainElement(screen.getByRole('group', { name: 'Board' }));
+    // A truncated opponent name keeps its full text on hover.
+    const opponents = screen.getByRole('list', { name: 'Opponents' });
+    expect(within(opponents).getByText('Bartholomew Longname')).toHaveAttribute('title', 'Bartholomew Longname');
+  });
+
   it('pads a board that stopped early with empty slots', async () => {
     renderWithClient(<StatsScreen />, {
       api: { playerStats: async () => ({ summary: makeSummary(), curve: [] }), myHands: async () => [makeHand({ board: [] })] },

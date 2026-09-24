@@ -26,6 +26,9 @@
 
 ### Changed
 
+- Recent hands on the Stats screen line up: your cards, the board and each
+  opponent's cards stay in the same place on every row, however long the hand
+  name is.
 - Under a player's name at showdown you now see just the hand type ("Two
   pair"); the full hand ("Two pair, jacks and eights") is still on the felt
   with the result.
