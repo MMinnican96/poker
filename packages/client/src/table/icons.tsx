@@ -36,3 +36,6 @@ export const SmileIcon = (p: IconProps) => (
 export const PauseIcon = (p: IconProps) => (
   <Icon {...p}><path d="M9 6v12M15 6v12" /></Icon>
 );
+export const EyeOffIcon = (p: IconProps) => (
+  <Icon {...p}><path d="M4 4l16 16" /><path d="M9.9 5.8A9 9 0 0 1 12 5.5c6 0 9.5 6.5 9.5 6.5a16 16 0 0 1-2.6 3.4M6.6 7.3A16 16 0 0 0 2.5 12S6 18.5 12 18.5a9 9 0 0 0 4.4-1.1" /><path d="M10 10.2a2.8 2.8 0 0 0 3.9 3.9" /></Icon>
+);

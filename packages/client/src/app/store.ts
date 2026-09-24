@@ -266,6 +266,8 @@ export interface Commands {
   sitOut(sittingOut: boolean): Promise<Ack>;
   cancelPending(): Promise<Ack>;
   act(action: PlayerAction): Promise<Ack>;
+  /** Show (or hide) your cards to the table when this hand ends; `handNumber` pins it to the hand you mean. */
+  showCards(show: boolean, handNumber?: number): Promise<Ack>;
   emote(emote: string): Promise<Ack>;
   throwItem(itemId: string, targetId: string): Promise<Ack>;
   sendChat(to: ChatTarget, body: string): Promise<Ack>;
@@ -301,6 +303,7 @@ export function createCommands(socket: SocketLike, store: AppStore): Commands {
     sitOut: (sittingOut) => call('sit_out', { sittingOut }),
     cancelPending: () => call('cancel_pending'),
     act: (action) => call('act', action),
+    showCards: (show, handNumber) => call('show_cards', handNumber === undefined ? { show } : { show, handNumber }),
     emote: (emote) => call('emote', { emote }),
     throwItem: (itemId, targetId) => call('throw_item', { itemId, targetId }),
     sendChat: (to, body) => call('chat_send', { to, body }),

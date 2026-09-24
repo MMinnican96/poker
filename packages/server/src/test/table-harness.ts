@@ -9,12 +9,14 @@ import { seededRandomInt } from '../engine/index.js';
 import { makePlayer } from './db.js';
 
 export const FAST: Partial<TableTiming> = {
-  streetMs: 0, runoutMs: 0, showdownMs: 0, foldWinMs: 0, handGapMs: 0, sweepMs: 20, disconnectStandMs: 50, turnMs: 60_000,
+  streetMs: 0, runoutMs: 0, showdownMs: 0, foldWinMs: 0, showGraceMs: 0, handGapMs: 0, sweepMs: 20, disconnectStandMs: 50, turnMs: 60_000,
 };
 
 /** A TableRoom on a real (PGlite) bank with recording hooks. */
 export class Harness {
   readonly views = new Map<string, TableView>();
+  /** Every view sent, in order. */
+  readonly sent: { playerId: string; view: TableView }[] = [];
   readonly notices: { playerId: string; notice: Omit<Notice, 'id'> }[] = [];
   readonly left: ({ playerId: string } & TableLeft)[] = [];
   readonly fx: unknown[] = [];
@@ -31,7 +33,7 @@ export class Harness {
     for (let i = 0; i < count; i++) ids.push(await makePlayer(db, 'tbl'));
     const h = new Harness(db, ids);
     const hooks: TableHooks = {
-      sendView: (id, view) => h.views.set(id, view),
+      sendView: (id, view) => { h.views.set(id, view); h.sent.push({ playerId: id, view }); },
       fx: (fx) => h.fx.push(fx),
       left: (playerId, left) => { h.left.push({ playerId, ...left }); h.views.delete(playerId); },
       changed: () => undefined,

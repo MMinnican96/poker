@@ -40,11 +40,15 @@ export interface SeatProps {
 
 type Tone = 'plain' | 'quiet' | 'brass' | 'chip';
 
-/** The one status line under the avatar, most important first. */
-export function seatStatus(p: SeatPlayer, resultShowing = false): { text: string; tone: Tone } | null {
+/**
+ * The one status line under the avatar, most important first. `tabled` means
+ * the hand was shown at showdown (its type is on the plate already).
+ */
+export function seatStatus(p: SeatPlayer, resultShowing = false, tabled = false): { text: string; tone: Tone } | null {
   if (resultShowing) {
-    // The hand is over: only folds stay marked; the result speaks for the rest.
-    return p.inHand && p.folded ? { text: 'Folded', tone: 'quiet' } : null;
+    // The hand is over: only folds and hands shown by choice stay marked; the result speaks for the rest.
+    if (p.inHand && p.folded) return { text: 'Folded', tone: 'quiet' };
+    return p.revealed && !tabled ? { text: 'Shown', tone: 'plain' } : null;
   }
   if (p.lastAction) {
     const t = p.lastAction.type;
@@ -76,13 +80,14 @@ export function seatLabel(seat: number, p: SeatPlayer, opts: { hero: boolean; to
   if (status) parts.push(status.text.toLowerCase());
   if (opts.outcome?.won) parts.push(`won ${formatChips(opts.outcome.won)}`);
   if (opts.outcome?.shown) parts.push(`showed ${opts.outcome.shown.label.toLowerCase()}`);
+  else if (p.revealed) parts.push(opts.hero ? 'you showed your cards' : 'showed their cards');
   return parts.join(', ');
 }
 
 /** An occupied seat: avatar with frame and timer, cards, status and name plate. */
 export function Seat({ seat, player: p, slot, layout, hero, toAct, actionEndsAt, turnMs, handNumber, outcome, resultShowing, highlight, onSelect, selected }: SeatProps) {
   const s = layout.avatar;
-  const status = seatStatus(p, resultShowing);
+  const status = seatStatus(p, resultShowing, !!outcome?.shown);
   const faded = (p.inHand && p.folded) || p.sittingOut || !p.connected;
   const winner = !!outcome && outcome.won > 0;
   const dim = faded || (resultShowing && !winner && p.inHand);
@@ -138,7 +143,8 @@ export function Seat({ seat, player: p, slot, layout, hero, toAct, actionEndsAt,
           >
             {cards.map((c, i) => (
               <span key={cardKey(c)} className="inline-block" style={{ marginLeft: i === 1 ? -shownW * 0.18 : 0 }}>
-                <PlayingCard card={c} width={shownW} highlight={highlight.has(cardKey(c))} />
+                {/* A folded hand shown by choice reads as folded, but stays legible. */}
+                <PlayingCard card={c} width={shownW} highlight={highlight.has(cardKey(c))} className={p.folded ? 'opacity-70' : undefined} />
               </span>
             ))}
           </div>

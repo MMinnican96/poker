@@ -113,8 +113,10 @@ idempotent). There is no `db:push`.
   `Authorization: Bearer`. Mock sign-in is refused whenever `NODE_ENV=production`
   or a Railway env var is present, and the client offers it only in dev builds.
 - **Card privacy.** The deck lives only in the server-side `Hand`. `viewFor()`
-  shows a player their own cards, and others' only at showdown or in an all-in
-  run-out. Hand history hides opponents' unshown cards.
+  shows a player their own cards, and others' only at showdown, in an all-in
+  run-out, or when that player chose to show them (`show_cards`), and then only
+  once the hand is complete. Hand history hides opponents' unshown cards (cards
+  shown by choice included).
 
 ## Conventions
 

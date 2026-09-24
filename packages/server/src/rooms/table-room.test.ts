@@ -566,3 +566,153 @@ describe('abandoning a table (lease lost)', () => {
     for (const i of [0, 1, 2]) expect(await h.balance(i)).toBe(10_000);
   });
 });
+
+describe('showing cards by choice', () => {
+  /** Seat player `i` as viewer `v` sees them. */
+  const seen = (h: Harness, v: number, i: number) => h.view(v).seats[i].player!;
+  const inResult = (h: Harness) => !!h.view(0).hand?.result;
+
+  it('lets a fold-out winner show and hide again, to players and spectators alike', async () => {
+    const h = await setup(3, { timing: { foldWinMs: 60_000 } });
+    await h.seat(0);
+    await h.seat(1);
+    await h.join(2);
+    h.table.start(h.ids[0]);
+    await waitFor(() => h.toAct() !== null);
+    const folder = h.toAct()!;
+    const w = h.ids.indexOf(h.ids.find((id) => id !== folder && id !== h.ids[2])!);
+    const l = 1 - w;
+    h.table.act(folder, { type: 'fold' });
+    await waitFor(() => inResult(h), 3000, 'the fold-out');
+    expect(seen(h, l, w)).toMatchObject({ holeCards: null, hasHiddenCards: true, revealed: false });
+
+    expect(h.table.showCards(h.ids[w], true)).toEqual({ ok: true });
+    const cards = seen(h, w, w).holeCards;
+    expect(cards).toHaveLength(2);
+    // Broadcast straight away, to the loser and the rail.
+    for (const v of [l, 2]) {
+      expect(h.views.get(h.ids[v])!.seats[w].player).toMatchObject({ holeCards: cards, hasHiddenCards: false, revealed: true });
+    }
+    expect(h.view(w).you.showCards).toBe(true);
+    expect(h.view(l).you.showCards).toBe(false);
+
+    expect(h.table.showCards(h.ids[w], false)).toEqual({ ok: true });
+    expect(h.views.get(h.ids[l])!.seats[w].player).toMatchObject({ holeCards: null, hasHiddenCards: true, revealed: false });
+    expect(h.view(w).you.showCards).toBe(false);
+  });
+
+  it('holds a mid-hand choice by a folded player until the hand is over, telling nobody else', async () => {
+    const h = await setup(4, { timing: { foldWinMs: 60_000 } });
+    for (let i = 0; i < 3; i++) await h.seat(i);
+    await h.join(3);
+    h.table.start(h.ids[0]);
+    await waitFor(() => h.toAct() !== null);
+    const folder = h.toAct()!;
+    const f = h.ids.indexOf(folder);
+    h.table.act(folder, { type: 'fold' });
+    const cards = h.table.viewFor(folder).seats[f].player!.holeCards!;
+    const mark = h.sent.length;
+    expect(h.table.showCards(folder, true, h.view(0).hand!.handNumber)).toEqual({ ok: true });
+    expect(h.table.viewFor(folder).you.showCards).toBe(true);
+    // Only the chooser was sent anything.
+    expect(h.sent.slice(mark).map((s) => s.playerId)).toEqual([folder]);
+
+    h.table.act(h.toAct()!, { type: 'fold' });
+    await waitFor(() => inResult(h), 3000, 'the fold-out');
+    // Every view any other member (players and the spectator) got before the
+    // result: no trace of the choice or the cards.
+    const before = h.sent.slice(mark).filter((s) => s.playerId !== folder && !s.view.hand?.result);
+    for (const { view } of before) {
+      expect(view.you.showCards).toBe(false);
+      expect(view.seats[f].player).toMatchObject({ holeCards: null, revealed: false });
+      expect(JSON.stringify(view)).not.toContain(JSON.stringify(cards[0]));
+    }
+    for (let v = 0; v < 4; v++) {
+      expect(h.views.get(h.ids[v])!.seats[f].player).toMatchObject({ holeCards: cards, folded: true, revealed: true, hasHiddenCards: false });
+    }
+  });
+
+  it('keeps the result up a little longer when someone shows during it, once per player', async () => {
+    const h = await setup(2, { timing: { foldWinMs: 100, showGraceMs: 600, handGapMs: 60_000 } });
+    await h.seat(0);
+    await h.seat(1);
+    h.table.start(h.ids[0]);
+    await waitFor(() => h.toAct() !== null);
+    const folder = h.toAct()!;
+    const winner = h.ids.find((id) => id !== folder)!;
+    h.table.act(folder, { type: 'fold' });
+    await waitFor(() => inResult(h), 3000, 'the fold-out');
+    const at = Date.now();
+    expect(h.table.showCards(winner, true)).toEqual({ ok: true });
+    // Toggling again doesn't extend it further.
+    await new Promise((r) => setTimeout(r, 200));
+    expect(h.table.showCards(winner, false)).toEqual({ ok: true });
+    expect(h.table.showCards(winner, true)).toEqual({ ok: true });
+    await new Promise((r) => setTimeout(r, 250));
+    expect(h.view(0).hand).not.toBeNull();
+    await waitFor(() => h.view(0).hand === null, 3000, 'the hand to clear');
+    const held = Date.now() - at;
+    expect(held).toBeGreaterThanOrEqual(550);
+    expect(held).toBeLessThan(1100);
+  });
+
+  it('rate limits toggling', async () => {
+    const h = await setup(2);
+    await h.seat(0);
+    await h.seat(1);
+    h.table.start(h.ids[0]);
+    await waitFor(() => h.toAct() !== null);
+    const results = Array.from({ length: 8 }, (_, i) => h.table.showCards(h.ids[0], i % 2 === 0));
+    expect(results.slice(0, 6).every((r) => r.ok)).toBe(true);
+    expect(results[6]).toEqual({ ok: false, error: 'Slow down a little.' });
+  });
+
+  it('keeps showdown hands face up and resets the choice for the next hand', async () => {
+    const h = await setup(2, { timing: { showdownMs: 300 } });
+    await h.seat(0);
+    await h.seat(1);
+    h.table.start(h.ids[0]);
+    await waitFor(async () => {
+      const id = h.toAct();
+      if (id) h.table.act(id, { type: h.table.viewFor(id).you.legal!.canCheck ? 'check' : 'call' });
+      return inResult(h);
+    }, 5000, 'the showdown');
+    expect(h.view(0).hand!.result!.wentToShowdown).toBe(true);
+    expect(h.table.showCards(h.ids[0], false)).toEqual({ ok: false, error: 'Cards shown at showdown stay face up.' });
+    expect(h.table.showCards(h.ids[0], true)).toEqual({ ok: true });
+    expect(seen(h, 1, 0).holeCards).toHaveLength(2);
+
+    // Pre-select during hand two; it's gone once hand three is dealt.
+    await waitFor(() => h.view(0).handsDealt === 2 && h.toAct() !== null, 3000, 'hand two');
+    expect(h.table.showCards(h.ids[1], true)).toEqual({ ok: true });
+    expect(h.view(1).you.showCards).toBe(true);
+    await waitFor(async () => {
+      const id = h.toAct();
+      if (id && h.view(0).handsDealt === 2) h.table.act(id, { type: 'fold' });
+      return h.view(0).handsDealt === 3 && h.toAct() !== null;
+    }, 5000, 'hand three');
+    expect(h.view(1).you.showCards).toBe(false);
+    expect(seen(h, 0, 1)).toMatchObject({ holeCards: null, revealed: false });
+  });
+
+  it('refuses spectators, players not dealt in and requests for a finished hand', async () => {
+    const h = await setup(4, { timing: { handGapMs: 60_000 } });
+    await h.seat(0);
+    await h.seat(1);
+    await h.join(2);
+    h.table.start(h.ids[0]);
+    await waitFor(() => h.toAct() !== null);
+    const hn = h.view(0).hand!.handNumber;
+    expect(h.table.showCards(h.ids[2], true)).toEqual({ ok: false, error: "You weren't dealt into this hand." });
+    await h.seat(3, 3);
+    expect(h.table.showCards(h.ids[3], true)).toEqual({ ok: false, error: "You weren't dealt into this hand." });
+    expect(h.table.showCards('nobody', true)).toEqual({ ok: false, error: "You're not at the table." });
+    expect(h.table.showCards(h.ids[0], true, hn + 1)).toEqual({ ok: false, error: 'That hand has already moved on.' });
+
+    h.table.act(h.toAct()!, { type: 'fold' });
+    await waitFor(() => h.view(0).hand === null, 3000, 'the hand to clear');
+    expect(h.table.showCards(h.ids[0], true)).toEqual({ ok: false, error: 'No hand is in play.' });
+    expect(h.table.showCards(h.ids[0], true, hn)).toEqual({ ok: false, error: 'That hand has already moved on.' });
+    expect(h.view(0).you.showCards).toBe(false);
+  });
+});

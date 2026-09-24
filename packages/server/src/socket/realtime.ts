@@ -211,6 +211,14 @@ export function attachRealtime(io: Io, opts: RealtimeOptions): Realtime {
     socket.on('cancel_pending', handle(() => needTable((t) => t.cancelPending(playerId))));
     socket.on('act', handle((action: { type: string; amount?: number }) =>
       needTable((t) => t.act(playerId, { type: action?.type as 'fold', amount: action?.amount }))));
+    socket.on('show_cards', handle((data: { show: unknown; handNumber?: unknown }) => {
+      if (typeof data?.show !== 'boolean') return { ok: false, error: 'Choose whether to show your cards.' };
+      const handNumber = data.handNumber;
+      if (handNumber !== undefined && !(Number.isInteger(handNumber) && (handNumber as number) > 0)) {
+        return { ok: false, error: "That isn't a valid hand number." };
+      }
+      return needTable((t) => t.showCards(playerId, data.show as boolean, handNumber as number | undefined));
+    }));
     socket.on('emote', handle((data: { emote: string }) => needTable((t) => t.emote(playerId, String(data?.emote ?? '')))));
     socket.on('throw_item', handle((data: { itemId: string; targetId: string }) =>
       needTable((t) => t.throwItem(playerId, String(data?.itemId ?? ''), String(data?.targetId ?? '')))));

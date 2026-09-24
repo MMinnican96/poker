@@ -44,6 +44,11 @@ export interface TableTiming {
   showdownMs: number;
   /** How long a fold-out result stays up. */
   foldWinMs: number;
+  /**
+   * The result stays up at least this long after a player turns on showing
+   * their cards during it (once per player per hand), so the table sees them.
+   */
+  showGraceMs: number;
   /** Pause before dealing the next hand. */
   handGapMs: number;
   /** A disconnected player is stood up after being away this long. */
@@ -58,7 +63,8 @@ export const DEFAULT_TIMING: TableTiming = {
   streetMs: 700,
   runoutMs: 1500,
   showdownMs: 6500,
-  foldWinMs: 2500,
+  foldWinMs: 3500,
+  showGraceMs: 2500,
   handGapMs: 1500,
   disconnectStandMs: 90_000,
   sweepMs: 10_000,
@@ -149,11 +155,18 @@ export class TableRoom {
   /** Stats/XP/challenge recording, kept off the table queue (see conclude()). */
   private readonly recordings = new Serial();
   private readonly fxLimit: RateLimiter;
+  private readonly showLimit: RateLimiter;
   private readonly timing: TableTiming;
   private readonly clock: () => number;
   private readonly log: (message: string, err?: unknown) => void;
 
   private hand: Hand | null = null;
+  /** Players who asked to show their cards this hand (cleared when a hand is dealt or cleared). */
+  private readonly showing = new Set<string>();
+  /** Players whose show already extended this hand's result (each may extend it once). */
+  private readonly graced = new Set<string>();
+  /** Clock time the current result must stay up until, pushed out by showCards(). */
+  private resultUntil = 0;
   private handStartedAt = 0;
   private handsDealt = 0;
   private buttonSeat: number | null = null;
@@ -182,6 +195,7 @@ export class TableRoom {
     this.clock = deps.clock ?? Date.now;
     this.log = deps.log ?? ((m, e) => console.error(`[table] ${m}`, e ?? ''));
     this.fxLimit = new RateLimiter(3, 4000, this.clock);
+    this.showLimit = new RateLimiter(6, 5000, this.clock);
     this.sweepTimer = setInterval(() => {
       this.sweep().catch((err) => this.log('sweep failed', err));
     }, this.timing.sweepMs);
@@ -482,6 +496,48 @@ export class TableRoom {
     return OK;
   }
 
+  /**
+   * Show (or hide again) your cards to everyone once the hand is complete.
+   * Open to anyone dealt into the hand, folded or not, until the result is
+   * cleared. Mid-hand it only records the choice (and tells nobody else), so
+   * nothing leaks before the end. Cards tabled at showdown stay face up.
+   *
+   * Synchronous on purpose: it moves no chips and has no await, so it sees the
+   * hand exactly as it is at that moment — before `conclude()` clears it (the
+   * change is broadcast at once) or after (a clean error). `handNumber` stops a
+   * request meant for a finished hand from applying to the next one.
+   */
+  showCards(playerId: string, show: boolean, handNumber?: number): Result {
+    if (this.closed) return fail('This table has closed.');
+    const m = this.members.get(playerId);
+    if (!m) return fail("You're not at the table.");
+    const hand = this.hand;
+    if (!hand || (handNumber !== undefined && handNumber !== hand.state.handNumber)) {
+      return fail(handNumber === undefined ? 'No hand is in play.' : 'That hand has already moved on.');
+    }
+    const { state } = hand;
+    if (m.role !== 'seated' || !state.players.some((p) => p.id === playerId)) {
+      return fail("You weren't dealt into this hand.");
+    }
+    const complete = state.phase === 'complete';
+    const tabled = complete && !!state.result && playerId in state.result.shown;
+    if (tabled && !show) return fail('Cards shown at showdown stay face up.');
+    if (tabled || this.showing.has(playerId) === show) return OK;
+    if (!this.showLimit.allow(playerId)) return fail('Slow down a little.');
+    if (show) this.showing.add(playerId);
+    else this.showing.delete(playerId);
+    // Showing during the result: keep it up long enough for the table to see.
+    // Once per player per hand, so toggling can't hold the table open forever.
+    if (show && complete && !this.graced.has(playerId)) {
+      this.graced.add(playerId);
+      this.resultUntil = Math.max(this.resultUntil, this.clock() + this.timing.showGraceMs);
+    }
+    // Mid-hand only your own view changes; everyone sees the cards once it's over.
+    if (complete) this.broadcast();
+    else this.sendTo(playerId);
+    return OK;
+  }
+
   async emote(playerId: string, emote: string): Promise<Result> {
     const m = this.members.get(playerId);
     if (!m) return fail('Join the table first.');
@@ -571,6 +627,8 @@ export class TableRoom {
     }
     this.buttonSeat = nextButton(this.buttonSeat, players.map((m) => m.seat!));
     this.handsDealt += 1;
+    this.showing.clear();
+    this.graced.clear();
     this.hand = startHand({
       handNumber: this.handsDealt,
       buttonSeat: this.buttonSeat,
@@ -646,6 +704,7 @@ export class TableRoom {
   private async conclude(hand: Hand): Promise<void> {
     this.clearTurn();
     this.boundary = true;
+    this.resultUntil = 0;
     const { state } = hand;
     const result = state.result!;
     for (const p of state.players) {
@@ -696,12 +755,22 @@ export class TableRoom {
     this.announce(hand);
 
     await Promise.all([persisted, sleep(hold)]);
+    // A show during the result may have pushed its end out. Each player extends
+    // it at most once, so this ends even with a clock that doesn't move (tests).
+    for (let seen = -1; this.resultUntil > this.clock() && this.resultUntil !== seen;) {
+      seen = this.resultUntil;
+      await sleep(this.resultUntil - this.clock());
+    }
     // Leave the boundary in the same queued step that resolves it, so a request
     // queued behind it sees "between hands" and applies at once rather than
     // being deferred to a boundary that has already passed.
     await this.serial.run(async () => {
       await this.resolveBoundary();
-      if (this.hand === hand) this.hand = null;
+      if (this.hand === hand) {
+        this.hand = null;
+        this.showing.clear();
+        this.graced.clear();
+      }
       this.boundary = false;
     });
     if (this.closed) return;
@@ -994,7 +1063,9 @@ export class TableRoom {
       const ep = state?.players.find((p) => p.id === m.player.id) ?? null;
       const own = m.player.id === viewerId;
       const shown = !!ep && !ep.folded && (allInReveal || (complete && !!result && m.player.id in result.shown));
-      const visible = !!ep && (own || shown);
+      // Shown by choice: only once the hand is over, and folded hands too.
+      const revealed = !!ep && complete && this.showing.has(m.player.id);
+      const visible = !!ep && (own || shown || revealed);
       const player: SeatPlayer = {
         ...m.player,
         stack: ep && !complete ? ep.stack : m.stack,
@@ -1006,6 +1077,7 @@ export class TableRoom {
         committed: ep && !complete ? ep.committed : 0,
         holeCards: visible ? ep!.cards : null,
         hasHiddenCards: !!ep && !ep.folded && !visible,
+        revealed,
         lastAction: ep?.lastAction ?? null,
         pending: m.pending,
         sittingOut: m.sittingOut,
@@ -1067,6 +1139,7 @@ export class TableRoom {
         pendingTopUp: me?.pendingTopUp ?? 0,
         legal,
         emotes: me?.emotes ?? [],
+        showCards: this.showing.has(viewerId),
       },
       serverNow: this.clock(),
     };

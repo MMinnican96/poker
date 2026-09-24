@@ -3,12 +3,13 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_COSMETICS, parseCards, type Card, type HandView, type LegalActions, type SeatPlayer, type TableView } from '@poker/shared';
 import { makeMe, makeTableView, renderWithClient, type FakeSocket } from '../test/harness';
+import { HeroDock } from './HeroDock';
 import { TableScreen } from './TableScreen';
 
 function seatPlayer(id: string, name: string, patch: Partial<SeatPlayer> = {}): SeatPlayer {
   return {
     id, name, avatarUrl: '', level: 1, cosmetics: DEFAULT_COSMETICS, stack: 5000, state: 'playing', connected: true,
-    inHand: false, folded: false, allIn: false, committed: 0, holeCards: null, hasHiddenCards: false, lastAction: null,
+    inHand: false, folded: false, allIn: false, committed: 0, holeCards: null, hasHiddenCards: false, revealed: false, lastAction: null,
     pending: null, sittingOut: false, pendingTopUp: 0, ...patch,
   };
 }
@@ -245,6 +246,112 @@ describe('showdown', () => {
       },
     }));
     expect(screen.getByText('You and Bob split 800')).toBeInTheDocument();
+  });
+});
+
+describe('showing your cards', () => {
+  const foldOut = (patch: Partial<HandView> = {}): Partial<HandView> => ({
+    toActSeat: null,
+    result: { payouts: { p1: 75 }, pots: [{ amount: 75, winnerIds: ['p1'], handLabel: null }], shown: {}, returned: {}, wentToShowdown: false },
+    ...patch,
+  });
+
+  it('offers a pre-selection during the hand that toggles pressed', async () => {
+    const { socket } = setup(running({ hand: { toActSeat: 2 } }));
+    const toggle = screen.getByRole('button', { name: 'Show cards at the end' });
+    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    await userEvent.click(toggle);
+    expect(socket.events('show_cards').map((e) => e.args[0])).toEqual([{ show: true, handNumber: 7 }]);
+    push(socket, running({ hand: { toActSeat: 2 }, you: { showCards: true } }));
+    expect(screen.getByRole('button', { name: 'Show cards at the end' })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('keeps the pre-selection for a folded player', () => {
+    setup(running({ hand: { toActSeat: 2 }, players: { p1: { folded: true } } }));
+    expect(screen.getByText('You folded. Next hand soon.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Show cards at the end' })).toBeInTheDocument();
+  });
+
+  it('gives way to the action bar on a phone when it is your turn', () => {
+    const dock = (view: TableView) => renderWithClient(<HeroDock view={view} narrow onTakeSeat={() => undefined} sitBlockedReason={null} />);
+    const mine = dock(running({ you: { legal: LEGAL } }));
+    expect(screen.getByRole('button', { name: /Fold/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Show cards at the end' })).toBeNull();
+    mine.unmount();
+    dock(running({ hand: { toActSeat: 2 } }));
+    // Icon-only on a phone, with the same accessible name.
+    const toggle = screen.getByRole('button', { name: 'Show cards at the end' });
+    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    expect(toggle).not.toHaveTextContent('Show cards at the end');
+  });
+
+  it('hides the pre-selection in an all-in run-out, where your hand is tabled anyway', () => {
+    setup(running({
+      hand: { toActSeat: null, street: 'flop', board: parseCards('Ad Kd 7c') },
+      players: { p1: { allIn: true }, p2: { holeCards: cards('Qs Qc'), hasHiddenCards: false, allIn: true }, p3: { folded: true, hasHiddenCards: false } },
+    }));
+    expect(screen.queryByRole('button', { name: 'Show cards at the end' })).toBeNull();
+  });
+
+  it('stays quiet when a late tap finds the hand has moved on, but toasts other refusals', async () => {
+    const { socket, store } = setup(running({ hand: foldOut() }));
+    socket.respond = () => ({ ok: false, error: 'That hand has already moved on.' });
+    await userEvent.click(screen.getByRole('button', { name: 'Show cards' }));
+    expect(store.getState().notices).toHaveLength(0);
+    socket.respond = () => ({ ok: false, error: 'Slow down a little.' });
+    await userEvent.click(screen.getByRole('button', { name: 'Show cards' }));
+    expect(store.getState().notices.map((n) => n.title)).toEqual(['Slow down a little.']);
+  });
+
+  it('describes your own shown hand in the first person', () => {
+    setup(running({ hand: foldOut(), you: { showCards: true }, players: { p1: { revealed: true } } }));
+    expect(screen.getByRole('button', { name: /Alice \(you\), .*you showed your cards/ })).toBeInTheDocument();
+  });
+
+  it('shows and hides your cards after a fold-out, with a confirmation', async () => {
+    const { socket } = setup(running({ hand: foldOut() }));
+    expect(screen.getByText('Nice hand.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Show cards at the end' })).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Show cards' }));
+    expect(socket.events('show_cards').map((e) => e.args[0])).toEqual([{ show: true, handNumber: 7 }]);
+    push(socket, running({ hand: foldOut(), you: { showCards: true }, players: { p1: { revealed: true } } }));
+    expect(screen.getByText('Your cards are face up.')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Hide cards' }));
+    expect(socket.events('show_cards').map((e) => e.args[0])[1]).toEqual({ show: false, handNumber: 7 });
+  });
+
+  it('does not offer to hide cards tabled at showdown', () => {
+    setup(running({
+      hand: {
+        toActSeat: null, street: 'showdown', board: parseCards('Ad Kd 7c 2s 9h'),
+        result: {
+          payouts: { p1: 400 }, pots: [{ amount: 400, winnerIds: ['p1'], handLabel: 'Pair of aces' }],
+          shown: { p1: { cards: cards('Ah Kh'), category: 'two-pair', label: 'Two pair, aces and kings', best: parseCards('Ah Ad Kh Kd 9h') } },
+          returned: {}, wentToShowdown: true,
+        },
+      },
+    }));
+    expect(screen.queryByRole('button', { name: /Show cards|Hide cards/ })).toBeNull();
+  });
+
+  it('draws an opponent who showed after folding face up, marked folded', () => {
+    setup(running({
+      hand: foldOut(),
+      players: { p2: { folded: true, hasHiddenCards: false, revealed: true, holeCards: cards('7c 2d') } },
+    }));
+    const bob = screen.getByRole('group', { name: "Bob's cards" });
+    expect(within(bob).getAllByRole('img')).toHaveLength(2);
+    expect(screen.getByRole('button', { name: /Seat 3, Bob, .*showed their cards/ })).toBeInTheDocument();
+  });
+
+  it('marks a winner who showed by choice as "Shown"', () => {
+    const view = running({
+      hand: { toActSeat: null, result: { payouts: { p2: 75 }, pots: [{ amount: 75, winnerIds: ['p2'], handLabel: null }], shown: {}, returned: {}, wentToShowdown: false } },
+      players: { p2: { hasHiddenCards: false, revealed: true, holeCards: cards('7c 2d') } },
+    });
+    setup(view);
+    expect(screen.getByRole('group', { name: "Bob's cards" })).toBeInTheDocument();
+    expect(within(screen.getByRole('list', { name: 'Seats' })).getByText('Shown')).toBeInTheDocument();
   });
 });
 
