@@ -1,7 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { ActivityEvent, ChatMessage, Notice } from '@poker/shared';
 import { FakeSocket, makeClient, makeLobby, makeMe, makeSummary, makeTableView } from '../test/harness';
-import { ACTIVITY_KEEP, AppStore, bindSocket, createCommands, HOST_CLOSED, initialState, reduce, YOU_CLOSED } from './store';
+import { ACTIVITY_KEEP, AppStore, bindSocket, createCommands, initialState, reduce, YOU_CLOSED } from './store';
+
+const HOST_CLOSED = { code: 'host-closed', reason: 'The host closed the table.' } as const;
 
 const msg = (id: string, createdAt: string, channel = 'room:room-1', senderId = 'p2'): ChatMessage => ({
   id, channel, senderId, senderName: 'Bob', senderAvatar: '', body: `hi ${id}`, createdAt,
@@ -24,10 +26,19 @@ describe('reduce', () => {
     const s1 = reduce(base, { type: 'table_state', view, receivedAt: 10_000 });
     expect(s1.table).toBe(view);
     expect(s1.clockOffset).toBe(500);
-    const s2 = reduce(s1, { type: 'table_left', reason: 'The host closed the table.' });
+    const s2 = reduce(s1, { type: 'table_left', left: HOST_CLOSED });
     expect(s2.table).toBeNull();
-    expect(s2.tableLeftReason).toBe('The host closed the table.');
-    expect(reduce(s2, { type: 'table_state', view, receivedAt: 10_500 }).tableLeftReason).toBeNull();
+    expect(s2.tableLeft).toEqual(HOST_CLOSED);
+    expect(reduce(s2, { type: 'table_state', view, receivedAt: 10_500 }).tableLeft).toBeNull();
+  });
+
+  it('drops a live table on "not a member", and ignores it with no table showing', () => {
+    const notMember = { code: 'not-member', reason: "You're no longer at the table." } as const;
+    expect(reduce(base, { type: 'table_left', left: notMember })).toBe(base);
+    const at = reduce(base, { type: 'table_state', view: makeTableView(), receivedAt: 0 });
+    const s = reduce(at, { type: 'table_left', left: notMember });
+    expect(s.table).toBeNull();
+    expect(s.tableLeft).toEqual(notMember);
   });
 
   it('appends chat messages per channel without duplicates', () => {
@@ -70,20 +81,20 @@ describe('reduce: stale tables', () => {
   it('drops the table when the lobby says there is none (closed while away)', () => {
     const s = reduce(atTable, { type: 'lobby_state', lobby: makeLobby({ table: null }) });
     expect(s.table).toBeNull();
-    expect(s.tableLeftReason).toBe('The table has closed.');
+    expect(s.tableLeft).toEqual({ code: 'not-member', reason: 'The table has closed.' });
     expect(s.lobby?.table).toBeNull();
   });
 
   it('drops the table when the lobby shows a different one', () => {
     const s = reduce(atTable, { type: 'lobby_state', lobby: makeLobby({ table: makeSummary({ tableId: 't2' }) }) });
     expect(s.table).toBeNull();
-    expect(s.tableLeftReason).toBe('The table you were at has closed.');
+    expect(s.tableLeft?.reason).toBe('The table you were at has closed.');
   });
 
   it('keeps the table while the lobby shows the same one', () => {
     const s = reduce(atTable, { type: 'lobby_state', lobby: makeLobby({ table: makeSummary({ tableId: 't1' }) }) });
     expect(s.table).toBe(atTable.table);
-    expect(s.tableLeftReason).toBeNull();
+    expect(s.tableLeft).toBeNull();
   });
 
   it('ignores a late table_state for a table the lobby showed closed, but accepts a new table', () => {
@@ -91,7 +102,7 @@ describe('reduce: stale tables', () => {
     expect(reduce(closed, { type: 'table_state', view: makeTableView({ tableId: 't1' }), receivedAt: 0 })).toBe(closed);
     const next = reduce(closed, { type: 'table_state', view: makeTableView({ tableId: 't2' }), receivedAt: 0 });
     expect(next.table?.tableId).toBe('t2');
-    expect(next.tableLeftReason).toBeNull();
+    expect(next.tableLeft).toBeNull();
   });
 
   it('replaces the view when a table_state arrives for a different, live table', () => {
@@ -101,9 +112,12 @@ describe('reduce: stale tables', () => {
 
   it('tells the host who closed the table "You closed the table."', () => {
     const host = reduce(base, { type: 'table_state', view: makeTableView({ hostId: 'p1' }), receivedAt: 0 });
-    expect(reduce(host, { type: 'table_left', reason: HOST_CLOSED }).tableLeftReason).toBe(YOU_CLOSED);
+    expect(reduce(host, { type: 'table_left', left: HOST_CLOSED }).tableLeft).toEqual({ code: 'host-closed', reason: YOU_CLOSED });
     const guest = reduce(base, { type: 'table_state', view: makeTableView({ hostId: 'p2' }), receivedAt: 0 });
-    expect(reduce(guest, { type: 'table_left', reason: HOST_CLOSED }).tableLeftReason).toBe(HOST_CLOSED);
+    expect(reduce(guest, { type: 'table_left', left: HOST_CLOSED }).tableLeft).toEqual(HOST_CLOSED);
+    // The code decides, not the wording.
+    const reworded = { code: 'host-closed', reason: 'Table closed by host' } as const;
+    expect(reduce(host, { type: 'table_left', left: reworded }).tableLeft?.reason).toBe(YOU_CLOSED);
   });
 
   it('keeps an expired session expired', () => {
@@ -176,8 +190,9 @@ describe('bindSocket + commands', () => {
     expect(s.clockOffset).toBe(500);
     expect(s.notices).toHaveLength(1);
     expect(s.chat['room:room-1']).toHaveLength(1);
-    socket.serverEmit('table_left', { reason: 'You left the table.' });
+    socket.serverEmit('table_left', { code: 'left', reason: 'You left the table.' });
     expect(store.getState().table).toBeNull();
+    expect(store.getState().tableLeft).toEqual({ code: 'left', reason: 'You left the table.' });
   });
 
   it('streams table fx to subscribers without touching state', () => {
@@ -248,7 +263,21 @@ describe('reconnecting to a table that is gone', () => {
     await vi.waitFor(() => expect(socket.events('request_state')).toHaveLength(2));
     socket.serverEmit('lobby_state', makeLobby({ table: null }));
     expect(client.store.getState().table).toBeNull();
-    expect(client.store.getState().tableLeftReason).toBe('The table has closed.');
+    expect(client.store.getState().tableLeft?.reason).toBe('The table has closed.');
+  });
+
+  it('clears the dead table when the server says you are no longer a member', async () => {
+    const socket = new FakeSocket();
+    const { client } = makeClient({ socket });
+    socket.serverEmit('table_state', makeTableView({ tableId: 't1' }));
+    socket.serverEmit('disconnect', 'transport close');
+    socket.serverEmit('connect');
+    await vi.waitFor(() => expect(socket.events('request_state')).toHaveLength(2));
+    // The table still exists (same id in the lobby), but you were removed while away.
+    socket.serverEmit('lobby_state', makeLobby({ table: makeSummary({ tableId: 't1' }) }));
+    expect(client.store.getState().table?.tableId).toBe('t1');
+    socket.serverEmit('table_left', { code: 'not-member', reason: "You're no longer at the table." });
+    expect(client.store.getState().table).toBeNull();
   });
 });
 

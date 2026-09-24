@@ -13,9 +13,10 @@ import { Avatar, Button, ChipAmount, EmptyState, Field, Segmented, cx } from '..
 import { LoadError, Loading, Screen } from '../common/Screen';
 import { useAsync } from '../common/useAsync';
 
-/** Rows shown before "Show more"; the board is fetched deeper to find you. */
+/** Rows fetched and shown at first. One more is asked for, to know if there are more. */
 export const SHOWN = 25;
-export const FETCH_LIMIT = 100;
+/** Rows fetched after "Show more" (the server's maximum). */
+export const MORE_LIMIT = 100;
 
 const PERIODS: { value: LeaderboardPeriod; label: string }[] = [
   { value: 'all', label: 'All time' },
@@ -64,13 +65,15 @@ export function LeaderboardScreen() {
   const def = LEADERBOARD_METRICS.find((m) => m.id === metric)!;
   // Metrics without a weekly board always read all-time.
   const effective: LeaderboardPeriod = def.weekly ? period : 'all';
-  const board = useAsync(() => api.leaderboard(metric, effective, FETCH_LIMIT), [api, metric, effective]);
+  const limit = expanded ? MORE_LIMIT : SHOWN + 1;
+  const board = useAsync(() => api.leaderboard(metric, effective, limit), [api, metric, effective, limit]);
 
-  const entries = board.data ?? [];
+  const entries = board.data?.entries ?? [];
   const shown = expanded ? entries : entries.slice(0, SHOWN);
   const ties = tiedRanks(entries);
-  const mine = entries.find((e) => e.player.id === me.id);
-  const mineShown = !!mine && shown.includes(mine);
+  // Your own entry comes with the board, wherever you rank.
+  const mine = board.data?.me ?? null;
+  const mineShown = !!mine && shown.some((e) => e.player.id === mine.player.id);
   const podium = shown.slice(0, 3);
   const rest = shown.slice(3);
 
@@ -130,21 +133,19 @@ export function LeaderboardScreen() {
           )}
           {!expanded && entries.length > SHOWN && (
             <Button variant="ghost" size="sm" className="self-center" onClick={() => setExpanded(true)}>
-              Show the top {entries.length}
+              Show the top {MORE_LIMIT}
             </Button>
           )}
           {!mineShown && (
             <div aria-label="Your position" role="group" className="flex flex-col gap-1">
               <p className="px-2 text-[13px] font-semibold text-muted">Your position</p>
               {mine ? (
-                <Row entry={mine} metric={metric} tied={ties.has(mine.rank)} isMe />
+                <Row entry={mine} metric={metric} tied={entries.some((e) => e.rank === mine.rank && e.player.id !== mine.player.id)} isMe />
               ) : (
                 <p className="rounded-lg bg-walnut-950/60 px-3 py-2.5 text-sm text-stock-dim ring-1 ring-inset ring-black/40">
-                  {entries.length >= FETCH_LIMIT
-                    ? `You're outside the top ${FETCH_LIMIT}. Keep playing.`
-                    : effective === 'week'
-                      ? "You're not ranked this week. Play a hand to get on the board."
-                      : "You're not on this board yet. Play a hand to get ranked."}
+                  {effective === 'week'
+                    ? "You're not ranked this week. Play a hand to get on the board."
+                    : "You're not on this board yet. Play a hand to get ranked."}
                 </p>
               )}
             </div>

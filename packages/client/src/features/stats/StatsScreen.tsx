@@ -216,7 +216,7 @@ function HandRow({ hand, meId }: { hand: HandHistoryView; meId: string }) {
                 <span className="flex gap-0.5">
                   {o.cards
                     ? o.cards.map((c, i) => <PlayingCard key={i} card={c} size="xs" />)
-                    : [0, 1].map((i) => <PlayingCard key={i} card={null} size="xs" dim={o.result === 'folded'} />)}
+                    : [0, 1].map((i) => <PlayingCard key={i} card={null} backId={o.cardBack} size="xs" dim={o.result === 'folded'} />)}
                 </span>
                 <span className="flex flex-col leading-tight">
                   <span className="max-w-28 truncate text-[13px] font-semibold text-stock">{o.name}</span>

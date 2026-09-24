@@ -1,5 +1,5 @@
 import { eq, sql } from 'drizzle-orm';
-import { DEFAULT_RULES, type Notice, type TableRules, type TableView } from '@poker/shared';
+import { DEFAULT_RULES, type Notice, type TableLeft, type TableRules, type TableView } from '@poker/shared';
 import type { Db } from '../db/client.js';
 import { chipTransactions, players, tableSeats } from '../db/schema.js';
 import { createServices, type Services } from '../services/index.js';
@@ -16,7 +16,7 @@ export const FAST: Partial<TableTiming> = {
 export class Harness {
   readonly views = new Map<string, TableView>();
   readonly notices: { playerId: string; notice: Omit<Notice, 'id'> }[] = [];
-  readonly left: { playerId: string; reason: string }[] = [];
+  readonly left: ({ playerId: string } & TableLeft)[] = [];
   readonly fx: unknown[] = [];
   closed = false;
   table!: TableRoom;
@@ -26,14 +26,14 @@ export class Harness {
     this.services = createServices(db);
   }
 
-  static async create(db: Db, count: number, opts: { rules?: Partial<TableRules>; timing?: Partial<TableTiming>; seed?: number } = {}) {
+  static async create(db: Db, count: number, opts: { rules?: Partial<TableRules>; timing?: Partial<TableTiming>; seed?: number; clock?: () => number } = {}) {
     const ids: string[] = [];
     for (let i = 0; i < count; i++) ids.push(await makePlayer(db, 'tbl'));
     const h = new Harness(db, ids);
     const hooks: TableHooks = {
       sendView: (id, view) => h.views.set(id, view),
       fx: (fx) => h.fx.push(fx),
-      left: (playerId, reason) => { h.left.push({ playerId, reason }); h.views.delete(playerId); },
+      left: (playerId, left) => { h.left.push({ playerId, ...left }); h.views.delete(playerId); },
       changed: () => undefined,
       balanceChanged: () => undefined,
       notice: (playerId, notice) => h.notices.push({ playerId, notice }),
@@ -43,7 +43,7 @@ export class Harness {
     const host = toPublic((await getPlayerRow(db, ids[0]))!);
     h.table = new TableRoom('inst-test', { ...DEFAULT_RULES, ...opts.rules }, host, {
       bank: h.services.bank, recorder: h.services.recorder, shop: h.services.shop, hooks,
-      timing: { ...FAST, ...opts.timing }, random: seededRandomInt(opts.seed ?? 7),
+      timing: { ...FAST, ...opts.timing }, random: seededRandomInt(opts.seed ?? 7), clock: opts.clock,
       log: () => undefined,
     });
     await h.table.watch(host);

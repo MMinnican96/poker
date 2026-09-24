@@ -13,7 +13,7 @@ function player(id: string, patch: Partial<SeatPlayer> = {}): SeatPlayer {
 function hand(patch: Partial<HandView> = {}): HandView {
   return {
     handNumber: 1, street: 'pre-flop', board: [], pots: [], potTotal: 75, buttonSeat: 0, smallBlindSeat: 1, bigBlindSeat: 2,
-    toActSeat: 0, actionEndsAt: null, currentBet: 50, result: null, ...patch,
+    toActSeat: 0, actionStartedAt: null, actionEndsAt: null, currentBet: 50, result: null, ...patch,
   };
 }
 

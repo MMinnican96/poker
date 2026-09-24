@@ -1,17 +1,31 @@
-import { useState, type ReactNode } from 'react';
+import { Suspense, useEffect, useState, type ReactNode } from 'react';
 import { useAppState } from '../app/client';
 import { useMediaQuery } from '../app/hooks';
+import { lazyNamed, preloadWhenIdle } from '../app/lazy';
 import { useNav, type Section } from '../app/nav';
-import { ChallengesScreen } from '../features/challenges/ChallengesScreen';
-import { LeaderboardScreen } from '../features/leaderboard/LeaderboardScreen';
-import { MessagesScreen } from '../features/messages/MessagesScreen';
-import { ShopScreen } from '../features/shop/ShopScreen';
-import { StatsScreen } from '../features/stats/StatsScreen';
-import { CloseIcon, Drawer, IconButton, cx } from '../ui';
+import { CloseIcon, Drawer, IconButton, Spinner, cx } from '../ui';
 import { Header } from './Header';
 import { NavBar } from './NavBar';
 import { RoomPanel, useUnseenRoomMessages, type RoomTab } from './RoomPanel';
 import { TableHome } from './TableHome';
+
+// Feature screens load on first visit (each is its own chunk), and are fetched
+// in the background once the lobby has settled.
+const LeaderboardScreen = lazyNamed(() => import('../features/leaderboard/LeaderboardScreen'), 'LeaderboardScreen');
+const StatsScreen = lazyNamed(() => import('../features/stats/StatsScreen'), 'StatsScreen');
+const ChallengesScreen = lazyNamed(() => import('../features/challenges/ChallengesScreen'), 'ChallengesScreen');
+const ShopScreen = lazyNamed(() => import('../features/shop/ShopScreen'), 'ShopScreen');
+const MessagesScreen = lazyNamed(() => import('../features/messages/MessagesScreen'), 'MessagesScreen');
+export const FEATURE_SCREENS = [LeaderboardScreen, StatsScreen, ChallengesScreen, ShopScreen, MessagesScreen] as const;
+
+/** Holds the section's space while its chunk loads, so nothing around it moves. */
+function SectionFallback() {
+  return (
+    <div className="grid h-full min-h-40 place-items-center">
+      <Spinner size={28} label="Loading" className="text-brass" />
+    </div>
+  );
+}
 
 /** The screen for each section (the table section shows the lobby home here). */
 function SectionView({ section, messagesPartner }: { section: Section; messagesPartner?: string }): ReactNode {
@@ -54,6 +68,7 @@ export function Shell() {
   const [tab, setTab] = useState<RoomTab>('chat');
   const chatVisible = tab === 'chat' && (wide || drawer);
   const unseen = useUnseenRoomMessages(chatVisible);
+  useEffect(() => preloadWhenIdle(FEATURE_SCREENS), []);
 
   return (
     <div className="flex h-dvh flex-col bg-walnut-900">
@@ -62,7 +77,9 @@ export function Shell() {
       <div className="flex min-h-0 flex-1">
         {!phone && <NavBar orientation="rail" />}
         <main className={cx('@container min-w-0 flex-1 overflow-x-hidden overflow-y-auto', nav.section === 'table' && 'lamp-glow')} id="main">
-          <SectionView section={nav.section} messagesPartner={nav.messagesPartner} />
+          <Suspense fallback={<SectionFallback />}>
+            <SectionView section={nav.section} messagesPartner={nav.messagesPartner} />
+          </Suspense>
         </main>
         {wide && (
           <aside aria-label="Room" className="flex w-80 shrink-0 flex-col border-l border-walnut-950 bg-walnut-800 tex-wood xl:w-[22rem]">

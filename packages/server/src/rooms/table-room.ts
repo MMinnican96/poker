@@ -12,6 +12,7 @@ import {
   type PublicPlayer,
   type SeatPlayer,
   type TableFx,
+  type TableLeft,
   type TableRules,
   type TableStatus,
   type TableSummary,
@@ -66,6 +67,15 @@ export const DEFAULT_TIMING: TableTiming = {
 /** Missed turns in a row before a player is sat out. */
 const TIMEOUTS_TO_SIT_OUT = 2;
 
+/** What members are told when they stop being at the table. */
+export const LEFT = {
+  left: { code: 'left', reason: 'You left the table.' },
+  hostClosed: { code: 'host-closed', reason: 'The host closed the table.' },
+  abandoned: { code: 'abandoned', reason: 'Everyone left the table.' },
+  removed: { code: 'removed', reason: 'You were away too long, so your chips went back to your bankroll.' },
+  shutdown: { code: 'shutdown', reason: 'The server is restarting. Your chips are back in your bankroll.' },
+} as const satisfies Record<string, TableLeft>;
+
 export type Result = { ok: true } | { ok: false; error: string };
 const fail = (error: string): Result => ({ ok: false, error });
 const OK: Result = { ok: true };
@@ -74,7 +84,8 @@ const OK: Result = { ok: true };
 export interface TableHooks {
   sendView(playerId: string, view: TableView): void;
   fx(fx: TableFx): void;
-  left(playerId: string, reason: string): void;
+  /** The player is no longer a table member. */
+  left(playerId: string, left: TableLeft): void;
   /** Membership, seats or status changed (refresh the lobby). */
   changed(): void;
   /** A player's bankroll/XP may have changed. */
@@ -139,6 +150,7 @@ export class TableRoom {
   private boundary = false;
   private closing = false;
   private closed = false;
+  private turnStartedAt: number | null = null;
   private turnDeadline: number | null = null;
   private turnTimer: ReturnType<typeof setTimeout> | null = null;
   private stepTimer: ReturnType<typeof setTimeout> | null = null;
@@ -432,7 +444,7 @@ export class TableRoom {
       this.broadcast();
       return OK;
     }
-    await this.closeNow('The host closed the table.');
+    await this.closeNow(LEFT.hostClosed);
     return OK;
   }
 
@@ -583,7 +595,8 @@ export class TableRoom {
     const idx = hand.state.toAct!;
     const playerId = hand.state.players[idx].id;
     const ms = this.timing.turnMs ?? this.rules.turnSeconds * 1000;
-    this.turnDeadline = this.clock() + ms;
+    this.turnStartedAt = this.clock();
+    this.turnDeadline = this.turnStartedAt + ms;
     this.turnTimer = setTimeout(() => this.onTimeout(hand, idx, playerId), ms);
   }
 
@@ -608,6 +621,7 @@ export class TableRoom {
   private clearTurn(): void {
     if (this.turnTimer) clearTimeout(this.turnTimer);
     this.turnTimer = null;
+    this.turnStartedAt = null;
     this.turnDeadline = null;
   }
 
@@ -624,7 +638,11 @@ export class TableRoom {
 
     const now = this.clock();
     const facts = buildHandFacts({ state, tableId: this.tableId, startedAt: this.handStartedAt, now });
-    const history = buildHistory(state, this.tableId);
+    const cardBacks = Object.fromEntries(state.players.flatMap((p) => {
+      const back = this.members.get(p.id)?.player.cosmetics.cardBack;
+      return back ? [[p.id, back]] : [];
+    }));
+    const history = buildHistory(state, this.tableId, cardBacks);
     const stacks = state.players.flatMap((p) => {
       const seatId = this.members.get(p.id)?.seatId;
       return seatId ? [{ seatId, stack: p.stack }] : [];
@@ -665,7 +683,7 @@ export class TableRoom {
     });
     if (this.closed) return;
     if (this.closing) {
-      await this.closeNow('The host closed the table.');
+      await this.closeNow(LEFT.hostClosed);
       return;
     }
     this.afterMembershipChange();
@@ -729,7 +747,7 @@ export class TableRoom {
       if (!m.connected) {
         m.sittingOut = true;
         if (m.disconnectedAt !== null && now - m.disconnectedAt >= this.timing.disconnectStandMs) {
-          await this.release(m, 'leave');
+          await this.release(m, 'remove');
         }
       }
     }
@@ -749,7 +767,7 @@ export class TableRoom {
       // Re-check in the queue: a hand may have been dealt since.
       if (!idle()) return false;
       await this.retryFailedCashouts();
-      for (const m of gone()) if (this.members.get(m.player.id) === m) await this.release(m, 'leave');
+      for (const m of gone()) if (this.members.get(m.player.id) === m) await this.release(m, 'remove');
       return true;
     });
     if (changed) this.afterMembershipChange();
@@ -757,9 +775,10 @@ export class TableRoom {
 
   /**
    * Cash a seated member out (or just remove a spectator). `stand` keeps them
-   * watching, `leave` sends them to the lobby, `bust` keeps them watching with a nudge.
+   * watching, `leave` sends them to the lobby, `remove` does too for someone
+   * away too long, and `bust` keeps them watching with a nudge.
    */
-  private async release(m: Member, kind: 'stand' | 'leave' | 'bust'): Promise<void> {
+  private async release(m: Member, kind: 'stand' | 'leave' | 'remove' | 'bust'): Promise<void> {
     const id = m.player.id;
     if (m.role === 'seated') {
       const stack = m.stack;
@@ -783,9 +802,9 @@ export class TableRoom {
       this.deps.hooks.balanceChanged(id);
     }
     m.pending = null;
-    if (kind === 'leave') {
+    if (kind === 'leave' || kind === 'remove') {
       this.members.delete(id);
-      this.deps.hooks.left(id, 'You left the table.');
+      this.deps.hooks.left(id, kind === 'leave' ? LEFT.left : LEFT.removed);
     } else if (kind === 'bust') {
       this.deps.hooks.notice(id, { tone: 'info', title: "You're out of chips", body: 'Take a seat again to buy back in.' });
     }
@@ -815,7 +834,7 @@ export class TableRoom {
     }
     const seatedCount = [...this.members.values()].filter((m) => m.role === 'seated').length;
     if (this.members.size === 0 || (this.status === 'running' && seatedCount === 0 && !this.hand)) {
-      void this.closeNow('Everyone left the table.');
+      void this.closeNow(LEFT.abandoned);
       return;
     }
     this.broadcast();
@@ -823,7 +842,7 @@ export class TableRoom {
     this.scheduleDeal();
   }
 
-  private async closeNow(reason: string): Promise<void> {
+  private async closeNow(left: TableLeft): Promise<void> {
     if (this.closed) return;
     this.closed = true;
     this.clearTimers();
@@ -831,7 +850,7 @@ export class TableRoom {
       for (const m of [...this.members.values()]) {
         if (m.role === 'seated') await this.release(m, 'stand');
         this.members.delete(m.player.id);
-        this.deps.hooks.left(m.player.id, reason);
+        this.deps.hooks.left(m.player.id, left);
       }
       await this.retryFailedCashouts();
     });
@@ -843,13 +862,13 @@ export class TableRoom {
    * voided — until it completes, each member's `stack` is still their pre-hand
    * stack (the last checkpoint), which is what they get back.
    */
-  async shutdown(reason = 'The server is restarting. Your chips are back in your bankroll.'): Promise<void> {
+  async shutdown(): Promise<void> {
     if (this.closed) {
       await this.serial.idle();
       return;
     }
     if (this.hand && this.hand.state.phase !== 'complete') this.hand = null;
-    await this.closeNow(reason);
+    await this.closeNow(LEFT.shutdown);
   }
 
   /** Stop timers (tests). Does not cash anyone out. */
@@ -975,6 +994,7 @@ export class TableRoom {
         smallBlindSeat: state.smallBlindSeat,
         bigBlindSeat: state.bigBlindSeat,
         toActSeat: state.toAct !== null ? state.players[state.toAct].seat : null,
+        actionStartedAt: this.turnStartedAt,
         actionEndsAt: this.turnDeadline,
         currentBet: state.currentBet,
         result: resultView,

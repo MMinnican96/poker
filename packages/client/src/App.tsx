@@ -1,11 +1,24 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { BootErrorScreen, ConnectingScreen, ExpiredScreen } from './app/Boot';
 import { ClientProvider, createClient, useAppState, useStore, useTable, type Client } from './app/client';
+import { lazyNamed, preloadWhenIdle } from './app/lazy';
 import { NavProvider, ProfileCardProvider, useNav } from './app/nav';
 import { startSession } from './app/session';
 import { Toaster } from './app/Toaster';
 import { Shell } from './lobby/Shell';
-import { TableScreen } from './table/TableScreen';
+import { Spinner } from './ui';
+
+/** The table screen is its own chunk, fetched in the background after sign-in. */
+const TableScreen = lazyNamed(() => import('./table/TableScreen'), 'TableScreen');
+
+/** Fills the screen the table will take while its chunk loads. */
+function TableFallback() {
+  return (
+    <div className="grid h-dvh place-items-center bg-walnut-900 tex-wood">
+      <Spinner size={32} label="Loading the table" className="text-brass" />
+    </div>
+  );
+}
 
 type Boot = { status: 'loading' } | { status: 'error'; error: unknown } | { status: 'ready'; client: Client };
 
@@ -58,21 +71,30 @@ export function App() {
 export function Main() {
   const table = useTable();
   const connection = useAppState((s) => s.connection);
-  const leftReason = useAppState((s) => s.tableLeftReason);
+  const left = useAppState((s) => s.tableLeft);
   const nav = useNav();
   const store = useStore();
   const atTable = table !== null;
   const wasAtTable = useRef(atTable);
 
+  useEffect(() => preloadWhenIdle([TableScreen], 500), []);
+
   useEffect(() => {
     if (atTable && !wasAtTable.current) nav.go('table');
-    if (!atTable && wasAtTable.current && leftReason && leftReason !== 'You left the table.') {
-      store.notify({ tone: 'info', title: leftReason });
+    // Leaving yourself needs no toast; closures, removals and restarts do.
+    if (!atTable && wasAtTable.current && left && left.code !== 'left' && left.reason) {
+      store.notify({ tone: 'info', title: left.reason });
     }
     wasAtTable.current = atTable;
-  }, [atTable, leftReason, nav, store]);
+  }, [atTable, left, nav, store]);
 
   if (connection === 'unauthorized') return <ExpiredScreen />;
-  if (atTable && nav.section === 'table') return <TableScreen />;
+  if (atTable && nav.section === 'table') {
+    return (
+      <Suspense fallback={<TableFallback />}>
+        <TableScreen />
+      </Suspense>
+    );
+  }
   return <Shell />;
 }

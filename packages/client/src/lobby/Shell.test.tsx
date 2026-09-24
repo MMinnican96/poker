@@ -23,10 +23,11 @@ describe('Shell', () => {
     expect(within(nav).getByRole('button', { name: /Table/ })).toHaveAttribute('aria-current', 'page');
     expect(screen.getByRole('heading', { name: "The table's empty" })).toBeInTheDocument();
 
+    // Feature screens are lazy chunks: they appear once loaded.
     await userEvent.click(within(nav).getByRole('button', { name: /Leaderboard/ }));
-    expect(screen.getByRole('heading', { name: 'Leaderboard' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Leaderboard' })).toBeInTheDocument();
     await userEvent.click(within(nav).getByRole('button', { name: /Shop/ }));
-    expect(screen.getByRole('heading', { name: 'Shop' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Shop' })).toBeInTheDocument();
     expect(within(nav).getByRole('button', { name: /Shop/ })).toHaveAttribute('aria-current', 'page');
   });
 
@@ -75,15 +76,32 @@ describe('Shell', () => {
     expect(screen.getByText('You need 1,000 chips to buy in. You have 300.')).toBeInTheDocument();
   });
 
-  it('switches to the table screen when a table_state arrives and back on table_left', () => {
+  it('switches to the table screen when a table_state arrives and back on table_left', async () => {
     const { store } = renderWithClient(<><Main /><Toaster /></>);
     act(() => store.dispatch({ type: 'lobby_state', lobby: makeLobby({ table: makeSummary() }) }));
     expect(screen.getByRole('navigation', { name: 'Main' })).toBeInTheDocument();
     act(() => store.dispatch({ type: 'table_state', view: makeTableView({ hostId: 'p2' }), receivedAt: Date.now() }));
-    expect(screen.getByRole('button', { name: 'Leave table' })).toBeInTheDocument();
+    // The table screen is a lazy chunk.
+    expect(await screen.findByRole('button', { name: 'Leave table' })).toBeInTheDocument();
     expect(screen.queryByRole('navigation', { name: 'Main' })).not.toBeInTheDocument();
-    act(() => store.dispatch({ type: 'table_left', reason: 'The host closed the table.' }));
+    act(() => store.dispatch({ type: 'table_left', left: { code: 'host-closed', reason: 'The host closed the table.' } }));
     expect(screen.getByRole('navigation', { name: 'Main' })).toBeInTheDocument();
     expect(screen.getByText('The host closed the table.')).toBeInTheDocument();
+  });
+
+  it('only toasts when you did not leave yourself', async () => {
+    const { store } = renderWithClient(<><Main /><Toaster /></>);
+    const sit = async () => {
+      act(() => store.dispatch({ type: 'table_state', view: makeTableView({ hostId: 'p2' }), receivedAt: Date.now() }));
+      await screen.findByRole('button', { name: 'Leave table' });
+    };
+    await sit();
+    act(() => store.dispatch({ type: 'table_left', left: { code: 'left', reason: 'You left the table.' } }));
+    expect(screen.getByRole('navigation', { name: 'Main' })).toBeInTheDocument();
+    expect(screen.queryByText('You left the table.')).not.toBeInTheDocument();
+
+    await sit();
+    act(() => store.dispatch({ type: 'table_left', left: { code: 'shutdown', reason: 'The server is restarting.' } }));
+    expect(screen.getByText('The server is restarting.')).toBeInTheDocument();
   });
 });

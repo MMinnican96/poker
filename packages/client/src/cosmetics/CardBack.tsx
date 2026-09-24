@@ -92,6 +92,7 @@ export function CardBack({ backId, width = 56, className }: CardBackProps) {
       className={className}
       role="img"
       aria-label="Face-down card"
+      data-card-back={backId}
     >
       <defs>
         <Pattern v={v} pid={pid} />

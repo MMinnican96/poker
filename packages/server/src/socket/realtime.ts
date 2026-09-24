@@ -10,6 +10,7 @@ import {
   type InterServerEvents,
   type ServerToClientEvents,
   type SocketData,
+  type TableLeft,
   type TableRules,
 } from '@poker/shared';
 import type { Auth } from '../auth.js';
@@ -25,6 +26,8 @@ type ClientSocket = Socket<ClientToServerEvents, ServerToClientEvents, InterServ
 const instRoom = (instanceId: string) => `inst:${instanceId}`;
 const memberRoom = (instanceId: string, playerId: string) => `inst:${instanceId}:user:${playerId}`;
 const userRoom = (playerId: string) => `user:${playerId}`;
+
+const NOT_MEMBER: TableLeft = { code: 'not-member', reason: "You're no longer at the table." };
 
 /** A number from the wire, or NaN for anything else (so `null`, `''` or `true` never become 0 or 1). */
 const num = (v: unknown): number => (typeof v === 'number' ? v : NaN);
@@ -83,7 +86,7 @@ export function attachRealtime(io: Io, opts: RealtimeOptions): Realtime {
   const outbox: Outbox = {
     lobby: (instanceId, state) => io.to(instRoom(instanceId)).emit('lobby_state', state),
     tableView: (instanceId, playerId, view) => io.to(memberRoom(instanceId, playerId)).emit('table_state', view),
-    tableLeft: (instanceId, playerId, reason) => io.to(memberRoom(instanceId, playerId)).emit('table_left', { reason }),
+    tableLeft: (instanceId, playerId, left) => io.to(memberRoom(instanceId, playerId)).emit('table_left', left),
     fx: (instanceId, fx) => io.to(instRoom(instanceId)).emit('table_fx', fx),
     activity: (instanceId, event) => io.to(instRoom(instanceId)).emit('activity', event),
     notice: (playerId, notice) => io.to(userRoom(playerId)).emit('notice', notice),
@@ -211,9 +214,12 @@ export function attachRealtime(io: Io, opts: RealtimeOptions): Realtime {
     socket.on('emote', handle((data: { emote: string }) => needTable((t) => t.emote(playerId, String(data?.emote ?? '')))));
     socket.on('throw_item', handle((data: { itemId: string; targetId: string }) =>
       needTable((t) => t.throwItem(playerId, String(data?.itemId ?? ''), String(data?.targetId ?? '')))));
+    // A reconnecting client asks for its table; if it isn't at one (any more),
+    // say so, so it never keeps showing a dead table.
     socket.on('request_state', () => {
       const t = table();
       if (t?.isMember(playerId)) t.connect(playerId);
+      else socket.emit('table_left', NOT_MEMBER);
     });
 
     socket.on('chat_send', handle(async (data: { to: unknown; body: unknown }) => {

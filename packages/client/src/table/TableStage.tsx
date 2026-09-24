@@ -94,7 +94,11 @@ export function TableStage({ view, canSit, sitBlockedReason, onSit, idle, banner
     if (menuFor && !seatById.has(menuFor)) setMenuFor(null);
   }, [menuFor, seatById]);
 
-  const turnMs = rules.turnSeconds * 1000;
+  // The server says when this turn started, so the ring is exact even if the
+  // rules changed or the turn was cut short; fall back to the table's timer.
+  const turnMs = hand?.actionStartedAt != null && hand.actionEndsAt != null
+    ? hand.actionEndsAt - hand.actionStartedAt
+    : rules.turnSeconds * 1000;
   const pointOf = (id: string): Point | null => {
     const seat = seatById.get(id);
     return seat === undefined ? null : slotOf(seat);

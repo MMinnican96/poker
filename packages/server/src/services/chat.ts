@@ -1,6 +1,7 @@
 import { and, desc, eq, gt, like, lt, ne, or, sql } from 'drizzle-orm';
 import {
   CHAT_MAX_LENGTH,
+  DEFAULT_COSMETICS,
   dmPartner,
   type ChannelId,
   type ChatMessage,
@@ -8,6 +9,7 @@ import {
 } from '@poker/shared';
 import type { Db } from '../db/client.js';
 import { chatMessages, chatReads, players } from '../db/schema.js';
+import { toPublic } from './players.js';
 
 export type ChatResult = { ok: true; message: ChatMessage } | { ok: false; error: string };
 
@@ -106,7 +108,9 @@ export class ChatService {
       const [sender] = m.senderId === partnerId ? [partner] : await this.db.select().from(players).where(eq(players.discordUserId, m.senderId));
       out.push({
         channel: m.channel,
-        partner: { id: partnerId, name: partner?.displayName ?? 'Unknown', avatarUrl: partner?.avatarUrl ?? '' },
+        partner: partner
+          ? toPublic(partner)
+          : { id: partnerId, name: 'Unknown', avatarUrl: '', level: 1, cosmetics: DEFAULT_COSMETICS },
         last: {
           id: m.id, channel: m.channel, senderId: m.senderId,
           senderName: sender?.displayName ?? 'Unknown', senderAvatar: sender?.avatarUrl ?? '',

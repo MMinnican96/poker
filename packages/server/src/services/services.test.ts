@@ -142,20 +142,62 @@ describe('StatsRepository', () => {
     expect(cards[c]).not.toBeNull();
   });
 
+  it("serves each player's card back, falling back for old rows", async () => {
+    const s = svc();
+    const [a, b] = [await makePlayer(t.db), await makePlayer(t.db)];
+    const table = randomUUID();
+    const rec = history(table, 1, [a, b]);
+    rec.players[1].cardBack = 'back-navy';
+    await s.recorder.recordHand([fact(table, a, 1), fact(table, b, 1)], rec);
+    const [hand] = await s.stats.history(a);
+    expect(Object.fromEntries(hand.players.map((p) => [p.id, p.cardBack]))).toEqual({ [a]: 'back-classic', [b]: 'back-navy' });
+  });
+
   it('ranks leaderboards with shared ranks for ties', async () => {
     const s = svc();
     const ids = [await makePlayer(t.db, 'lb'), await makePlayer(t.db, 'lb'), await makePlayer(t.db, 'lb')];
     await t.db.update(players).set({ chipBalance: 1_000_000 }).where(eq(players.discordUserId, ids[0]));
     await t.db.update(players).set({ chipBalance: 1_000_000 }).where(eq(players.discordUserId, ids[1]));
-    const top = await s.stats.leaderboard('bankroll', 'all', 3);
-    expect(top.slice(0, 2).map((e) => e.rank)).toEqual([1, 1]);
-    expect(top[0].value).toBe(1_000_000);
+    const top = await s.stats.leaderboard('bankroll', 'all', 3, ids[1]);
+    expect(top.entries.slice(0, 2).map((e) => e.rank)).toEqual([1, 1]);
+    expect(top.entries[0].value).toBe(1_000_000);
+    expect(top.me).toMatchObject({ rank: 1, value: 1_000_000, player: { id: ids[1] } });
 
     const table = randomUUID();
     await s.recorder.recordHand([fact(table, ids[2], 1, { result: 'won', chipsWon: 999_999, netResult: 999_999 })], history(table, 1, [ids[2]]));
-    const week = await s.stats.leaderboard('net_profit', 'week', 1);
-    expect(week[0]).toMatchObject({ rank: 1, value: 999_999 });
-    expect(week[0].player.id).toBe(ids[2]);
+    const week = await s.stats.leaderboard('net_profit', 'week', 1, ids[0]);
+    expect(week.entries[0]).toMatchObject({ rank: 1, value: 999_999 });
+    expect(week.entries[0].player.id).toBe(ids[2]);
+    // No hands this week: not on the board.
+    expect(week.me).toBeNull();
+  });
+
+  it('finds your rank outside the limit, sharing ranks with ties', async () => {
+    const s = svc();
+    const ids: string[] = [];
+    for (let i = 0; i < 5; i++) ids.push(await makePlayer(t.db, 'rk'));
+    // Weekly nets far from any other test's, so nobody else ranks in between.
+    const nets = [9_000_000, 5_000_000, 5_000_000, 4_000_000, -9_000_000];
+    const table = randomUUID();
+    for (const [i, id] of ids.entries()) {
+      await s.recorder.recordHand([fact(table, id, i + 1, { netResult: nets[i], result: nets[i] > 0 ? 'won' : 'lost', chipsWon: Math.max(0, nets[i]) })], history(table, i + 1, [id]));
+    }
+    // Others' facts may exist in this shared database, so compare relative ranks only.
+    const all = await s.stats.leaderboard('net_profit', 'week', 100);
+    const rankOf = (id: string) => all.entries.find((e) => e.player.id === id)!.rank;
+    expect(rankOf(ids[1])).toBe(rankOf(ids[2]));
+    expect(rankOf(ids[3])).toBe(rankOf(ids[1]) + 2);
+
+    const top1 = await s.stats.leaderboard('net_profit', 'week', 1, ids[4]);
+    expect(top1.entries).toHaveLength(1);
+    expect(top1.me).toMatchObject({ rank: rankOf(ids[4]), value: -9_000_000, player: { id: ids[4] } });
+    const tied = await s.stats.leaderboard('net_profit', 'week', 1, ids[2]);
+    expect(tied.me).toMatchObject({ rank: rankOf(ids[1]), value: 5_000_000 });
+
+    // Level ranks by XP; the value is the level.
+    const level = await s.stats.leaderboard('level', 'all', 1, ids[0]);
+    expect(level.me).toMatchObject({ player: { id: ids[0] }, value: level.me!.player.level });
+    expect(level.me!.rank).toBeGreaterThanOrEqual(1);
   });
 });
 

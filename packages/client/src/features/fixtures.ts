@@ -90,9 +90,9 @@ export function makeHand(patch: Partial<HandHistoryView> = {}): HandHistoryView 
     board: cards('Ah Kd 7c 2s 9h'),
     pots: [{ amount: 1_200, winnerIds: ['p1'], handLabel: 'Pair of aces' }],
     players: [
-      { id: 'p1', name: 'Alice', seat: 0, cards: cards('As Qc') as [Card, Card], shown: true, net: 600, handLabel: 'Pair of aces', result: 'won' },
-      { id: 'p2', name: 'Bob', seat: 2, cards: cards('Kh Jc') as [Card, Card], shown: true, net: -600, handLabel: 'Pair of kings', result: 'lost' },
-      { id: 'p3', name: 'Carol', seat: 4, cards: null, shown: false, net: 0, handLabel: null, result: 'folded' },
+      { id: 'p1', name: 'Alice', seat: 0, cards: cards('As Qc') as [Card, Card], shown: true, net: 600, handLabel: 'Pair of aces', result: 'won', cardBack: 'back-classic' },
+      { id: 'p2', name: 'Bob', seat: 2, cards: cards('Kh Jc') as [Card, Card], shown: true, net: -600, handLabel: 'Pair of kings', result: 'lost', cardBack: 'back-classic' },
+      { id: 'p3', name: 'Carol', seat: 4, cards: null, shown: false, net: 0, handLabel: null, result: 'folded', cardBack: 'back-navy' },
     ],
     ...patch,
   };
@@ -128,7 +128,7 @@ export function makeConversation(patch: Partial<Conversation> = {}): Conversatio
   const channel = 'dm:p1:p2';
   return {
     channel,
-    partner: { id: 'p2', name: 'Bob', avatarUrl: '' },
+    partner: makePublic('p2', 'Bob'),
     last: makeMessage(channel, 'p2', 'nice hand', '2026-09-24T10:00:00.000Z'),
     unread: 2,
     ...patch,

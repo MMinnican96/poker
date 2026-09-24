@@ -212,8 +212,27 @@ describe('timers and disconnects', () => {
     await h.seat(1);
     h.table.disconnect(h.ids[1]);
     await waitFor(() => h.left.some((l) => l.playerId === h.ids[1]), 3000, 'stand-up after disconnect');
+    expect(h.left.find((l) => l.playerId === h.ids[1])).toMatchObject({ code: 'removed' });
     expect(await h.services.bank.escrowed(h.ids[1])).toBe(0);
     expect(await h.balance(1)).toBe(10_000);
+  });
+
+  it('sends when the current turn started alongside its deadline', async () => {
+    let now = 1_000_000;
+    const h = await setup(2, { timing: { turnMs: 60_000 }, clock: () => now });
+    await h.seat(0);
+    await h.seat(1);
+    expect(h.view(0).hand).toBeNull();
+    now = 2_000_000;
+    h.table.start(h.ids[0]);
+    await waitFor(() => h.toAct() !== null);
+    const hand = h.view(0).hand!;
+    expect(hand.actionStartedAt).toBe(2_000_000);
+    expect(hand.actionEndsAt).toBe(2_060_000);
+    now = 2_005_000;
+    h.table.act(h.toAct()!, { type: 'call' });
+    await waitFor(() => h.view(0).hand?.actionStartedAt === 2_005_000);
+    expect(h.view(0).hand!.actionEndsAt).toBe(2_065_000);
   });
 });
 
@@ -454,6 +473,7 @@ describe('server shutdown', () => {
     expect(await h.balance(1)).toBe(10_000);
     expect(await h.chipsInPlay()).toBe(before);
     expect(new Set(h.left.map((l) => l.playerId))).toEqual(new Set(h.ids));
+    expect(h.left.every((l) => l.code === 'shutdown')).toBe(true);
     expect(h.table.act(h.ids[1], { type: 'fold' })).toMatchObject({ ok: false });
   });
 

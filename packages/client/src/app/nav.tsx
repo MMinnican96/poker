@@ -1,5 +1,20 @@
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
-import { ProfileCardModal } from '../features/profile/ProfileCardModal';
+import { Suspense, createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
+import { Modal, Spinner } from '../ui';
+import { lazyNamed } from './lazy';
+
+/** Loaded the first time a profile card opens. */
+const ProfileCardModal = lazyNamed(() => import('../features/profile/ProfileCardModal'), 'ProfileCardModal');
+
+/** The profile card's own loading state, shown while its chunk loads (so it doesn't jump when it arrives). */
+function ProfileCardFallback({ onClose }: { onClose(): void }) {
+  return (
+    <Modal open onClose={onClose} tone="paper" size="sm" hideHeader title="Player profile card">
+      <div className="grid min-h-72 place-items-center pt-5">
+        <Spinner size={28} label="Loading profile" className="text-brass-dark" />
+      </div>
+    </Modal>
+  );
+}
 
 /** Top-level sections of the app. `table` is the lobby home (or the table screen while you're at it). */
 export type Section = 'table' | 'leaderboard' | 'stats' | 'challenges' | 'shop' | 'messages';
@@ -53,7 +68,11 @@ export function ProfileCardProvider({ children }: { children: ReactNode }) {
   return (
     <ProfileContext.Provider value={value}>
       {children}
-      {playerId && <ProfileCardModal key={playerId} playerId={playerId} onClose={close} />}
+      {playerId && (
+        <Suspense fallback={<ProfileCardFallback onClose={close} />}>
+          <ProfileCardModal key={playerId} playerId={playerId} onClose={close} />
+        </Suspense>
+      )}
     </ProfileContext.Provider>
   );
 }

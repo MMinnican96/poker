@@ -21,12 +21,21 @@ export interface AppOptions {
   verifyInstance?: RealtimeOptions['verifyInstance'];
 }
 
+/** Default longest `close()` waits for tables to cash out before closing anyway. */
+export const SHUTDOWN_CASHOUT_MS = 15_000;
+
 export interface App {
   http: HttpServer;
   io: Io;
   auth: Auth;
   realtime: Realtime;
-  close(): Promise<void>;
+  /**
+   * Graceful stop: close every table (cashing everyone out while their sockets
+   * can still be told), then close sockets and the HTTP server. Waits at most
+   * `cashoutTimeoutMs` for the cash-outs; anything unfinished is refunded by
+   * boot recovery. Safe to call more than once.
+   */
+  close(opts?: { cashoutTimeoutMs?: number }): Promise<void>;
 }
 
 /**
@@ -82,7 +91,17 @@ export function createApp(opts: AppOptions): App {
     io,
     auth,
     realtime,
-    async close() {
+    async close({ cashoutTimeoutMs = SHUTDOWN_CASHOUT_MS } = {}) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timedOut = await Promise.race([
+        realtime.rooms.shutdown().then(() => false, (err) => {
+          console.error('[server] closing tables failed', err);
+          return false;
+        }),
+        new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(true), cashoutTimeoutMs); }),
+      ]);
+      clearTimeout(timer);
+      if (timedOut) console.error('[server] tables did not finish cashing out in time; recovery will refund them');
       realtime.dispose();
       await io.close();
       if (http.listening) await new Promise<void>((resolve) => http.close(() => resolve()));

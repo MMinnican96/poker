@@ -10,6 +10,7 @@ import {
   type PlayerAction,
   type PlayerSelf,
   type TableFx,
+  type TableLeft,
   type TableRules,
   type TableView,
 } from '@poker/shared';
@@ -32,8 +33,8 @@ export interface AppState {
   lobby: LobbyState | null;
   /** The table as you see it while you're a member (seated or watching); null otherwise. */
   table: TableView | null;
-  /** Why you last left the table; cleared when you rejoin one. */
-  tableLeftReason: string | null;
+  /** Why you last left the table (`code` for logic, `reason` for people); cleared when you rejoin one. */
+  tableLeft: TableLeft | null;
   /**
    * Tables the lobby has shown to be gone. A late `table_state` for one of
    * them is stale and ignored.
@@ -56,9 +57,7 @@ export const ACTIVITY_KEEP = 50;
 export const NOTICES_KEEP = 4;
 const CLOSED_KEEP = 10;
 
-/** The server's `table_left` reason when the host closes the table. */
-export const HOST_CLOSED = 'The host closed the table.';
-/** What the host who closed it is told instead. */
+/** What the host who closed the table is told, instead of "the host closed it". */
 export const YOU_CLOSED = 'You closed the table.';
 
 export function initialState(me: PlayerSelf, instanceId: string): AppState {
@@ -69,7 +68,7 @@ export function initialState(me: PlayerSelf, instanceId: string): AppState {
     me,
     lobby: null,
     table: null,
-    tableLeftReason: null,
+    tableLeft: null,
     closedTables: [],
     chat: {},
     chatLoaded: {},
@@ -84,7 +83,7 @@ export type StoreEvent =
   | { type: 'me'; me: PlayerSelf }
   | { type: 'lobby_state'; lobby: LobbyState }
   | { type: 'table_state'; view: TableView; receivedAt: number }
-  | { type: 'table_left'; reason: string }
+  | { type: 'table_left'; left: TableLeft }
   | { type: 'chat_message'; message: ChatMessage }
   | { type: 'chat_history'; channel: ChannelId; messages: ChatMessage[] }
   | { type: 'activity'; event: ActivityEvent }
@@ -115,7 +114,10 @@ export function reduce(state: AppState, e: StoreEvent): AppState {
           ...state,
           lobby: e.lobby,
           table: null,
-          tableLeftReason: e.lobby.table ? 'The table you were at has closed.' : 'The table has closed.',
+          tableLeft: {
+            code: 'not-member',
+            reason: e.lobby.table ? 'The table you were at has closed.' : 'The table has closed.',
+          },
           closedTables: [...state.closedTables, ours.tableId].slice(-CLOSED_KEEP),
         };
       }
@@ -126,13 +128,15 @@ export function reduce(state: AppState, e: StoreEvent): AppState {
       return {
         ...state,
         table: e.view,
-        tableLeftReason: null,
+        tableLeft: null,
         clockOffset: e.view.serverNow - e.receivedAt,
       };
     case 'table_left': {
+      // "Not a member" answers a state request; with no table showing there's nothing to undo.
+      if (e.left.code === 'not-member' && !state.table) return state;
       // The host who closed the table doesn't need telling who closed it.
-      const closedByYou = e.reason === HOST_CLOSED && state.table?.hostId === state.me.id;
-      return { ...state, table: null, tableLeftReason: closedByYou ? YOU_CLOSED : e.reason };
+      const closedByYou = e.left.code === 'host-closed' && state.table?.hostId === state.me.id;
+      return { ...state, table: null, tableLeft: closedByYou ? { ...e.left, reason: YOU_CLOSED } : e.left };
     }
     case 'chat_message': {
       const list = state.chat[e.message.channel] ?? [];
@@ -334,7 +338,8 @@ export function bindSocket(socket: SocketLike, store: AppStore, commands: Comman
     me: (me: PlayerSelf) => d({ type: 'me', me }),
     lobby_state: (lobby: LobbyState) => d({ type: 'lobby_state', lobby }),
     table_state: (view: TableView) => d({ type: 'table_state', view, receivedAt: clock() }),
-    table_left: (data: { reason: string }) => d({ type: 'table_left', reason: data?.reason ?? '' }),
+    table_left: (data: Partial<TableLeft> | undefined) =>
+      d({ type: 'table_left', left: { code: data?.code ?? 'left', reason: data?.reason ?? '' } }),
     table_fx: (fx: TableFx) => store.emitTableFx(fx),
     chat_message: (message: ChatMessage) => d({ type: 'chat_message', message }),
     chat_history: (data: { channel: ChannelId; messages: ChatMessage[] }) =>

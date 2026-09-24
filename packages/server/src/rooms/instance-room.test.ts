@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import type { TableLeft } from '@poker/shared';
 import { createServices } from '../services/index.js';
 import { getPlayerRow, toPublic } from '../services/players.js';
 import { makePlayer, useTestDb } from '../test/db.js';
@@ -15,11 +16,11 @@ afterEach(() => {
 
 function setup() {
   const services = createServices(t.db);
-  const left: { playerId: string; reason: string }[] = [];
+  const left: ({ playerId: string } & TableLeft)[] = [];
   const outbox: Outbox = {
     lobby: () => undefined,
     tableView: () => undefined,
-    tableLeft: (_i, playerId, reason) => left.push({ playerId, reason }),
+    tableLeft: (_i, playerId, l) => left.push({ playerId, ...l }),
     fx: () => undefined,
     activity: () => undefined,
     notice: () => undefined,
@@ -74,7 +75,10 @@ describe('RoomManager', () => {
     t1.start(a.id);
     await waitFor(() => !!t1.viewFor(a.id).hand, 3000, 'a hand');
 
-    await rooms.shutdown();
+    const first = rooms.shutdown();
+    // Idempotent: a second call (e.g. app.close after index.ts) shares the first.
+    expect(rooms.shutdown()).toBe(first);
+    await first;
     expect(t1.isClosed && t2.isClosed).toBe(true);
     expect(r1.currentTable).toBeNull();
     expect(r2.currentTable).toBeNull();
@@ -83,5 +87,6 @@ describe('RoomManager', () => {
       expect(await services.bank.balance(p.id)).toBe(10_000);
     }
     expect(new Set(left.map((l) => l.playerId))).toEqual(new Set([a.id, b.id, c.id, d.id]));
+    expect(new Set(left.map((l) => l.code))).toEqual(new Set(['shutdown']));
   });
 });

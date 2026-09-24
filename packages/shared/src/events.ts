@@ -1,4 +1,4 @@
-import type { PlayerAction, TableFx, TableRules, TableView } from './table.js';
+import type { PlayerAction, TableFx, TableLeft, TableRules, TableView } from './table.js';
 import type {
   ActivityEvent,
   ChannelId,
@@ -18,8 +18,8 @@ export interface ServerToClientEvents {
   lobby_state: (state: LobbyState) => void;
   /** The table as you may see it; sent while you are a table member. */
   table_state: (view: TableView) => void;
-  /** You are no longer at the table (left, closed, removed). */
-  table_left: (data: { reason: string }) => void;
+  /** You are no longer at the table (left, closed, removed), or never were (`not-member`). */
+  table_left: (data: TableLeft) => void;
   table_fx: (fx: TableFx) => void;
   chat_message: (msg: ChatMessage) => void;
   chat_history: (data: { channel: ChannelId; messages: ChatMessage[] }) => void;

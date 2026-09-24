@@ -132,7 +132,7 @@ export function createApi(opts: ApiOptions): Router {
       res.status(400).json({ error: 'Unknown metric' });
       return;
     }
-    res.json(await services.stats.leaderboard(metric, period, clampInt(req.query.limit, 25, 1, 100)));
+    res.json(await services.stats.leaderboard(metric, period, clampInt(req.query.limit, 25, 1, 100), me(req)));
   }));
 
   api.post('/shop/purchase', wrap(async (req, res) => {

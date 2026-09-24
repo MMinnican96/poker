@@ -172,6 +172,8 @@ describe('a full table over sockets', () => {
     expect([...byNumber.keys()]).toEqual(expect.arrayContaining([1, 2, 3]));
     const h1 = byNumber.get(1)!;
     expect(h1.players.find((p) => p.id === a.id)!.cards).toEqual(holeCards(a, 1));
+    // Card backs are stored per hand, so face-down cards can be drawn as played.
+    expect(h1.players.map((p) => p.cardBack)).toEqual(h1.players.map(() => 'back-classic'));
     expect(h1.players.find((p) => p.id === b.id)!.cards).toBeNull();
     expect(JSON.stringify(h1)).not.toContain(cardJson(holeCards(b, 1)[0]));
     const h2 = byNumber.get(2)!;
@@ -189,9 +191,9 @@ describe('a full table over sockets', () => {
     expect(await a.send('leave_table')).toEqual({ ok: true });
     expect(await b.send('leave_table')).toEqual({ ok: true });
     await driveUntil([a, b], () => a.latest('table_left') !== undefined && b.latest('table_left') !== undefined);
-    expect(await aLeft).toEqual({ reason: 'You left the table.' });
-    expect(await bLeft).toEqual({ reason: 'You left the table.' });
-    expect((await cLeft).reason).toMatch(/left the table/);
+    expect(await aLeft).toEqual({ code: 'left', reason: 'You left the table.' });
+    expect(await bLeft).toEqual({ code: 'left', reason: 'You left the table.' });
+    expect(await cLeft).toEqual({ code: 'abandoned', reason: 'Everyone left the table.' });
     await c.state('lobby_state', (s) => s.table === null);
 
     // Nothing is left in escrow and no chips were created or lost.
@@ -244,7 +246,7 @@ describe('a full table over sockets', () => {
 
     const since = guest.mark();
     expect(await guest.send('leave_table')).toEqual({ ok: true });
-    expect(await guest.next('table_left', undefined, { since })).toEqual({ reason: 'You left the table.' });
+    expect(await guest.next('table_left', undefined, { since })).toEqual({ code: 'left', reason: 'You left the table.' });
     expect(await balance(guest)).toBe(10_000);
     await guest.state('me', (m) => m.balance === 10_000);
     await host.state('table_state', (v) => v.seats[1].player === null);

@@ -4,9 +4,9 @@ import type {
   ChatMessage,
   ChannelId,
   Conversation,
-  LeaderboardEntry,
   LeaderboardMetric,
   LeaderboardPeriod,
+  LeaderboardResponse,
   Loadout,
   LoadoutSlot,
   PlayerSelf,
@@ -43,6 +43,8 @@ export interface HandHistoryView {
     net: number;
     handLabel: string | null;
     result: 'won' | 'lost' | 'folded';
+    /** Card-back item they played the hand with. */
+    cardBack: string;
   }[];
 }
 
@@ -55,7 +57,8 @@ export interface Api {
   profile(playerId: string): Promise<ProfileCard>;
   playerStats(playerId: string): Promise<{ summary: PlayerStatsSummary; curve: ProfitPoint[] }>;
   myHands(limit?: number): Promise<HandHistoryView[]>;
-  leaderboard(metric: LeaderboardMetric, period?: LeaderboardPeriod, limit?: number): Promise<LeaderboardEntry[]>;
+  /** The top `limit` entries, plus your own entry wherever you rank. */
+  leaderboard(metric: LeaderboardMetric, period?: LeaderboardPeriod, limit?: number): Promise<LeaderboardResponse>;
   /** `nonce` makes retries idempotent; one is generated when omitted. */
   purchase(itemId: string, nonce?: string): Promise<ApiResult<{ balance: number; quantity: number }>>;
   equip(slot: LoadoutSlot, itemId: string): Promise<ApiResult<{ loadout: Loadout }>>;

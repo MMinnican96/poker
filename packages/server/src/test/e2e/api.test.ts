@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { ChallengeStatus, LeaderboardEntry, PlayerSelf, ProfileCard } from '@poker/shared';
+import type { ChallengeStatus, LeaderboardResponse, PlayerSelf, ProfileCard } from '@poker/shared';
 import jwt from 'jsonwebtoken';
+import { eq } from 'drizzle-orm';
+import { players } from '../../db/schema.js';
 import { createAuth } from '../../auth.js';
 import { useTestDb } from '../db.js';
 import {
@@ -134,17 +136,43 @@ describe('leaderboard, profiles, stats', () => {
     expect(bad.status).toBe(400);
     expect(bad.body).toEqual({ error: 'Unknown metric' });
 
-    const bankroll = await http<LeaderboardEntry[]>(server, '/leaderboard?metric=bankroll&limit=500', { token });
+    const bankroll = await http<LeaderboardResponse>(server, '/leaderboard?metric=bankroll&limit=500', { token });
     expect(bankroll.status).toBe(200);
-    expect(bankroll.body.length).toBeGreaterThan(0);
-    expect(bankroll.body.length).toBeLessThanOrEqual(100);
-    for (let i = 1; i < bankroll.body.length; i++) expect(bankroll.body[i - 1].value).toBeGreaterThanOrEqual(bankroll.body[i].value);
+    const entries = bankroll.body.entries;
+    expect(entries.length).toBeGreaterThan(0);
+    expect(entries.length).toBeLessThanOrEqual(100);
+    for (let i = 1; i < entries.length; i++) expect(entries[i - 1].value).toBeGreaterThanOrEqual(entries[i].value);
+    // Everyone has a bankroll, so you're always ranked on it.
+    expect(bankroll.body.me).toMatchObject({ value: 10_000 });
 
-    const weekly = await http<LeaderboardEntry[]>(server, '/leaderboard?metric=net_profit&period=week', { token });
+    const weekly = await http<LeaderboardResponse>(server, '/leaderboard?metric=net_profit&period=week', { token });
     expect(weekly.status).toBe(200);
-    expect(Array.isArray(weekly.body)).toBe(true);
+    expect(Array.isArray(weekly.body.entries)).toBe(true);
+    expect(weekly.body.me).toBeNull();
 
     expect((await http(server, '/leaderboard')).status).toBe(401);
+  });
+
+  it('includes your own rank even when you are outside the returned rows', async () => {
+    const rich = await signIn(server, uniqueName('Rich'));
+    const poorer = await signIn(server, uniqueName('Poorer'));
+    await t.db.update(players).set({ chipBalance: 50_000_000 }).where(eq(players.discordUserId, rich.me.id));
+    await t.db.update(players).set({ chipBalance: 5 }).where(eq(players.discordUserId, poorer.me.id));
+
+    const top = await http<LeaderboardResponse>(server, '/leaderboard?metric=bankroll&limit=1', { token: poorer.token });
+    expect(top.status).toBe(200);
+    expect(top.body.entries).toEqual([expect.objectContaining({ rank: 1, value: 50_000_000, player: expect.objectContaining({ id: rich.me.id }) })]);
+    const me = top.body.me!;
+    expect(me).toMatchObject({ value: 5, player: { id: poorer.me.id, name: poorer.me.name } });
+    // Your rank agrees with the full list.
+    const all = await http<LeaderboardResponse>(server, '/leaderboard?metric=bankroll&limit=100', { token: poorer.token });
+    const listed = all.body.entries.find((e) => e.player.id === poorer.me.id);
+    if (listed) expect(listed.rank).toBe(me.rank);
+    expect(me.rank).toBe(1 + all.body.entries.filter((e) => e.value > 5).length);
+
+    // The richest player sees themselves at the top.
+    const mine = await http<LeaderboardResponse>(server, '/leaderboard?metric=bankroll&limit=1', { token: rich.token });
+    expect(mine.body.me).toMatchObject({ rank: 1, player: { id: rich.me.id } });
   });
 
   it('serves profile cards and stats', async () => {

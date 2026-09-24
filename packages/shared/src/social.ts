@@ -121,7 +121,8 @@ export interface ChatMessage {
 
 export interface Conversation {
   channel: ChannelId;
-  partner: { id: string; name: string; avatarUrl: string };
+  /** The other player, with their level and equipped cosmetics. */
+  partner: PublicPlayer;
   last: ChatMessage | null;
   unread: number;
 }
@@ -208,6 +209,12 @@ export interface LeaderboardEntry {
   rank: number;
   player: PublicPlayer;
   value: number;
+}
+
+/** `GET /api/leaderboard`: the top entries, plus your own place (null when you aren't ranked). */
+export interface LeaderboardResponse {
+  entries: LeaderboardEntry[];
+  me: LeaderboardEntry | null;
 }
 
 export interface Badge {

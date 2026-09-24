@@ -53,6 +53,8 @@ describe('StatsScreen', () => {
     expect(within(bob).getByRole('img', { name: 'King of hearts' })).toBeInTheDocument();
     const carol = within(opponents).getByText('Carol').closest('li')!;
     expect(within(carol).getAllByRole('img', { name: 'Face-down card' })).toHaveLength(2);
+    // Face-down cards use the back the opponent played that hand with.
+    expect(carol.querySelectorAll('[data-card-back="back-navy"]')).toHaveLength(2);
     expect(within(carol).getByText('Folded')).toBeInTheDocument();
     expect(within(hand).getByText('+600')).toBeInTheDocument();
     expect(within(hand).getByText(/to You, pair of aces/)).toBeInTheDocument();

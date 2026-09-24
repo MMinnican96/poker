@@ -48,5 +48,13 @@ describe('buildHistory', () => {
       ['b', -50, false, 'folded'],
     ]);
     expect(rec.pots).toEqual([{ amount: 100, winnerIds: ['a'], handLabel: null }]);
+    expect(rec.players.map((p) => p.cardBack)).toEqual([undefined, undefined]);
+  });
+
+  it('records the card back each player had equipped', () => {
+    const h = setupHand({ players: [['a', 0, 1000], ['b', 1, 1000]], buttonSeat: 0 });
+    play(h, ['a', 'raise', 200], ['b', 'fold']);
+    const rec = buildHistory(h.state, TABLE, { a: 'back-navy', b: 'back-classic' });
+    expect(rec.players.map((p) => [p.id, p.cardBack])).toEqual([['a', 'back-navy'], ['b', 'back-classic']]);
   });
 });

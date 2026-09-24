@@ -1,9 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
 import { act, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { ChatMessage } from '@poker/shared';
+import { DEFAULT_COSMETICS, type ChatMessage } from '@poker/shared';
+import { frameVisual } from '../../cosmetics';
 import { makeLobby, makeMember, renderWithClient } from '../../test/harness';
-import { makeConversation, makeMessage, makeProfile } from '../fixtures';
+import { makeConversation, makeMessage, makeProfile, makePublic } from '../fixtures';
 import { MessagesScreen, PAGE_SIZE } from './MessagesScreen';
 
 const CH = 'dm:p1:p2';
@@ -104,6 +105,24 @@ describe('MessagesScreen', () => {
     const row = within(list).getByRole('button', { name: /hi Bob/ });
     expect(row).toHaveTextContent('Bob');
     expect(row).not.toHaveTextContent('Player');
+  });
+
+  it("draws a partner's frame from the conversation list when they aren't in the room", async () => {
+    const partner = makePublic('p2', 'Bob', { level: 9, cosmetics: { ...DEFAULT_COSMETICS, frame: 'frame-brass' } });
+    renderWithClient(<MessagesScreen />, { api: { conversations: async () => [makeConversation({ partner })] } });
+    const list = await screen.findByRole('navigation', { name: 'Conversations' });
+    const row = within(list).getByRole('button', { name: /Bob/ });
+    expect(row.querySelector('[data-frame]')).toHaveAttribute('data-frame', frameVisual('frame-brass').style);
+    expect(frameVisual('frame-brass').style).not.toBe(frameVisual(DEFAULT_COSMETICS.frame).style);
+  });
+
+  it('prefers the live room frame for partners who are here', async () => {
+    const partner = makePublic('p2', 'Bob', { cosmetics: { ...DEFAULT_COSMETICS, frame: 'frame-brass' } });
+    const { store } = renderWithClient(<MessagesScreen />, { api: { conversations: async () => [makeConversation({ partner })] } });
+    act(() => store.dispatch({ type: 'lobby_state', lobby: makeLobby({ members: [makeMember('p1', 'Alice'), makeMember('p2', 'Bob')] }) }));
+    const list = await screen.findByRole('navigation', { name: 'Conversations' });
+    const row = within(list).getByRole('button', { name: /Bob/ });
+    expect(row.querySelector('[data-frame]')).toHaveAttribute('data-frame', frameVisual(DEFAULT_COSMETICS.frame).style);
   });
 
   it('names a live conversation with a room member from the room', async () => {

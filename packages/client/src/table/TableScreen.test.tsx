@@ -16,7 +16,7 @@ function seatPlayer(id: string, name: string, patch: Partial<SeatPlayer> = {}): 
 function hand(patch: Partial<HandView> = {}): HandView {
   return {
     handNumber: 7, street: 'pre-flop', board: [], pots: [], potTotal: 75, buttonSeat: 0, smallBlindSeat: 2, bigBlindSeat: 4,
-    toActSeat: 0, actionEndsAt: null, currentBet: 50, result: null, ...patch,
+    toActSeat: 0, actionStartedAt: null, actionEndsAt: null, currentBet: 50, result: null, ...patch,
   };
 }
 
@@ -362,6 +362,26 @@ describe('clicks and confirms', () => {
     await userEvent.click(screen.getByRole('button', { name: /Back to the table/ }));
     expect(screen.queryByRole('dialog', { name: 'Table menu' })).toBeNull();
     expect(screen.getByRole('group', { name: 'Your action' })).toBeInTheDocument();
+  });
+
+  it("sizes the turn ring from the server's turn start, not the table's timer", () => {
+    const now = Date.now();
+    // Half of a 10 s turn is left. Measured against the 30 s table timer it would look nearly out.
+    const view = running({ hand: { toActSeat: 2, actionStartedAt: now - 5_000, actionEndsAt: now + 5_000 } });
+    view.rules = { ...view.rules, turnSeconds: 30 };
+    setup(view);
+    const ring = screen.getByRole('timer', { name: /Bob has/ });
+    expect(ring.querySelector('.tbl-ring')).toHaveClass('stroke-brass');
+    expect(ring.querySelector('.tbl-ring')).not.toHaveClass('stroke-chip-light');
+  });
+
+  it('falls back to the table timer when the turn start is unknown', () => {
+    const now = Date.now();
+    const view = running({ hand: { toActSeat: 2, actionStartedAt: null, actionEndsAt: now + 5_000 } });
+    view.rules = { ...view.rules, turnSeconds: 30 };
+    setup(view);
+    // 5 s of 30 s is under a quarter: the ring turns chip red.
+    expect(screen.getByRole('timer', { name: /Bob has/ }).querySelector('.tbl-ring')).toHaveClass('stroke-chip-light');
   });
 
   it('toggles the seat menu shut when the same seat is clicked again', async () => {

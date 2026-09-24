@@ -190,6 +190,26 @@ describe('chat', () => {
     for (const x of [a, b, c]) x.close();
   });
 
+  it("lists a partner's level and equipped cosmetics with the conversation", async () => {
+    const [a, b] = [await player(server, 'Framed'), await player(server, 'Reader')];
+    expect(await http(server, '/shop/purchase', { token: a.token, body: { itemId: 'frame-brass', nonce: `nonce-frame-${a.id}` } }))
+      .toMatchObject({ status: 200 });
+    expect(await http(server, '/shop/equip', { token: a.token, body: { slot: 'frame', itemId: 'frame-brass' } }))
+      .toMatchObject({ status: 200 });
+    // Neither is in a room: the list alone has to carry the frame.
+    expect(await a.send('chat_send', { to: { dm: b.id }, body: 'look at my frame' })).toEqual({ ok: true });
+    const conv = await http<Conversation[]>(server, '/messages/conversations', { token: b.token });
+    expect(conv.body[0].partner).toEqual({
+      id: a.id,
+      name: a.session.me.name,
+      avatarUrl: expect.any(String),
+      level: 1,
+      cosmetics: expect.objectContaining({ frame: 'frame-brass' }),
+    });
+    a.close();
+    b.close();
+  });
+
   it('never broadcasts a malformed DM to the room', async () => {
     const room = newRoom();
     const [a, c] = [await player(server, 'Leaky'), await player(server, 'Listener')];

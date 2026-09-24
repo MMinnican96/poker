@@ -7,6 +7,7 @@ import {
   type PublicPlayer,
   type RoomMember,
   type TableFx,
+  type TableLeft,
   type TableRules,
   type TableView,
 } from '@poker/shared';
@@ -18,7 +19,7 @@ import { TableRoom, type Result, type TableTiming } from './table-room.js';
 export interface Outbox {
   lobby(instanceId: string, state: LobbyState): void;
   tableView(instanceId: string, playerId: string, view: TableView): void;
-  tableLeft(instanceId: string, playerId: string, reason: string): void;
+  tableLeft(instanceId: string, playerId: string, left: TableLeft): void;
   fx(instanceId: string, fx: TableFx): void;
   activity(instanceId: string, event: ActivityEvent): void;
   notice(playerId: string, notice: Notice): void;
@@ -141,7 +142,7 @@ export class InstanceRoom {
           this.deps.outbox.tableView(this.instanceId, id, view);
         },
         fx: (fx) => this.deps.outbox.fx(this.instanceId, fx),
-        left: (id, reason) => this.deps.outbox.tableLeft(this.instanceId, id, reason),
+        left: (id, left) => this.deps.outbox.tableLeft(this.instanceId, id, left),
         changed: () => this.broadcastLobby(),
         balanceChanged: (id) => this.deps.outbox.refreshMe(id),
         notice: (id, n) => this.deps.outbox.notice(id, { id: randomUUID(), ...n }),
@@ -196,6 +197,7 @@ export class InstanceRoom {
 /** One InstanceRoom per Discord Activity instance. */
 export class RoomManager {
   private readonly rooms = new Map<string, InstanceRoom>();
+  private shuttingDown: Promise<void> | null = null;
 
   constructor(private readonly deps: RoomDeps) {}
 
@@ -231,10 +233,14 @@ export class RoomManager {
   /**
    * Graceful shutdown: close every table, cashing everyone out at their
    * between-hands stack (a hand in progress is voided). Call before `dispose()`.
+   * Idempotent: later calls share the first call's promise.
    */
-  async shutdown(): Promise<void> {
-    const results = await Promise.allSettled([...this.rooms.values()].map((r) => r.shutdown()));
-    for (const r of results) if (r.status === 'rejected') console.error('[rooms] shutdown failed', r.reason);
+  shutdown(): Promise<void> {
+    this.shuttingDown ??= (async () => {
+      const results = await Promise.allSettled([...this.rooms.values()].map((r) => r.shutdown()));
+      for (const r of results) if (r.status === 'rejected') console.error('[rooms] shutdown failed', r.reason);
+    })();
+    return this.shuttingDown;
   }
 
   dispose(): void {

@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { openDatabase } from './db/client.js';
 import { createServices } from './services/index.js';
 import { LEASE_RECOVERY_MS, ServerLease } from './services/leases.js';
-import { createApp } from './app.js';
+import { createApp, SHUTDOWN_CASHOUT_MS } from './app.js';
 import { mockAuthAllowed, resolveSecret } from './auth.js';
 import { isInActivityInstance } from './discord.js';
 
@@ -54,8 +54,6 @@ app.http.listen(PORT, () => {
   console.log(`[server] listening on port ${PORT}${mockAuthAllowed() ? ' (mock sign-in enabled)' : ''}`);
 });
 
-/** Longest we wait for tables to cash out before exiting anyway. */
-const SHUTDOWN_CASHOUT_MS = 15_000;
 let shuttingDown = false;
 
 async function shutdown(signal: string) {
@@ -63,6 +61,8 @@ async function shutdown(signal: string) {
   shuttingDown = true;
   console.log(`[server] ${signal} — shutting down`);
   clearInterval(recoveryTimer);
+  // One cash-out budget for the whole stop: the wait here and app.close() share it.
+  const deadline = Date.now() + SHUTDOWN_CASHOUT_MS;
   try {
     // Cash everyone out (voiding hands in progress) while sockets can still be told.
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -77,7 +77,8 @@ async function shutdown(signal: string) {
   }
   // Dropping the lease makes any seat still open recoverable by the next process at once.
   await lease.release().catch((err) => console.error('[lease] release failed', err));
-  await app.close();
+  // Shutdown is idempotent, so this only waits on what's left of the budget.
+  await app.close({ cashoutTimeoutMs: Math.max(0, deadline - Date.now()) });
   await handle.close();
   process.exit(0);
 }

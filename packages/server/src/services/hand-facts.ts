@@ -17,6 +17,8 @@ export interface HandHistoryRecord {
     net: number;
     handLabel: string | null;
     result: 'won' | 'lost' | 'folded';
+    /** Card-back item the player had equipped (absent on rows from before it was stored). */
+    cardBack?: string;
   }[];
 }
 
@@ -101,7 +103,8 @@ function streetOf(boardCards: number): Street {
   return 'pre-flop';
 }
 
-export function buildHistory(state: HandState, tableId: string): HandHistoryRecord {
+/** `cardBacks` maps player id → equipped card-back item at hand time. */
+export function buildHistory(state: HandState, tableId: string, cardBacks: Record<string, string> = {}): HandHistoryRecord {
   const result = state.result;
   if (!result) throw new Error('Hand is not complete');
   return {
@@ -119,6 +122,7 @@ export function buildHistory(state: HandState, tableId: string): HandHistoryReco
         net: won - p.total,
         handLabel: result.shown[p.id]?.label ?? null,
         result: won > 0 ? 'won' : p.folded ? 'folded' : 'lost',
+        ...(cardBacks[p.id] ? { cardBack: cardBacks[p.id] } : {}),
       };
     }),
   };

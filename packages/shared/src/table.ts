@@ -187,7 +187,9 @@ export interface HandView {
   smallBlindSeat: number | null;
   bigBlindSeat: number;
   toActSeat: number | null;
-  /** Epoch ms when the acting player's time runs out. */
+  /** Epoch ms (server clock) when the acting player's turn started. */
+  actionStartedAt: number | null;
+  /** Epoch ms (server clock) when the acting player's time runs out. */
   actionEndsAt: number | null;
   currentBet: number;
   result: HandResultView | null;
@@ -237,6 +239,19 @@ export interface TableView {
   you: ViewerInfo;
   /** Server clock at send time, so clients can correct deadline countdowns. */
   serverNow: number;
+}
+
+/**
+ * Why you are no longer at the table: `left` (you left), `host-closed`,
+ * `abandoned` (every player left), `removed` (away too long), `shutdown`
+ * (server restart) or `not-member` (you asked for a table you aren't at).
+ */
+export type TableLeftCode = 'left' | 'host-closed' | 'abandoned' | 'removed' | 'shutdown' | 'not-member';
+
+export interface TableLeft {
+  /** Sentence-case explanation for the player. */
+  reason: string;
+  code: TableLeftCode;
 }
 
 /** Visual effect broadcast to the table. */

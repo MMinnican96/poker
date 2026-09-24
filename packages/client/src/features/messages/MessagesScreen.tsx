@@ -1,10 +1,12 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   CHAT_MAX_LENGTH,
+  DEFAULT_COSMETICS,
   dmChannel,
   dmPartner,
   type ChatMessage,
   type Conversation,
+  type RoomMember,
 } from '@poker/shared';
 import { useApi, useAppState, useChannel, useCommands, useLobby, useMe, useStore } from '../../app/client';
 import { timeAgo, useElementWidth, useNow } from '../../app/hooks';
@@ -37,6 +39,20 @@ const TWO_PANE_MIN = 620;
 
 type Partner = Conversation['partner'];
 
+/** A partner known only by name and avatar so far (level and cosmetics default until the server lists them). */
+const partnerFrom = (p: Pick<Partner, 'id' | 'name' | 'avatarUrl'> & Partial<Partner>): Partner => ({
+  level: 1,
+  cosmetics: DEFAULT_COSMETICS,
+  ...p,
+});
+
+/** A room member as a conversation partner (only the public fields). */
+const toPartner = (m: RoomMember): Partner => ({ id: m.id, name: m.name, avatarUrl: m.avatarUrl, level: m.level, cosmetics: m.cosmetics });
+
+/** The frame to draw: live from the room when they're here, else from the conversation list. */
+const frameOf = (partner: Partner, members: readonly Partner[] | undefined): string =>
+  (members?.find((m) => m.id === partner.id) ?? partner).cosmetics.frame;
+
 const EMPTY_DMS: Record<string, ChatMessage[]> = {};
 
 /**
@@ -61,8 +77,8 @@ function useConversationList(base: Conversation[] | undefined, meId: string, ext
         byChannel.set(channel, {
           channel,
           partner: fromThem
-            ? { id: partnerId, name: fromThem.senderName, avatarUrl: fromThem.senderAvatar }
-            : { id: partnerId, name: who?.name ?? 'Player', avatarUrl: who?.avatarUrl ?? '' },
+            ? partnerFrom({ ...who, id: partnerId, name: fromThem.senderName, avatarUrl: fromThem.senderAvatar })
+            : partnerFrom({ ...who, id: partnerId, name: who?.name ?? 'Player', avatarUrl: who?.avatarUrl ?? '' }),
           last: latest,
           unread: 0,
         });
@@ -111,14 +127,14 @@ export function MessagesScreen({ initialPartnerId }: MessagesScreenProps) {
     if (!needsLookup || !partnerId) return;
     let live = true;
     api.profile(partnerId).then(
-      (p) => live && setDraftPartner({ id: p.id, name: p.name, avatarUrl: p.avatarUrl }),
-      () => live && setDraftPartner({ id: partnerId, name: 'Player', avatarUrl: '' }),
+      (p) => live && setDraftPartner(partnerFrom({ id: p.id, name: p.name, avatarUrl: p.avatarUrl, level: p.level, cosmetics: p.cosmetics })),
+      () => live && setDraftPartner(partnerFrom({ id: partnerId, name: 'Player', avatarUrl: '' })),
     );
     return () => { live = false; };
   }, [needsLookup, partnerId, api]);
 
   const partner: Partner | null = partnerId
-    ? inList ?? (member ? { id: member.id, name: member.name, avatarUrl: member.avatarUrl } : draftPartner?.id === partnerId ? draftPartner : null)
+    ? inList ?? (member ? toPartner(member) : draftPartner?.id === partnerId ? draftPartner : null)
     : null;
   // Everyone we can name: people in the room, and partners opened here (who may have left since).
   const [opened, setOpened] = useState<Partner[]>([]);
@@ -126,7 +142,7 @@ export function MessagesScreen({ initialPartnerId }: MessagesScreenProps) {
     if (partner && partner.name !== 'Player') setOpened((list) => (list.some((p) => p.id === partner.id) ? list : [...list, partner]));
   }, [partner]);
   const knownPeople = useMemo<Partner[]>(
-    () => [...(lobby?.members ?? []).map((m) => ({ id: m.id, name: m.name, avatarUrl: m.avatarUrl })), ...opened],
+    () => [...(lobby?.members ?? []).map(toPartner), ...opened],
     [lobby?.members, opened],
   );
   const list = useConversationList(convos.data, me.id, partner && !inList ? partner : null, knownPeople);
@@ -211,7 +227,7 @@ function ConversationList({ list, activeId, meId, onOpen }: { list: Conversation
     <ul className="min-h-0 flex-1 overflow-y-auto p-1.5">
       {list.map((c) => {
         const active = c.partner.id === activeId;
-        const frame = lobby?.members.find((m) => m.id === c.partner.id)?.cosmetics.frame;
+        const frame = frameOf(c.partner, lobby?.members);
         const unread = active ? 0 : c.unread;
         return (
           <li key={c.channel}>
@@ -275,7 +291,7 @@ function Thread({ partner, showBack, onBack, onRead }: { partner: Partner; showB
   const listRef = useRef<HTMLOListElement>(null);
   const stick = useRef(true);
   const restore = useRef<number | null>(null);
-  const frame = lobby?.members.find((m) => m.id === partner.id)?.cosmetics.frame;
+  const frame = frameOf(partner, lobby?.members);
 
   const messages = useMemo(() => {
     const seen = new Set(live.map((m) => m.id));
