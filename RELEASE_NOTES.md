@@ -1,5 +1,83 @@
 # Release Notes
 
+## v0.2.0 — The back room (2026-09-24)
+
+A ground-up rebuild of Ratbag Poker Night: new poker engine, a chip bank that
+survives restarts, one persistent table per voice channel, and a lot more to do
+between hands.
+
+### New
+
+- **A table that stays open.** Whoever opens the table is the host and picks the
+  rules: blinds, optional ante, buy-in range, 2 to 9 seats, turn timer and the
+  felt. Anyone in the Activity can watch or take a seat with their own buy-in.
+  Once the host deals the first hand, hands keep coming while two or more
+  players are in.
+- **Sit out, top up, stand up, leave.** Changes you make mid-hand wait for the
+  hand to end, and one "Cancel all" undoes them. Miss two turns and you're sat
+  out until you tap "I'm back". If the host leaves, someone else takes over.
+- **Better table.** Seats rotate so you're always at the bottom; the layout
+  keeps name plates, bets, cards and the dealer button clear of each other from
+  a small Discord window to a phone to a big monitor. Side pots, a showdown
+  banner with the winning five highlighted, all-in run-outs dealt face up,
+  chips sliding to the winner, and your win celebration.
+- **Faster play.** Pre-actions (check/fold, check, call any), raise presets with
+  an honest "Max" vs "All-in", keyboard shortcuts (F, C, R), and a turn timer
+  that follows the server's clock.
+- **Leaderboard.** Net profit, bankroll, chips won, hands won, biggest pot,
+  hands played and level, weekly or all-time, with your own rank pinned.
+- **Stats.** Your profit over time, win rate, VPIP, PFR, aggression, showdown
+  record, best hands, and your recent hands with opponents' unshown cards kept
+  hidden.
+- **XP, levels and challenges.** XP for every hand, chip rewards at each level,
+  three daily and three weekly challenges, and a daily bonus that grows with
+  your streak.
+- **Shop.** Felts, card backs, avatar frames, titles, win celebrations, emote
+  packs and throwables (tomatoes, cheese, snowballs...). Everyone sees what you
+  equip.
+- **Profile cards.** A collectible card for every player: framed portrait,
+  level, bankroll, stat sheet, recent form and badges.
+- **Messages.** Room chat shared by the lobby and the table, plus direct
+  messages with unread counts.
+- **Emotes and throwables** at the table, and a room activity feed for big wins,
+  rare hands, level-ups and completed challenges.
+- **A new look.** Walnut, baize, card stock and brass, with the Ratbag crest
+  printed on the felt. Better contrast, full keyboard support, and reduced
+  motion respected throughout.
+
+### Fixed
+
+- Chips can no longer be lost, duplicated or double-spent. Chips at the table
+  are held in escrow in the database, not in memory, and every movement is
+  recorded in the ledger.
+- A server restart no longer wipes the chips on the table: players are cashed
+  out before it stops, and anything left behind by a crash is refunded
+  automatically.
+- A player with more chips pressing all-in against a smaller all-in now just
+  calls.
+- Uncalled bets are returned instead of padding the pot (and your stats).
+- An all-in that's less than a full raise no longer lets players who already
+  acted raise again.
+- Odd chips in a split pot go to the first winner left of the button.
+- Heads-up blinds and first-to-act are right, including when a blind is all-in.
+- The dealer button no longer skips or repeats seats when people leave.
+- Sign-in is verified by the server; nobody can claim to be someone else or
+  choose their own balance.
+
+### Upgrade notes (for the owner)
+
+- The database upgrades itself on the first boot: balances, the chip ledger and
+  lifetime stats are kept. XP, levels, shop items and challenges start at zero
+  for everyone. There's no more `db:push` step when deploying.
+- Deploy while nobody is at a table. From then on, restarts cash players out
+  cleanly; set `RAILWAY_DEPLOYMENT_DRAINING_SECONDS=20` on Railway so the server
+  has time to do it.
+- `JWT_SECRET` must be set in production. `VITE_SERVER_URL` is no longer used.
+- Local development needs no database: leave `DATABASE_URL` blank and the server
+  runs an embedded Postgres.
+
+---
+
 ## v0.1.0 — First release (2026-06-21)
 
 The first public cut of **Discord Poker** — a multiplayer Texas Hold'em game that

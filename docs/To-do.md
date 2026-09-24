@@ -6,24 +6,41 @@
 - Stat Tracking ✅
 - Lobby Design ✅
 - Spectate System ✅
-- Auto Choice Selection
-- Leaderboard
-- XP/Challenges - Levels. Could relate to unlocks etc.
-- Shop - Titles
+- Auto Choice Selection ✅ - pre-actions (check/fold, check, call any) fire on your turn
+- Leaderboard ✅ - weekly/all-time, 7 metrics, your own rank pinned
+- XP/Challenges - Levels. Could relate to unlocks etc. ✅ - level-up chip rewards, daily/weekly challenges, daily bonus streak, shop items locked by level
+- Shop - Titles ✅ - also felts, card backs, avatar frames, win celebrations, emote packs and throwables
 - Admin
-- Host/Player - Anyone can host a game
-- Player Status - 'In-Game, Ready, In Lobby. - Could expand to discord status as well.
-- Recent Acitivity
-- User Settings
-- Full Profile Pages
-- No table by default and whichever player selects Create Table is Host.
-- Reveal phase
-- Indicator for who is sat at the table ready. - Status in player list (already shown via Ready) of list under table settings.
+- Host/Player - Anyone can host a game ✅
+- Player Status - 'In-Game, Ready, In Lobby. ✅ - now In lobby / Playing / Watching. Could expand to discord status as well.
+- Recent Acitivity ✅ - room activity feed (big wins, rare hands, level-ups, challenges, tables)
+- User Settings - only sound (mute/volume) so far
+- Full Profile Pages ✅ - profile cards + Stats screen with profit chart and hand history
+- No table by default and whichever player selects Create Table is Host. ✅
+- Reveal phase ✅ - showdown banner, winning five highlighted, all-in run-outs face up
+- Indicator for who is sat at the table ready. ✅ - seat states + ready count on the table
+- Messages ✅ - room chat + DMs with unread counts
+
+## Next up / Ideas
+
+- Proper dead button / dead small blind rules (the button currently just moves to the next dealt-in seat)
+- Muck option at showdown (every live hand is shown automatically right now)
+- More than one table per Activity instance (lobby list of tables)
+- Decide whether VERIFY_ACTIVITY_INSTANCE should be on by default in production
+- Admin tools - grant/adjust chips, close a stuck table, look up the ledger for a player
+- Friends / Add Friend
+- Tournaments / Sit & Go (blind levels going up, payouts)
+- Achievements beyond the current badges
+- Mobile polish - tidy up the phone portrait table and dialogs
+- Guild and default Discord avatars show initials inside Discord (CSP) - proxy them through a URL mapping
+- Persist the room activity feed (it's in memory and lost on restart)
+- Discord rich presence / status ("Playing at The back room")
+- More User Settings - e.g. four-colour deck, auto-muck, reduce motion toggle in-app
 
 ## Game Engine
 
 - When a game is active it should be viewebale from the lobby. Only 1 game will ever be ongoing at a time so we don't need to implement a lobby list/multiple game support. Instead it should show the active game from the lobby so players can join in-progress games so they can either spectate the game or take part. When a player joins an active game they are automatically placed in spectate but should have the option once spectating the game to be able to queue to join next hand. We need to make sure we follow the rules of max players at table etc. ✅
-- When a player goes all in, if they lose the all in they should be removed from the table. If there is only 1 player remaining at the table the game should end and everyone should be returned to the lobby. If there are still more than 1 player at the table with chips the game should carry on without the player who has gone bust. The bust player should be removed from the game and sent back to the lobby - this action is just temporary as we will eventually implement a spectater player state which instead it will move the player to so they can watch the game with the remaining players but not take part. ✅
+- When a player goes all in, if they lose the all in they should be removed from the table. If there is only 1 player remaining at the table the game should end and everyone should be returned to the lobby. If there are still more than 1 player at the table with chips the game should carry on without the player who has gone bust. The bust player should be removed from the game and sent back to the lobby - this action is just temporary as we will eventually implement a spectater player state which instead it will move the player to so they can watch the game with the remaining players but not take part. ✅ - bust players now stay and watch, and can buy back in
 - Players should be able to Leave the table or enter spectate. If only one player remains at the table the next hand should not start until another player joins the table ✅
 
 ## Spectate/Leave Table/Join Table Requirements
@@ -35,11 +52,6 @@
 - If a player goes bust and runs out of chips during the game they should be automatically moved to spectate. ✅
 - Players at the table (in either spectate or playing) should be able to leave the table. Leaving the table should put the player back into the lobby ✅
 - If a player attempts to leave the table during a hand they are only moved from the table once the current hand finishes and not mid hand to avoid removing an active player during play (even if that player has folded) ✅
-- Players in spectate should be able to join the table if there is enough space to join. They must also have enough chips for the buy-in setting for the active table - if they do not have enough chips for the buy-in/too many players at at the table then Join Table should be greyed out and a hover over message explaining why. Players in spectate should be able to leave the table at any point in the hand. - Could only test buy in amount and not max players. ✅
+- Players in spectate should be able to join the table if there is enough space to join. They must also have enough chips for the buy-in setting for the active table - if they do not have enough chips for the buy-in/too many players at at the table then Join Table should be greyed out and a hover over message explaining why. Players in spectate should be able to leave the table at any point in the hand. ✅
 - If a player moves from playing to spectate the chip actions should account for this (cashout/bust depending on why they left the table). ✅
 - If all players leave the table to spectate, whoever remains in the game should be sent back to the lobby. ✅
-
-## Known Bugs
-
-- When a player goes all in, if a player follows who has more credits and ticks all in it puts them all in as well, whereas instead it should just call with the correct amount of chips.
-- The leave button on the table settings for players does not work - probably wsorth removing as leaving from lobby can be done via activity.
