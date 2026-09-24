@@ -1,6 +1,7 @@
 import { Suspense, useEffect, useState, type ReactNode } from 'react';
 import { useAppState } from '../app/client';
 import { useMediaQuery } from '../app/hooks';
+import { ErrorBoundary } from '../app/ErrorBoundary';
 import { lazyNamed, preloadWhenIdle } from '../app/lazy';
 import { useNav, type Section } from '../app/nav';
 import { CloseIcon, Drawer, IconButton, Spinner, cx } from '../ui';
@@ -77,9 +78,12 @@ export function Shell() {
       <div className="flex min-h-0 flex-1">
         {!phone && <NavBar orientation="rail" />}
         <main className={cx('@container min-w-0 flex-1 overflow-x-hidden overflow-y-auto', nav.section === 'table' && 'lamp-glow')} id="main">
-          <Suspense fallback={<SectionFallback />}>
-            <SectionView section={nav.section} messagesPartner={nav.messagesPartner} />
-          </Suspense>
+          {/* Keyed by section, so moving to another section clears a failure. */}
+          <ErrorBoundary key={nav.section} layout="section">
+            <Suspense fallback={<SectionFallback />}>
+              <SectionView section={nav.section} messagesPartner={nav.messagesPartner} />
+            </Suspense>
+          </ErrorBoundary>
         </main>
         {wide && (
           <aside aria-label="Room" className="flex w-80 shrink-0 flex-col border-l border-walnut-950 bg-walnut-800 tex-wood xl:w-[22rem]">

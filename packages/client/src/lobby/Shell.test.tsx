@@ -103,5 +103,11 @@ describe('Shell', () => {
     await sit();
     act(() => store.dispatch({ type: 'table_left', left: { code: 'shutdown', reason: 'The server is restarting.' } }));
     expect(screen.getByText('The server is restarting.')).toBeInTheDocument();
+
+    await sit();
+    const interrupted = 'The table was interrupted by a server problem.';
+    act(() => store.dispatch({ type: 'table_left', left: { code: 'interrupted', reason: interrupted } }));
+    expect(screen.getByRole('navigation', { name: 'Main' })).toBeInTheDocument();
+    expect(screen.getByText(interrupted)).toBeInTheDocument();
   });
 });

@@ -153,40 +153,55 @@ describe('StatsRepository', () => {
     expect(Object.fromEntries(hand.players.map((p) => [p.id, p.cardBack]))).toEqual({ [a]: 'back-classic', [b]: 'back-navy' });
   });
 
+  // The database may hold other tests' (or earlier runs') players, so these only
+  // assert on this test's own players and on ranks relative to the whole board.
+
+  /** `rank()` semantics: 1 + the number of entries strictly ahead. */
+  const expectedRank = (entries: { value: number }[], value: number) => 1 + entries.filter((e) => e.value > value).length;
+
   it('ranks leaderboards with shared ranks for ties', async () => {
     const s = svc();
     const ids = [await makePlayer(t.db, 'lb'), await makePlayer(t.db, 'lb'), await makePlayer(t.db, 'lb')];
     await t.db.update(players).set({ chipBalance: 1_000_000 }).where(eq(players.discordUserId, ids[0]));
     await t.db.update(players).set({ chipBalance: 1_000_000 }).where(eq(players.discordUserId, ids[1]));
     const top = await s.stats.leaderboard('bankroll', 'all', 3, ids[1]);
-    expect(top.entries.slice(0, 2).map((e) => e.rank)).toEqual([1, 1]);
-    expect(top.entries[0].value).toBe(1_000_000);
-    expect(top.me).toMatchObject({ rank: 1, value: 1_000_000, player: { id: ids[1] } });
+    expect(top.entries.length).toBeLessThanOrEqual(3);
+    expect(top.me).toMatchObject({ value: 1_000_000, player: { id: ids[1] } });
+    const tiedWith = (await s.stats.leaderboard('bankroll', 'all', 1, ids[0])).me!;
+    expect(tiedWith).toMatchObject({ rank: top.me!.rank, value: 1_000_000 });
+    const behind = (await s.stats.leaderboard('bankroll', 'all', 1, ids[2])).me!;
+    expect(behind.rank).toBeGreaterThan(top.me!.rank + 1);
+    // In the list itself, equal values share a rank and ranks follow rank() semantics.
+    const everyone = await s.stats.leaderboard('bankroll', 'all', 100_000);
+    for (const e of everyone.entries) expect(e.rank).toBe(expectedRank(everyone.entries, e.value));
+    expect(everyone.entries.filter((e) => ids.slice(0, 2).includes(e.player.id)).map((e) => e.rank))
+      .toEqual([top.me!.rank, top.me!.rank]);
 
     const table = randomUUID();
     await s.recorder.recordHand([fact(table, ids[2], 1, { result: 'won', chipsWon: 999_999, netResult: 999_999 })], history(table, 1, [ids[2]]));
-    const week = await s.stats.leaderboard('net_profit', 'week', 1, ids[0]);
-    expect(week.entries[0]).toMatchObject({ rank: 1, value: 999_999 });
-    expect(week.entries[0].player.id).toBe(ids[2]);
+    const week = await s.stats.leaderboard('net_profit', 'week', 1, ids[2]);
+    expect(week.entries).toHaveLength(1);
+    expect(week.me).toMatchObject({ value: 999_999, player: { id: ids[2] } });
     // No hands this week: not on the board.
-    expect(week.me).toBeNull();
+    expect((await s.stats.leaderboard('net_profit', 'week', 1, ids[0])).me).toBeNull();
   });
 
   it('finds your rank outside the limit, sharing ranks with ties', async () => {
     const s = svc();
     const ids: string[] = [];
     for (let i = 0; i < 5; i++) ids.push(await makePlayer(t.db, 'rk'));
-    // Weekly nets far from any other test's, so nobody else ranks in between.
     const nets = [9_000_000, 5_000_000, 5_000_000, 4_000_000, -9_000_000];
     const table = randomUUID();
     for (const [i, id] of ids.entries()) {
       await s.recorder.recordHand([fact(table, id, i + 1, { netResult: nets[i], result: nets[i] > 0 ? 'won' : 'lost', chipsWon: Math.max(0, nets[i]) })], history(table, i + 1, [id]));
     }
-    // Others' facts may exist in this shared database, so compare relative ranks only.
-    const all = await s.stats.leaderboard('net_profit', 'week', 100);
+    const all = await s.stats.leaderboard('net_profit', 'week', 100_000);
     const rankOf = (id: string) => all.entries.find((e) => e.player.id === id)!.rank;
     expect(rankOf(ids[1])).toBe(rankOf(ids[2]));
-    expect(rankOf(ids[3])).toBe(rankOf(ids[1]) + 2);
+    for (const [i, id] of ids.entries()) expect(rankOf(id)).toBe(expectedRank(all.entries, nets[i]));
+    // Everyone tied at 5M sits between our 5M and 4M players.
+    const tiedAt5m = all.entries.filter((e) => e.value === 5_000_000).length;
+    expect(rankOf(ids[3])).toBe(rankOf(ids[1]) + tiedAt5m + all.entries.filter((e) => e.value > 4_000_000 && e.value < 5_000_000).length);
 
     const top1 = await s.stats.leaderboard('net_profit', 'week', 1, ids[4]);
     expect(top1.entries).toHaveLength(1);

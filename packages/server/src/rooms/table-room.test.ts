@@ -490,3 +490,79 @@ describe('server shutdown', () => {
     expect(await h.balance(1)).toBe(10_000 + 25);
   });
 });
+
+describe('slow hand recording', () => {
+  it('does not hold up the next hand, and settled() still waits for it', async () => {
+    const h = await setup(2);
+    const recorder = h.services.recorder as unknown as { recordHand: (...args: unknown[]) => Promise<unknown> };
+    const original = recorder.recordHand.bind(h.services.recorder);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    let recorded = 0;
+    recorder.recordHand = async (...args: unknown[]) => {
+      await gate;
+      const out = await original(...args);
+      recorded += 1;
+      return out;
+    };
+    await h.seat(0, 0, 2000);
+    await h.seat(1, 1, 2000);
+    h.table.start(h.ids[0]);
+    await waitFor(() => h.toAct() !== null);
+    h.table.act(h.toAct()!, { type: 'fold' });
+    // Hand 2 is dealt while hand 1 is still being recorded.
+    await waitFor(() => h.view(0).handsDealt >= 2 && h.toAct() !== null, 3000, 'second hand');
+    expect(recorded).toBe(0);
+    // Chips were still checkpointed in order.
+    expect((await h.services.bank.escrowed(h.ids[0])) + (await h.services.bank.escrowed(h.ids[1]))).toBe(4000);
+    const settled = h.table.settled();
+    release();
+    await settled;
+    expect(recorded).toBe(1);
+    expect((await h.services.stats.summary(h.ids[0])).handsPlayed).toBe(1);
+  });
+});
+
+describe('rule changes racing a buy-in', () => {
+  it('cannot remove a seat a buy-in in flight has reserved', async () => {
+    const h = await setup(2, { rules: { maxSeats: 6 } });
+    await h.join(1);
+    slow(h, 'buyIn', 60);
+    const seating = h.table.takeSeat(h.ids[1], 5, 2000);
+    await waitFor(() => (h.table as unknown as { reserved: Set<number> }).reserved.has(5), 1000, 'reservation');
+    expect(await h.table.updateRules(h.ids[0], { maxSeats: 4 }))
+      .toEqual({ ok: false, error: 'Someone is sitting in a seat that would be removed.' });
+    expect(await seating).toEqual({ ok: true });
+    expect(h.view(1).seats[5].player?.id).toBe(h.ids[1]);
+  });
+});
+
+describe('abandoning a table (lease lost)', () => {
+  it('drops everyone without moving chips, voiding the hand, and lets an in-flight buy-in land first', async () => {
+    const h = await setup(3);
+    await h.seat(0, 0, 2000);
+    await h.seat(1, 1, 3000);
+    h.table.start(h.ids[0]);
+    await waitFor(() => h.toAct() !== null);
+    h.table.act(h.toAct()!, { type: 'raise', amount: 500 });
+    await h.join(2);
+    slow(h, 'buyIn', 40);
+    const seating = h.table.takeSeat(h.ids[2], 2, 1500);
+    await waitFor(() => (h.table as unknown as { reserved: Set<number> }).reserved.has(2), 1000, 'buy-in in flight');
+    await h.table.abandon();
+    expect(await seating).toEqual({ ok: true });
+    expect(h.closed).toBe(true);
+    expect(h.table.isClosed).toBe(true);
+    expect(h.left.map((l) => l.code)).toEqual(['interrupted', 'interrupted', 'interrupted']);
+    expect(new Set(h.left.map((l) => l.playerId))).toEqual(new Set(h.ids));
+    // Nothing was cashed out: the seats stay in escrow at their last checkpoint for recovery.
+    expect(await h.services.bank.escrowed(h.ids[0])).toBe(2000);
+    expect(await h.services.bank.escrowed(h.ids[1])).toBe(3000);
+    expect(await h.services.bank.escrowed(h.ids[2])).toBe(1500);
+    expect(h.table.act(h.ids[1], { type: 'fold' })).toMatchObject({ ok: false });
+    expect(await h.table.takeSeat(h.ids[0], 3, 2000)).toMatchObject({ ok: false });
+    // Recovery then refunds them (these seats carry no lease, like a dead process's).
+    await h.services.bank.recoverOpenSeats();
+    for (const i of [0, 1, 2]) expect(await h.balance(i)).toBe(10_000);
+  });
+});

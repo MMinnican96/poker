@@ -81,6 +81,12 @@ export function createApp(opts: AppOptions): App {
   if (opts.clientDist && fs.existsSync(opts.clientDist)) {
     const dist = opts.clientDist;
     app.use(express.static(dist, { index: false, maxAge: '1h' }));
+    // A missing build asset is a 404, never the app shell: a client still running
+    // an older build then fails its chunk import cleanly (and can offer a reload)
+    // instead of trying to run index.html as JavaScript.
+    app.use('/assets', (_req, res) => {
+      res.status(404).type('text/plain').send('Not found');
+    });
     // SPA fallback for anything that isn't the API or Socket.io.
     app.get(/^(?!\/api|\/socket\.io).*/, (_req, res) => res.sendFile(path.join(dist, 'index.html')));
     console.log(`[server] serving client from ${dist}`);

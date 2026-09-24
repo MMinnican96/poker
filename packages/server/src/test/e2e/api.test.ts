@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { ChallengeStatus, LeaderboardResponse, PlayerSelf, ProfileCard } from '@poker/shared';
 import jwt from 'jsonwebtoken';
@@ -129,6 +132,34 @@ describe('misc routes', () => {
   });
 });
 
+describe('serving the built client', () => {
+  it('serves assets and the app shell, but 404s a missing asset instead of sending index.html', async () => {
+    const dist = fs.mkdtempSync(path.join(os.tmpdir(), 'poker-dist-'));
+    fs.mkdirSync(path.join(dist, 'assets'));
+    fs.writeFileSync(path.join(dist, 'index.html'), '<!doctype html><title>shell</title>');
+    fs.writeFileSync(path.join(dist, 'assets', 'app-abc123.js'), 'export const ok = 1;');
+    const own = await startServer(t.db, { clientDist: dist });
+    try {
+      const asset = await fetch(`${own.origin}/assets/app-abc123.js`);
+      expect(asset.status).toBe(200);
+      expect(await asset.text()).toContain('export const ok');
+      // A chunk from an older build: a clean 404 the client can recover from.
+      const stale = await fetch(`${own.origin}/assets/TableScreen-old999.js`);
+      expect(stale.status).toBe(404);
+      expect(await stale.text()).not.toContain('<title>shell</title>');
+      // Client-side routes still get the app shell; the API never does.
+      const shell = await fetch(`${own.origin}/some/route`);
+      expect(shell.status).toBe(200);
+      expect(await shell.text()).toContain('<title>shell</title>');
+      const api = await fetch(`${own.origin}/api/nope`);
+      expect(api.headers.get('content-type')).toMatch(/json/);
+    } finally {
+      await own.close();
+      fs.rmSync(dist, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('leaderboard, profiles, stats', () => {
   it('validates the leaderboard metric', async () => {
     const { token } = await signIn(server, uniqueName('Board'));
@@ -154,21 +185,24 @@ describe('leaderboard, profiles, stats', () => {
   });
 
   it('includes your own rank even when you are outside the returned rows', async () => {
+    // The database may be shared with other tests (or earlier runs): outbid everyone on it.
+    const richest = await server.services.stats.leaderboard('bankroll', 'all', 1);
+    const top1 = Math.max(0, ...richest.entries.map((e) => e.value)) + 1_000_000;
     const rich = await signIn(server, uniqueName('Rich'));
     const poorer = await signIn(server, uniqueName('Poorer'));
-    await t.db.update(players).set({ chipBalance: 50_000_000 }).where(eq(players.discordUserId, rich.me.id));
+    await t.db.update(players).set({ chipBalance: top1 }).where(eq(players.discordUserId, rich.me.id));
     await t.db.update(players).set({ chipBalance: 5 }).where(eq(players.discordUserId, poorer.me.id));
 
     const top = await http<LeaderboardResponse>(server, '/leaderboard?metric=bankroll&limit=1', { token: poorer.token });
     expect(top.status).toBe(200);
-    expect(top.body.entries).toEqual([expect.objectContaining({ rank: 1, value: 50_000_000, player: expect.objectContaining({ id: rich.me.id }) })]);
+    expect(top.body.entries).toEqual([expect.objectContaining({ rank: 1, value: top1, player: expect.objectContaining({ id: rich.me.id }) })]);
     const me = top.body.me!;
     expect(me).toMatchObject({ value: 5, player: { id: poorer.me.id, name: poorer.me.name } });
-    // Your rank agrees with the full list.
-    const all = await http<LeaderboardResponse>(server, '/leaderboard?metric=bankroll&limit=100', { token: poorer.token });
-    const listed = all.body.entries.find((e) => e.player.id === poorer.me.id);
-    if (listed) expect(listed.rank).toBe(me.rank);
-    expect(me.rank).toBe(1 + all.body.entries.filter((e) => e.value > 5).length);
+    // Your rank agrees with the whole board (the API caps its list at 100 rows).
+    const board = await server.services.stats.leaderboard('bankroll', 'all', 1_000_000);
+    const listed = board.entries.find((e) => e.player.id === poorer.me.id);
+    expect(listed?.rank).toBe(me.rank);
+    expect(me.rank).toBe(1 + board.entries.filter((e) => e.value > 5).length);
 
     // The richest player sees themselves at the top.
     const mine = await http<LeaderboardResponse>(server, '/leaderboard?metric=bankroll&limit=1', { token: rich.token });

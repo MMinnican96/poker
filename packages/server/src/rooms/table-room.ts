@@ -74,6 +74,10 @@ export const LEFT = {
   abandoned: { code: 'abandoned', reason: 'Everyone left the table.' },
   removed: { code: 'removed', reason: 'You were away too long, so your chips went back to your bankroll.' },
   shutdown: { code: 'shutdown', reason: 'The server is restarting. Your chips are back in your bankroll.' },
+  interrupted: {
+    code: 'interrupted',
+    reason: 'The table was interrupted by a server problem. Your chips from before the last hand are going back to your bankroll.',
+  },
 } as const satisfies Record<string, TableLeft>;
 
 export type Result = { ok: true } | { ok: false; error: string };
@@ -105,6 +109,11 @@ export interface TableDeps {
   clock?: () => number;
   random?: RandomInt;
   log?: (message: string, err?: unknown) => void;
+  /**
+   * Why chips can't be moved onto tables right now (server restarting, lease
+   * lost), or null. Checked before every buy-in and top-up.
+   */
+  gate?: () => string | null;
 }
 
 interface Member {
@@ -137,6 +146,8 @@ export class TableRoom {
   private readonly members = new Map<string, Member>();
   private readonly reserved = new Set<number>();
   private readonly serial = new Serial();
+  /** Stats/XP/challenge recording, kept off the table queue (see conclude()). */
+  private readonly recordings = new Serial();
   private readonly fxLimit: RateLimiter;
   private readonly timing: TableTiming;
   private readonly clock: () => number;
@@ -171,7 +182,9 @@ export class TableRoom {
     this.clock = deps.clock ?? Date.now;
     this.log = deps.log ?? ((m, e) => console.error(`[table] ${m}`, e ?? ''));
     this.fxLimit = new RateLimiter(3, 4000, this.clock);
-    this.sweepTimer = setInterval(() => void this.sweep(), this.timing.sweepMs);
+    this.sweepTimer = setInterval(() => {
+      this.sweep().catch((err) => this.log('sweep failed', err));
+    }, this.timing.sweepMs);
     this.sweepTimer.unref?.();
   }
 
@@ -248,6 +261,8 @@ export class TableRoom {
   async takeSeat(playerId: string, seat: number, buyIn: number): Promise<Result> {
     return this.serial.run(async () => {
       if (this.closed || this.closing) return fail('This table is closing.');
+      const blocked = this.deps.gate?.();
+      if (blocked) return fail(blocked);
       const m = this.members.get(playerId);
       if (!m) return fail('Join the table first.');
       if (m.role === 'seated') return fail("You're already seated.");
@@ -304,6 +319,8 @@ export class TableRoom {
     // Checked and applied in the queue, so concurrent top-ups see each other and
     // a hand can't be dealt while the chips are moving.
     return this.serial.run(async () => {
+      const blocked = this.deps.gate?.();
+      if (blocked) return fail(blocked);
       const m = this.members.get(playerId);
       if (!m || m.role !== 'seated') return fail('Take a seat first.');
       if (this.liveStack(m) + m.pendingTopUp + amount > this.rules.maxBuyIn) {
@@ -416,7 +433,8 @@ export class TableRoom {
     if (late) return late;
     const r = validateRules(patch, this.rules);
     if (!r.ok) return r;
-    const highest = Math.max(-1, ...[...this.members.values()].map((m) => m.seat ?? -1));
+    // Seats held by a buy-in still in flight count too.
+    const highest = Math.max(-1, ...[...this.members.values()].map((m) => m.seat ?? -1), ...this.reserved);
     if (r.rules.maxSeats <= highest) return fail('Someone is sitting in a seat that would be removed.');
     this.rules = r.rules;
     this.broadcast();
@@ -649,12 +667,17 @@ export class TableRoom {
     });
     const hold = result.wentToShowdown ? this.timing.showdownMs : this.timing.foldWinMs;
 
+    // The checkpoint stays in the queue: chip movements must apply in order.
     const persisted = this.serial.run(async () => {
       try {
         await this.deps.bank.checkpoint(state.handNumber, stacks);
       } catch (err) {
         this.log('checkpoint failed', err);
       }
+    });
+    // Stats, XP and challenges are recorded off the queue (in their own ordered
+    // queue), so a slow database doesn't hold up the next deal, seat or leave.
+    void this.recordings.run(async () => {
       try {
         const outcome = await this.deps.recorder.recordHand(facts, history);
         for (const up of outcome.levelUps) {
@@ -669,7 +692,7 @@ export class TableRoom {
         this.log('recording the hand failed', err);
       }
       for (const p of state.players) this.deps.hooks.balanceChanged(p.id);
-    });
+    }).catch((err) => this.log('recording the hand failed', err));
     this.announce(hand);
 
     await Promise.all([persisted, sleep(hold)]);
@@ -792,7 +815,9 @@ export class TableRoom {
           this.retryCashouts.push({ seatId, playerId: id, stack });
         }
       }
-      void this.deps.recorder.recordSession(id, this.clock() - m.seatedAt).catch((err) => this.log('session record failed', err));
+      const playMs = this.clock() - m.seatedAt;
+      void this.recordings.run(() => this.deps.recorder.recordSession(id, playMs))
+        .catch((err) => this.log('session record failed', err));
       m.role = 'spectator';
       m.seat = null;
       m.seatId = null;
@@ -834,7 +859,7 @@ export class TableRoom {
     }
     const seatedCount = [...this.members.values()].filter((m) => m.role === 'seated').length;
     if (this.members.size === 0 || (this.status === 'running' && seatedCount === 0 && !this.hand)) {
-      void this.closeNow(LEFT.abandoned);
+      this.closeNow(LEFT.abandoned).catch((err) => this.log('closing the table failed', err));
       return;
     }
     this.broadcast();
@@ -869,6 +894,36 @@ export class TableRoom {
     }
     if (this.hand && this.hand.state.phase !== 'complete') this.hand = null;
     await this.closeNow(LEFT.shutdown);
+    // Let hand recording finish before the database goes away.
+    await this.recordings.idle();
+  }
+
+  /**
+   * Drop the table without moving any chips: this process lost its server
+   * lease, so recovery has refunded (or will refund) every open seat from its
+   * last checkpoint — cashing out here too would be wrong. A hand in progress
+   * is voided and everyone is sent back to the lobby.
+   */
+  async abandon(left: TableLeft = LEFT.interrupted): Promise<void> {
+    if (this.closed) {
+      await this.serial.idle();
+      return;
+    }
+    this.closed = true;
+    this.clearTimers();
+    if (this.hand && this.hand.state.phase !== 'complete') this.hand = null;
+    // In the queue, so a buy-in already in flight lands first (its seat carries
+    // the lost lease and is refunded by recovery like the rest).
+    await this.serial.run(() => {
+      this.retryCashouts.length = 0;
+      for (const m of [...this.members.values()]) {
+        this.members.delete(m.player.id);
+        this.deps.hooks.left(m.player.id, left);
+        if (m.role === 'seated') this.deps.hooks.balanceChanged(m.player.id);
+      }
+      this.reserved.clear();
+    });
+    this.deps.hooks.closed();
   }
 
   /** Stop timers (tests). Does not cash anyone out. */
@@ -877,9 +932,10 @@ export class TableRoom {
     this.clearTimers();
   }
 
-  /** Resolves once queued bank work has finished (tests). */
-  settled(): Promise<void> {
-    return this.serial.idle();
+  /** Resolves once queued bank work and hand recording have finished (tests). */
+  async settled(): Promise<void> {
+    await this.serial.idle();
+    await this.recordings.idle();
   }
 
   private clearTimers(): void {

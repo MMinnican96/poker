@@ -204,17 +204,15 @@ describe('Bank', () => {
       await me.release();
     });
 
-    it('a heartbeat keeps a lease alive, and re-creates it if it was deleted', async () => {
+    it('a heartbeat keeps a lease alive; releasing it makes its seats recoverable at once', async () => {
       const lease = new ServerLease(t.db);
       await lease.register();
-      await t.db.update(serverLeases).set({ heartbeatAt: new Date(Date.now() - 5 * 60_000) }).where(eq(serverLeases.id, lease.id));
       const id = await makePlayer(t.db);
       await buy(new Bank(t.db, lease.id), randomUUID(), id, 1000);
+      // Old, but not yet stale: a heartbeat refreshes it and recovery leaves it be.
+      await t.db.update(serverLeases).set({ heartbeatAt: new Date(Date.now() - 20_000) }).where(eq(serverLeases.id, lease.id));
       await lease.heartbeat();
-      await new Bank(t.db, randomUUID()).recoverOpenSeats();
-      expect(await new Bank(t.db).escrowed(id)).toBe(1000);
-      await t.db.delete(serverLeases).where(eq(serverLeases.id, lease.id));
-      await lease.heartbeat();
+      expect(lease.isHeld).toBe(true);
       await new Bank(t.db, randomUUID()).recoverOpenSeats();
       expect(await new Bank(t.db).escrowed(id)).toBe(1000);
       await lease.release();

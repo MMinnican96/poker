@@ -1,5 +1,6 @@
 import { Suspense, createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
 import { Modal, Spinner } from '../ui';
+import { ErrorBoundary, LoadFailed } from './ErrorBoundary';
 import { lazyNamed } from './lazy';
 
 /** Loaded the first time a profile card opens. */
@@ -69,9 +70,18 @@ export function ProfileCardProvider({ children }: { children: ReactNode }) {
     <ProfileContext.Provider value={value}>
       {children}
       {playerId && (
-        <Suspense fallback={<ProfileCardFallback onClose={close} />}>
-          <ProfileCardModal key={playerId} playerId={playerId} onClose={close} />
-        </Suspense>
+        <ErrorBoundary
+          key={playerId}
+          fallback={({ retry, reload }) => (
+            <Modal open onClose={close} tone="paper" size="sm" hideHeader title="Player profile card">
+              <LoadFailed layout="inline" onRetry={retry} onReload={reload} />
+            </Modal>
+          )}
+        >
+          <Suspense fallback={<ProfileCardFallback onClose={close} />}>
+            <ProfileCardModal playerId={playerId} onClose={close} />
+          </Suspense>
+        </ErrorBoundary>
       )}
     </ProfileContext.Provider>
   );

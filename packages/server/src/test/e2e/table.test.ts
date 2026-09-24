@@ -18,6 +18,7 @@ import {
   type Strategy,
   type TestClient,
   type TestServer,
+  uniqueRoom,
 } from './helpers.js';
 
 const t = useTestDb();
@@ -30,8 +31,7 @@ afterAll(async () => {
   await server?.close();
 });
 
-let roomCounter = 0;
-const newRoom = () => `inst-table-${++roomCounter}`;
+const newRoom = () => uniqueRoom('inst-table');
 
 const RULES = { name: 'E2E table', smallBlind: 25, bigBlind: 50, minBuyIn: 1000, maxBuyIn: 5000, maxSeats: 6 };
 const cardJson = (c: Card) => JSON.stringify(c);
@@ -166,6 +166,8 @@ describe('a full table over sockets', () => {
     }
 
     // --- history: /me/hands shows your own cards and only what was tabled
+    // (hands are recorded off the table's queue, so wait for the last one to land)
+    await server.app.realtime.rooms.get(room)!.currentTable!.settled();
     const hands = await http<HandHistoryView[]>(server, '/me/hands', { token: a.token });
     expect(hands.status).toBe(200);
     const byNumber = new Map(hands.body.map((h) => [h.handNumber, h]));

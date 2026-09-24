@@ -5,15 +5,33 @@ import { useStore } from '../app/client';
 /** Fallback size before layout (and in jsdom, which has no layout). */
 export const DEFAULT_STAGE = { width: 1000, height: 560 };
 
-/** Width and height of an element, kept current with a ResizeObserver. */
-export function useElementSize<T extends HTMLElement>(): [RefObject<T | null>, { width: number; height: number }] {
+/** Measured sizes are rounded down to this many pixels (see useElementSize). */
+export const SIZE_STEP = 8;
+
+/**
+ * Round a measured size down to whole `step`s, so sub-pixel and few-pixel
+ * resizes don't produce a new size. Rounding down keeps the layout inside the
+ * element.
+ */
+export function bucketSize(width: number, height: number, step = SIZE_STEP): { width: number; height: number } {
+  return { width: Math.floor(width / step) * step, height: Math.floor(height / step) * step };
+}
+
+/**
+ * Width and height of an element, kept current with a ResizeObserver. Sizes
+ * are bucketed to `step` pixels: laying out a full table is expensive on
+ * phones, and a window drag or a scrollbar would otherwise re-run it for every
+ * sub-pixel change.
+ */
+export function useElementSize<T extends HTMLElement>(step = SIZE_STEP): [RefObject<T | null>, { width: number; height: number }] {
   const ref = useRef<T>(null);
   const [size, setSize] = useState(DEFAULT_STAGE);
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
     const read = (w: number, h: number) => {
-      if (w > 0 && h > 0) setSize((s) => (Math.abs(s.width - w) < 0.5 && Math.abs(s.height - h) < 0.5 ? s : { width: w, height: h }));
+      const b = bucketSize(w, h, step);
+      if (b.width > 0 && b.height > 0) setSize((s) => (s.width === b.width && s.height === b.height ? s : b));
     };
     const r = el.getBoundingClientRect();
     read(r.width, r.height);
@@ -24,7 +42,7 @@ export function useElementSize<T extends HTMLElement>(): [RefObject<T | null>, {
     });
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [step]);
   return [ref, size];
 }
 

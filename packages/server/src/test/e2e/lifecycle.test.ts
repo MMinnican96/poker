@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { useTestDb } from '../db.js';
-import { actor, joinAll, player, startServer, waitOn, type TestClient, type TestServer } from './helpers.js';
+import { actor, joinAll, player, startServer, waitOn, type TestClient, type TestServer, uniqueRoom } from './helpers.js';
 
 const t = useTestDb();
 let server: TestServer;
@@ -12,8 +12,7 @@ afterAll(async () => {
   await server?.close();
 });
 
-let roomCounter = 0;
-const newRoom = () => `inst-life-${++roomCounter}`;
+const newRoom = () => uniqueRoom('inst-life');
 const RULES = { name: 'Lifecycle', smallBlind: 25, bigBlind: 50, minBuyIn: 1000, maxBuyIn: 5000, maxSeats: 6 };
 
 /** Emit request_state and resolve with whichever of table_state / table_left answers it. */

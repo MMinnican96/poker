@@ -13,7 +13,7 @@ import {
 } from '@poker/shared';
 import type { Services } from '../services/index.js';
 import type { RandomInt } from '../engine/index.js';
-import { TableRoom, type Result, type TableTiming } from './table-room.js';
+import { LEFT, TableRoom, type Result, type TableTiming } from './table-room.js';
 
 /** Outgoing messages, implemented by the socket layer. */
 export interface Outbox {
@@ -33,7 +33,15 @@ export interface RoomDeps {
   timing?: Partial<TableTiming>;
   random?: RandomInt;
   clock?: () => number;
+  /** Why new tables, seats and top-ups are refused right now, or null (see RoomManager). */
+  gate?: () => string | null;
+  log?: (message: string, err?: unknown) => void;
 }
+
+/** Refusal while the server is stopping. */
+export const RESTARTING = 'The server is restarting — try again in a moment.';
+/** Refusal while the server has lost its lease (usually its database) and is re-registering. */
+export const RECONNECTING = 'The server is reconnecting to its database — try again in a moment.';
 
 interface Presence {
   player: PublicPlayer;
@@ -57,8 +65,11 @@ export class InstanceRoom {
    * @param onIdle called when the room may have become empty without a socket
    * event (its table closed) so the manager can prune it.
    */
+  private readonly log: (message: string, err?: unknown) => void;
+
   constructor(readonly instanceId: string, private readonly deps: RoomDeps, private readonly onIdle: () => void = () => undefined) {
     this.clock = deps.clock ?? Date.now;
+    this.log = deps.log ?? ((m, e) => console.error(`[room] ${m}`, e ?? ''));
   }
 
   get isEmpty(): boolean {
@@ -108,7 +119,7 @@ export class InstanceRoom {
       p.player = player;
       p.balance = balance;
     }
-    void this.table?.refreshPlayer(player);
+    this.table?.refreshPlayer(player).catch((err) => this.log('refreshing a table member failed', err));
     this.broadcastLobby();
   }
 
@@ -119,6 +130,8 @@ export class InstanceRoom {
   async openTable(playerId: string, patch: Partial<TableRules>): Promise<Result> {
     const host = this.presence.get(playerId);
     if (!host) return { ok: false, error: 'Join the room first.' };
+    const blocked = this.deps.gate?.();
+    if (blocked) return { ok: false, error: blocked };
     if (this.table) return { ok: false, error: 'A table is already open. Join it from the lobby.' };
     const r = validateRules(patch);
     if (!r.ok) return r;
@@ -128,6 +141,8 @@ export class InstanceRoom {
     if (host.balance < r.rules.minBuyIn) {
       return { ok: false, error: "You can't afford this table's minimum buy-in." };
     }
+    const blockedLate = this.deps.gate?.();
+    if (blockedLate) return { ok: false, error: blockedLate };
     if (this.table) return { ok: false, error: 'A table is already open. Join it from the lobby.' };
     const table = new TableRoom(this.instanceId, r.rules, host.player, {
       bank: this.deps.services.bank,
@@ -136,6 +151,8 @@ export class InstanceRoom {
       timing: this.deps.timing,
       random: this.deps.random,
       clock: this.deps.clock,
+      gate: this.deps.gate,
+      log: this.deps.log,
       hooks: {
         sendView: (id, view) => {
           view.you.bankroll = this.balanceOf(id);
@@ -189,6 +206,11 @@ export class InstanceRoom {
     await this.table?.shutdown();
   }
 
+  /** Lease lost: drop the table without moving chips (recovery refunds the seats). */
+  async abandon(): Promise<void> {
+    await this.table?.abandon(LEFT.interrupted);
+  }
+
   dispose(): void {
     this.table?.dispose();
   }
@@ -198,8 +220,37 @@ export class InstanceRoom {
 export class RoomManager {
   private readonly rooms = new Map<string, InstanceRoom>();
   private shuttingDown: Promise<void> | null = null;
+  private suspended: string | null = null;
+  private readonly deps: RoomDeps;
 
-  constructor(private readonly deps: RoomDeps) {}
+  constructor(deps: RoomDeps) {
+    this.deps = { ...deps, gate: () => this.unavailable };
+  }
+
+  /** Why new tables, seats and top-ups are refused right now, or null when they're allowed. */
+  get unavailable(): string | null {
+    return this.shuttingDown ? RESTARTING : this.suspended;
+  }
+
+  /** Refuse new tables, seats and top-ups with `reason` until `resume()`. */
+  suspend(reason: string): void {
+    this.suspended = reason;
+  }
+
+  resume(): void {
+    this.suspended = null;
+  }
+
+  /**
+   * The server lease was lost: every table is dropped without moving chips
+   * (recovery refunds each seat from its last checkpoint) and its members are
+   * sent back to the lobby. Call `suspend()` first so nothing new is opened
+   * meanwhile.
+   */
+  async abandonAll(): Promise<void> {
+    const results = await Promise.allSettled([...this.rooms.values()].map((r) => r.abandon()));
+    for (const r of results) if (r.status === 'rejected') console.error('[rooms] abandoning a table failed', r.reason);
+  }
 
   get(instanceId: string): InstanceRoom | undefined {
     return this.rooms.get(instanceId);

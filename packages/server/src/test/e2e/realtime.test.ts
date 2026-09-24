@@ -13,6 +13,7 @@ import {
   uniqueName,
   type TestClient,
   type TestServer,
+  uniqueRoom,
 } from './helpers.js';
 
 const t = useTestDb();
@@ -25,8 +26,7 @@ afterAll(async () => {
   await server?.close();
 });
 
-let roomCounter = 0;
-const newRoom = () => `inst-rt-${++roomCounter}`;
+const newRoom = () => uniqueRoom('inst-rt');
 const memberIds = (c: TestClient) => (c.latest('lobby_state')?.members ?? []).map((m) => m.id).sort();
 
 describe('lobby', () => {

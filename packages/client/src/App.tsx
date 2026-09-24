@@ -1,5 +1,6 @@
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { BootErrorScreen, ConnectingScreen, ExpiredScreen } from './app/Boot';
+import { ErrorBoundary } from './app/ErrorBoundary';
 import { ClientProvider, createClient, useAppState, useStore, useTable, type Client } from './app/client';
 import { lazyNamed, preloadWhenIdle } from './app/lazy';
 import { NavProvider, ProfileCardProvider, useNav } from './app/nav';
@@ -82,8 +83,9 @@ export function Main() {
   useEffect(() => {
     if (atTable && !wasAtTable.current) nav.go('table');
     // Leaving yourself needs no toast; closures, removals and restarts do.
+    // An interrupted table (a server fault) is the one that reads as bad news.
     if (!atTable && wasAtTable.current && left && left.code !== 'left' && left.reason) {
-      store.notify({ tone: 'info', title: left.reason });
+      store.notify({ tone: left.code === 'interrupted' ? 'bad' : 'info', title: left.reason });
     }
     wasAtTable.current = atTable;
   }, [atTable, left, nav, store]);
@@ -91,9 +93,11 @@ export function Main() {
   if (connection === 'unauthorized') return <ExpiredScreen />;
   if (atTable && nav.section === 'table') {
     return (
-      <Suspense fallback={<TableFallback />}>
-        <TableScreen />
-      </Suspense>
+      <ErrorBoundary layout="screen">
+        <Suspense fallback={<TableFallback />}>
+          <TableScreen />
+        </Suspense>
+      </ErrorBoundary>
     );
   }
   return <Shell />;

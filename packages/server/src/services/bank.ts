@@ -24,10 +24,11 @@ export const LEASE_STALE_MS = 60_000;
  * movements for one player can never deadlock.
  *
  * `leaseId` is this process's server lease: seats it opens carry it, and
- * recovery never touches them.
+ * recovery never touches them. It changes if the process loses its lease and
+ * registers a fresh one (see ServerLease).
  */
 export class Bank {
-  constructor(private readonly db: Db, readonly leaseId: string | null = null) {}
+  constructor(private readonly db: Db, public leaseId: string | null = null) {}
 
   /** Create the player on first sight (with starting chips); refresh name/avatar after. */
   async ensurePlayer(input: { id: string; name: string; avatarUrl: string | null }) {

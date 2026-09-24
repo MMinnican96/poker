@@ -102,6 +102,15 @@ export async function http<T = any>(
   return { status: res.status, body: parsed as T, text, contentType: res.headers.get('content-type') };
 }
 
+/** Differs per test run, so ids stay unique in a reused (real Postgres) database. */
+const RUN_ID = Math.random().toString(36).slice(2, 8);
+let roomCounter = 0;
+/** An Activity instance id unique to this test run (room chat is persisted per instance). */
+export function uniqueRoom(prefix: string): string {
+  roomCounter += 1;
+  return `${prefix}-${RUN_ID}-${roomCounter}`;
+}
+
 let nameCounter = 0;
 /** A display name unique within this test run (mock ids derive from names). */
 export function uniqueName(base: string): string {

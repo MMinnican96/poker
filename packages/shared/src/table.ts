@@ -244,9 +244,12 @@ export interface TableView {
 /**
  * Why you are no longer at the table: `left` (you left), `host-closed`,
  * `abandoned` (every player left), `removed` (away too long), `shutdown`
- * (server restart) or `not-member` (you asked for a table you aren't at).
+ * (server restart), `interrupted` (the server lost track of the table's chips,
+ * e.g. its database connection, so the table was dropped and seats are refunded
+ * from the last completed hand) or `not-member` (you asked for a table you
+ * aren't at).
  */
-export type TableLeftCode = 'left' | 'host-closed' | 'abandoned' | 'removed' | 'shutdown' | 'not-member';
+export type TableLeftCode = 'left' | 'host-closed' | 'abandoned' | 'removed' | 'shutdown' | 'interrupted' | 'not-member';
 
 export interface TableLeft {
   /** Sentence-case explanation for the player. */
