@@ -119,6 +119,26 @@ describe('the chip lifecycle', () => {
     expect(stats.handsPlayed).toBeGreaterThan(0);
   });
 
+  it('tells a first-time winner about the feat they unlocked', async () => {
+    const h = await setup(2);
+    await h.seat(0, 0, 2000);
+    await h.seat(1, 1, 2000);
+    h.table.start(h.ids[0]);
+    await waitFor(() => h.toAct() !== null);
+    const folder = h.toAct()!;
+    const winner = h.ids.find((id) => id !== folder)!;
+    h.table.act(folder, { type: 'fold' });
+    await waitFor(() => h.notices.some((n) => n.notice.emblem), 3000, 'unlock notice');
+    expect(h.notices.filter((n) => n.notice.emblem)).toEqual([{
+      playerId: winner,
+      notice: {
+        tone: 'good', title: 'Feat unlocked: Fresh cheese', body: '+250 chips and 25 XP. New title: Fresh cheese.',
+        emblem: { achievementId: 'fresh-cheese', tier: 1 },
+      },
+    }]);
+    expect(h.activity).toContainEqual(expect.objectContaining({ kind: 'achievement', playerId: winner, text: 'earned the “Fresh cheese” feat' }));
+  });
+
   it('checkpoints stacks to escrow after each hand', async () => {
     const h = await setup(2);
     await h.seat(0, 0, 2000);
@@ -287,7 +307,7 @@ describe('top-ups and host controls', () => {
     h.table.act(h.toAct()!, { type: 'fold' });
     await waitFor(() => h.closed, 3000, 'close');
     await h.table.settled();
-    expect((await h.balance(0)) + (await h.balance(1))).toBe(20_000);
+    expect((await h.bankroll(0)) + (await h.bankroll(1))).toBe(20_000);
   });
 });
 
@@ -450,7 +470,7 @@ describe('top-up limits', () => {
     await waitFor(() => h.view(0).handsDealt >= 2 && h.table.viewFor(h.ids[0]).you.pendingTopUp === 0, 3000, 'boundary');
     await h.table.settled();
     expect(await h.services.bank.escrowed(h.ids[0])).toBe(5000);
-    expect(await h.balance(0)).toBe(10_000 - 1000 - 3950);
+    expect(await h.bankroll(0)).toBe(10_000 - 1000 - 3950);
     expect(h.notices.some((n) => n.playerId === h.ids[0] && n.notice.title === 'Top-up reduced')).toBe(true);
   });
 });
@@ -486,8 +506,8 @@ describe('server shutdown', () => {
     h.table.act(h.toAct()!, { type: 'fold' }); // the button folds its small blind
     await waitFor(() => !!h.view(0).hand?.result, 3000, 'result');
     await h.table.shutdown();
-    expect(await h.balance(0)).toBe(10_000 - 25);
-    expect(await h.balance(1)).toBe(10_000 + 25);
+    expect(await h.bankroll(0)).toBe(10_000 - 25);
+    expect(await h.bankroll(1)).toBe(10_000 + 25);
   });
 });
 

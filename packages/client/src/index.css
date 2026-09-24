@@ -79,6 +79,10 @@
   --animate-fade: fade 0.15s ease both;
   --animate-slide-in: slide-in 0.2s cubic-bezier(0.2, 0.9, 0.3, 1) both;
   --animate-spin-slow: spin 1.1s linear infinite;
+  /* A glint that sweeps once across a legendary feat emblem when it appears, and
+     again on hover or focus (a second keyframes name restarts the animation). */
+  --animate-emblem-shine: emblem-shine 2.4s ease-in-out 1 both;
+  --animate-emblem-shine-again: emblem-shine-again 2.4s ease-in-out 1 both;
 }
 
 @keyframes rise {
@@ -88,6 +92,14 @@
 @keyframes fade {
   from { opacity: 0; }
   to { opacity: 1; }
+}
+@keyframes emblem-shine {
+  0%, 12% { transform: translateX(0) skewX(-18deg); }
+  70%, 100% { transform: translateX(150px) skewX(-18deg); }
+}
+@keyframes emblem-shine-again {
+  0%, 12% { transform: translateX(0) skewX(-18deg); }
+  70%, 100% { transform: translateX(150px) skewX(-18deg); }
 }
 @keyframes slide-in {
   from { transform: translateX(100%); }

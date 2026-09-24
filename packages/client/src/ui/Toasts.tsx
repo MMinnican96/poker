@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import type { Notice } from '@poker/shared';
 import { cx } from './cx';
 import { IconButton } from './Button';
@@ -16,7 +16,7 @@ const TONE: Record<Notice['tone'], string> = {
   bad: 'before:bg-chip',
 };
 
-function Toast({ notice, onDismiss }: { notice: Notice; onDismiss(id: string): void }) {
+function Toast({ notice, onDismiss, art }: { notice: Notice; onDismiss(id: string): void; art?: ReactNode }) {
   const hovering = useRef(false);
   const born = useRef(Date.now());
   const leftAt = useRef(0);
@@ -54,6 +54,7 @@ function Toast({ notice, onDismiss }: { notice: Notice; onDismiss(id: string): v
         TONE[notice.tone],
       )}
     >
+      {art && <div className="-my-0.5 shrink-0 self-center">{art}</div>}
       <div className="min-w-0 flex-1">
         <p className="text-[15px] font-bold leading-snug">{notice.title}</p>
         {notice.body && <p className="mt-0.5 text-sm leading-snug text-ink-soft">{notice.body}</p>}
@@ -68,6 +69,8 @@ function Toast({ notice, onDismiss }: { notice: Notice; onDismiss(id: string): v
 export interface ToastStackProps {
   notices: Notice[];
   onDismiss(id: string): void;
+  /** Artwork shown left of a toast's text (e.g. an achievement's emblem); null for none. */
+  renderArt?(notice: Notice): ReactNode;
 }
 
 /**
@@ -75,14 +78,14 @@ export interface ToastStackProps {
  * they never cover the controls at the bottom they often refer to. They
  * auto-dismiss; hovering holds one open for a while, not forever.
  */
-export function ToastStack({ notices, onDismiss }: ToastStackProps) {
+export function ToastStack({ notices, onDismiss, renderArt }: ToastStackProps) {
   return (
     <ol
       aria-live="polite"
       aria-label="Notifications"
       className="pointer-events-none fixed top-16 right-2 left-2 z-[70] flex flex-col items-end gap-2 xs:left-auto xs:w-80 short:top-12"
     >
-      {notices.map((n) => <Toast key={n.id} notice={n} onDismiss={onDismiss} />)}
+      {notices.map((n) => <Toast key={n.id} notice={n} onDismiss={onDismiss} art={renderArt?.(n)} />)}
     </ol>
   );
 }

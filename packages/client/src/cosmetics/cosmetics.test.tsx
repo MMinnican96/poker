@@ -36,6 +36,9 @@ describe('cosmetic renderers', () => {
     expect(titleText('title-shark')).toBe('Card shark');
     expect(titleText('title-none')).toBeNull();
     expect(titleText('Nit')).toBe('Nit');
+    expect(titleText('ach:grinder:3')).toBe('Regular');
+    expect(titleText('ach:royalty')).toBe('Royalty');
+    expect(titleText('felt-classic')).toBeNull();
     const { container } = render(<TitleTag title={null} />);
     expect(container).toBeEmptyDOMElement();
   });

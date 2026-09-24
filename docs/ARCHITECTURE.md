@@ -14,6 +14,7 @@ For running it see [SETUP.md](./SETUP.md); for the visual system see
 5. [Engine rules](#engine-rules)
 6. [Bank, escrow, leases and recovery](#bank-escrow-leases-and-recovery)
 7. [Stats, XP, levels and challenges](#stats-xp-levels-and-challenges)
+   ([career challenges, feats and titles](#career-challenges-feats-and-titles))
 8. [Shop and cosmetics](#shop-and-cosmetics)
 9. [Chat, DMs and activity](#chat-dms-and-activity)
 10. [Database](#database)
@@ -30,7 +31,7 @@ npm-workspaces monorepo with three packages.
 
 | Package | Role |
 |---|---|
-| `@poker/shared` | Wire types and the Socket.io contract (`events.ts`), table rules and `validateRules` (`table.ts`), hand evaluator with descriptive labels (`hand-eval.ts`), shop catalog (`shop.ts`), levels, XP, daily bonus and challenges (`progression.ts`), lobby, chat and stats types (`social.ts`), number formatting (`format.ts`). ESM, built to `dist/`. |
+| `@poker/shared` | Wire types and the Socket.io contract (`events.ts`), table rules and `validateRules` (`table.ts`), hand evaluator with descriptive labels (`hand-eval.ts`), shop catalog (`shop.ts`), levels, XP, daily bonus and challenges (`progression.ts`), the metric registry and `HandFact` (`metrics.ts`), career challenges, feats, tiers and titles (`achievements.ts`), lobby, chat and stats types (`social.ts`), number formatting (`format.ts`). ESM, built to `dist/`. |
 | `@poker/server` | Node + Express + Socket.io + Drizzle. Postgres through node-postgres when `DATABASE_URL` is set, embedded PGlite otherwise. |
 | `@poker/client` | React 19 + Tailwind 4 single-page app, the Activity iframe. Built with Vite 8. |
 
@@ -52,9 +53,9 @@ Server source map:
 | `rooms/serial.ts` | `Serial` (one-at-a-time async queue) and `RateLimiter` |
 | `socket/realtime.ts` | Socket auth middleware and every event handler |
 | `http/api.ts` | REST routes |
-| `services/` | `bank`, `leases`, `recorder`, `hand-facts`, `stats-aggregate`, `stats-repo`, `rewards`, `shop`, `chat`, `profiles`, `players`, `recompute` |
+| `services/` | `bank`, `leases`, `recorder`, `hand-facts`, `xp`, `achievements`, `achievements-backfill`, `stats-aggregate`, `stats-repo`, `rewards`, `shop`, `chat`, `profiles`, `players`, `recompute` |
 | `db/` | `schema.ts`, `client.ts` (`openDatabase`, `openPglite`), `migrate-cli.ts` |
-| `drizzle/` | `0000_init.sql`, `0001_leases.sql`, `meta/` journal and snapshots |
+| `drizzle/` | `0000_init.sql`, `0001_leases.sql`, `0002_achievements.sql`, `meta/` journal and snapshots |
 
 ## Data flow
 
@@ -290,7 +291,7 @@ CHECK constraints stop balances, stacks and item quantities going negative, and
 | `checkpoint(hand, [{ seatId, stack }])` | Absolute stacks written after every hand | none (escrow only) |
 | `cashOut({ seatId, playerId, stack })` | Close seat, credit bankroll; a second call finds it closed and does nothing | `cash-out`, `cashout:<seatId>` |
 | `recoverOpenSeats()` | Refund orphaned open seats at their last checkpoint | `recovery`, `recovery:<seatId>` |
-| `credit(...)` / `creditIn(tx, ...)` | Idempotent reward credit | `daily-bonus`, `level-up`, `challenge`, `grant` |
+| `credit(...)` / `creditIn(tx, ...)` | Idempotent reward credit | `daily-bonus`, `level-up`, `challenge`, `achievement` (`achievement:<player>:<achievementId>:<tier>`), `grant` |
 | Shop purchase (`move`) | Bankroll debit | `purchase`, `purchase:<player>:<nonce>` |
 
 Rules the bank keeps: lock the player row first, then the seat row, everywhere;
@@ -354,7 +355,7 @@ seats as soon as the lease is released or goes stale.
 
 ```
 hand completes (TableRoom.conclude)
-  ├─ buildHandFacts(state)   one PlayerHandStat per dealt-in player   (pure)
+  ├─ buildHandFacts(state)   one HandFact per dealt-in player         (pure)
   ├─ buildHistory(state)     board, pots, cards, results, card backs  (pure)
   └─ Serial queue:
        Bank.checkpoint(stacks)
@@ -363,13 +364,34 @@ hand completes (TableRoom.conclude)
          insert hand_history
          update player_stats aggregates (rows locked, sorted ids)
          add XP, credit level-up rewards
-         add challenge progress, mark completed
-       notices (level-up, challenge complete) + activity feed
+         add daily/weekly challenge progress (metric registry), mark completed
+         achievements: update progress in SQL, pay newly reached tiers
+       notices (level-up, challenge complete, unlocks) + activity feed
        refreshMe → `me` + lobby update for each player
 ```
 
 Facts are unique on `(table, player, hand)`, and only newly inserted facts feed
-aggregates, XP and challenges, so a replay never double-counts. Session play
+aggregates, XP, challenges and achievements, so a replay never double-counts.
+
+A `HandFact` is the stored `PlayerHandStat` plus fields the achievement metrics
+need: hole cards and the final board (kept in `hand_history`, not in the fact
+row), players dealt, starting stack (stack at the deal, before blinds),
+knockouts (opponents who finished with 0 chips and were eligible for a pot this
+player won a share of), check-raise (checked, then raised on the same street),
+three-bet (pre-flop aggression after another player raised; blinds aren't
+raises), all-in pre-flop (went all-in pre-flop by action, or by a blind or
+ante, or called or covered an opponent's pre-flop all-in and stayed in; the
+engine logs a covering shove as a raise or call), behind on the turn
+(showdown with five board cards where, on four, the player's best hand scored
+below a showdown opponent's), split pot, and showdown opponents. The new
+columns are nullable in `player_hand_stats`; older rows count as false/0.
+
+**Card privacy in metrics.** Unlocks, challenge completions, room activity and
+profile unlock times are public, so a metric may read hole cards (or anything
+derived from them, like the best five or behind-on-the-turn) only for hands
+that reached showdown, where the cards were tabled (`wentToShowdown`). A
+shared test checks that every hand metric gives the same value for a
+non-showdown fact whatever its hole cards. Session play
 time is recorded once when a player leaves a seat (`recordSession`); it can't be
 rebuilt from facts.
 
@@ -385,8 +407,89 @@ the session columns.
 | Levels | XP to next level = 100 + 60 × (level − 1); max level 100 |
 | Level-up reward | 250 × new level chips, credited once per level |
 | Daily bonus | 500 + 250 × (streak day − 1), capped at day 7 (2,000). Consecutive UTC days grow the streak; a missed day resets it. |
-| Challenges | 3 daily and 3 weekly, picked deterministically from the pool by period key (UTC day, ISO week), so everyone gets the same set. Progress comes from hand facts; completed challenges are claimed for chips and XP. |
-| Badges | Derived at read time in `profiles.ts` (quads, straight flush, royal, hands played, biggest pot, level, items owned). |
+| Challenges | 4 daily and 3 weekly, picked deterministically from the pool (20 daily, 12 weekly) by period key (UTC day, ISO week), so everyone gets the same set. The pick walks a seeded shuffle and skips a challenge whose `family` is already picked. Progress comes from hand facts through the metric registry; streak challenges keep the running streak in `player_challenges.current`, so it restarts each period. Completed challenges are claimed for chips and XP. |
+
+### Career challenges, feats and titles
+
+The catalog is static data in `shared/achievements.ts`: 26 **career
+challenges** with five tiers each (I Bronze to V Diamond, the same rewards for
+every one: 500/50, 1,000/100, 2,500/200, 5,000/350, 10,000/600 chips/XP) and 19
+one-tier **feats** with their own rewards. Each counts one metric from the
+registry in `shared/metrics.ts` (also used by daily/weekly challenges):
+
+| Mode | Progress |
+|---|---|
+| `sum` | Each hand or event adds its value |
+| `streak` | `current` counts consecutive hands where the predicate held and resets on a miss; progress is the best `current` |
+| `max` | The larger of stored progress and the value (level, daily streak, items owned, tier-V count) |
+
+`services/achievements.ts` does the work inside the caller's transaction:
+
+- **Hands** (`applyHandFacts`, from `recordHand` after XP and challenges): per
+  player, one multi-row upsert for sum achievements
+  (`progress = progress + v`, skipped when 0) and one for streaks
+  (`current = case when hit then current + 1 else 0 end`,
+  `progress = greatest(progress, new current)`), players in id order.
+- **Events** (`recordEvent(tx, playerId, metric, value)`):
+  `RewardsService.claimDaily` → `daily-streak` (the new streak),
+  `RewardsService.claimChallenge` → `challenges-claimed` (+1),
+  `ShopService.purchase` → `items-owned` (distinct permanent, paid items).
+- **Settling** (`settle`): read the player's level from XP and the number of
+  career challenges at tier V and feed them to `level` and `tier-v-count`; then
+  for every row whose progress reaches a tier above `tier`, insert a
+  `player_achievement_unlocks` row per new tier (`ON CONFLICT DO NOTHING`), and
+  only when the insert created it credit chips (`creditIn`, type
+  `achievement`, key `achievement:<player>:<achievement>:<tier>`) and grant XP
+  (`grantXp` in `services/xp.ts`, which pays level-ups). Loop until nothing
+  changes. Replays and racing recordings pay once: the unlock row and the
+  ledger key are both unique.
+
+Results carry `AchievementUnlock[]` and `LevelUp[]` (`RecordOutcome.unlocks` /
+`levelUps`, and `unlocks` / `levelUps` on the claim-daily, claim-challenge and
+purchase results).
+
+**Notices.** Each unlock is a notice with `emblem: { achievementId, tier }`:
+career "Grinder III" / feat "Feat unlocked: Royalty", body
+"+2,500 chips and 200 XP. New title: Regular." (title sentence only when one
+unlocked). Feats and tier V also go to the room feed as `achievement`
+activity ("earned the “Royalty” feat", "reached Grinder V"). The table room
+sends them from `outcome.unlocks`; REST handlers use `Realtime.announce`
+(built on `notify(playerId, notice)` and `activity(playerId, event)`), which
+also announces the level-ups those actions paid with the table's copy: a
+"Level N!" notice ("+X chips") and `level-up` activity ("reached level N").
+
+**Titles.** Career challenges unlock a title at tiers III and V
+(`ach:<id>:3`, `ach:<id>:5`), feats one each (`ach:<id>`). `players.loadout_title`
+holds a shop title or an earned one; `getTitle` resolves both, so seats, lobby
+and chat show earned titles unchanged. `POST /api/shop/equip { slot: 'title' }`
+accepts an earned title once the player's tier reaches it.
+
+**Trophy cabinet.** `players.showcase` holds up to 5 unlocked achievement ids,
+in order (`PUT /api/achievements/showcase`). Profile cards carry `trophies`:
+the showcase (or, when empty, `autoShowcase`: feats by rarity, then career by
+tier, then most recent, with `auto: true`), every unlocked achievement at its
+highest tier, and counts.
+
+**Backfill.** `recomputeAchievements(db)` (`services/achievements-backfill.ts`)
+works one player at a time: it folds that player's facts in
+`(created_at, hand_number)` order, read in batches of 500 by a keyset on
+`(created_at, hand_number, id)` and joined with `hand_history` for hole cards
+and board, so memory stays flat. It adds event metrics from current state
+(daily streak, claimed challenges, items owned; level from XP when settling),
+writes `progress = greatest(stored, computed)` (the folded streak in progress
+only on a new row; an existing row keeps its own, which live hands may have
+moved), then settles the player (player row locked first) exactly like a live
+unlock, with no notices. Boot runs it once, after migrations and recovery,
+after the lease heartbeat starts (so a long run can't let the lease go stale)
+and before `listen` (so no hand is recorded live on this process while it
+folds), guarded by the `app_meta` key `achievements-backfill-v1`, which is set
+only on success; a failure is logged and retried at the next boot.
+`npm run achievements:recompute -w @poker/server` runs it by hand (safe to
+repeat; best with the server stopped, since a hand recorded live between a
+player's read and write may be missed by the folded metrics). During a rolling
+deploy, hands the old process records after the backfill has read a player's
+facts aren't credited to the folded metrics. Metrics that need the new fact
+columns count only hands recorded after the upgrade.
 
 ### Leaderboard
 
@@ -430,7 +533,7 @@ share a rank, and returns the top entries plus your own entry wherever you rank.
   control, zero-width and bidi-override characters and collapsing blank lines.
   A malformed target is refused, never sent to the room.
 - **Activity feed** (in memory, last 40 per room): table opened or started,
-  level-ups, completed challenges, big wins (payout ≥ 50 big blinds), rare hands
+  level-ups, completed challenges, feats and tier V career unlocks, big wins (payout ≥ 50 big blinds), rare hands
   (four of a kind or better).
 
 ## Database
@@ -440,15 +543,18 @@ Drizzle schema in `packages/server/src/db/schema.ts`; migrations in
 
 | Table | Purpose |
 |---|---|
-| `players` | One row per Discord user: bankroll (`chip_balance ≥ 0`), XP, daily streak, loadout, timestamps |
+| `players` | One row per Discord user: bankroll (`chip_balance ≥ 0`), XP, daily streak, loadout, trophy-cabinet `showcase` (`text[]`), timestamps |
 | `chip_transactions` | Append-only ledger; unique `idempotency_key` |
 | `table_seats` | Escrow: one row per buy-in; `open`/`closed`, `stack ≥ 0`, `last_hand` checkpoint, `lease_id` |
 | `server_leases` | One row per live server process, heartbeat timestamp |
-| `player_hand_stats` | Append-only fact per player per hand; unique `(game_id, player_id, hand_number)`. `game_id` is the table session id (no FK). |
+| `player_hand_stats` | Append-only fact per player per hand; unique `(game_id, player_id, hand_number)`. `game_id` is the table session id (no FK). Achievement columns (`players_dealt`, `starting_stack`, `knockouts`, `check_raise`, `three_bet`, `all_in_preflop`, `behind_on_turn`, `split_pot`, `showdown_opponents`) are null on older rows. |
 | `player_stats` | Per-player aggregates; rebuildable from facts except session columns |
 | `hand_history` | One row per hand: board, pots, each player's cards/result/card back; GIN index on `player_ids` |
 | `player_items` | Owned items and consumable quantities (`≥ 0`) |
-| `player_challenges` | Progress, completion and claim per player, period and challenge |
+| `player_challenges` | Progress, completion and claim per player, period and challenge; `current` holds a streak challenge's running streak |
+| `player_achievements` | Progress (`double precision`), running streak (`current`) and paid tier (0 to 5) per player and achievement; unique `(player_id, achievement_id)` |
+| `player_achievement_unlocks` | One row per tier reached, with `unlocked_at`; unique `(player_id, achievement_id, tier)` so a tier pays once |
+| `app_meta` | Key/value markers, e.g. `achievements-backfill-v1` |
 | `chat_messages`, `chat_reads` | Room and DM messages; last-read time per player and channel |
 
 `openDatabase()` applies migrations before returning, for Postgres and PGlite
@@ -456,8 +562,9 @@ alike, so every boot upgrades its own database. `0000_init.sql` is written to be
 idempotent: it creates a fresh database, or upgrades a pre-overhaul `db:push`
 database in place (drops the never-written `games`/`hands`/`game_players`/
 `hand_actions` tables, adds new tables, columns, constraints and indexes, and
-keeps players, balances, ledger and stats). `0001_leases.sql` follows the same
-pattern. New migrations must be idempotent as well.
+keeps players, balances, ledger and stats). `0001_leases.sql` and
+`0002_achievements.sql` follow the same pattern (`src/db/migrations.test.ts`
+re-applies every migration over a migrated database). New migrations must be idempotent as well.
 
 ## REST API
 
@@ -471,20 +578,23 @@ refusals are `409 { ok: false, error }`.
 | `POST /auth/token` `{ code, guildId? }` | none | `AuthResponse { token, accessToken, me }`; 400 missing code; 502 Discord failure |
 | `POST /auth/mock` `{ name }` | none | `AuthResponse`; 404 when mock sign-in is off; 400 bad name |
 | `GET /me` | Bearer | `PlayerSelf` |
-| `POST /me/daily` | Bearer | `{ ok, amount, balance, streak }` or 409 |
+| `POST /me/daily` | Bearer | `{ ok, amount, balance, streak, levelUps, unlocks }` or 409 |
 | `GET /players/:id/profile` | Bearer | `ProfileCard` (bankroll includes escrow) or 404 |
 | `GET /players/:id/stats` | Bearer | `{ summary: PlayerStatsSummary, curve }` (curve: last 200 hands, cumulative) |
 | `GET /me/hands?limit=` | Bearer | Your recent hands (1 to 50, default 20), opponents' unshown cards removed |
 | `GET /leaderboard?metric=&period=all\|week&limit=` | Bearer | `{ entries, me }` (limit 1 to 100, default 25); 400 unknown metric |
-| `POST /shop/purchase` `{ itemId, nonce }` | Bearer | `{ ok, balance, quantity }` or 409 |
-| `POST /shop/equip` `{ slot, itemId }` | Bearer | `{ ok, loadout }`, 400 unknown slot, or 409 |
+| `POST /shop/purchase` `{ itemId, nonce }` | Bearer | `{ ok, balance, quantity, levelUps, unlocks }` or 409 |
+| `POST /shop/equip` `{ slot, itemId }` | Bearer | `{ ok, loadout }`, 400 unknown slot, or 409. Slot `title` also takes an earned `ach:*` title. |
 | `GET /challenges` | Bearer | `ChallengeStatus[]` for the current day and week |
-| `POST /challenges/claim` `{ periodKey, challengeId }` | Bearer | `{ ok, chips, xp, balance, levelUps }` or 409 |
+| `POST /challenges/claim` `{ periodKey, challengeId }` | Bearer | `{ ok, chips, xp, balance, levelUps, unlocks }` or 409 |
+| `GET /achievements` | Bearer | `AchievementsResponse { achievements, showcase }`: every catalog entry with `progress`, `tier` and `unlocks` (zeros when untouched) |
+| `PUT /achievements/showcase` `{ ids }` | Bearer | `{ ok: true, showcase }`, or 409 `{ ok: false, error }` (not a list of strings, more than 5, repeats, unknown or locked) |
 | `GET /messages/conversations` | Bearer | `Conversation[]`, most recent first, with unread counts |
 | `GET /messages/history?channel=&before=` | Bearer | Up to 50 `ChatMessage`s, oldest first; 403 unless it's your DM or a room you're in |
 
 Successful purchases, equips, claims and daily bonuses push a fresh `me` over
-the socket.
+the socket, and a notice for each achievement tier they unlocked and each level
+they paid (with room activity for level-ups, feats and tier V).
 
 ## Socket contract
 
@@ -535,7 +645,7 @@ answer. Try again." and refuses immediately while offline.
 | `chat_message` | `ChatMessage` | Room messages to the room; DMs to both players |
 | `chat_history` | `{ channel, messages }` | Room history on join |
 | `activity` / `activity_history` | `ActivityEvent` / `ActivityEvent[]` | Live / on join |
-| `notice` | `{ id, tone, title, body? }` | To one player (level-ups, sat out, top-up trimmed, host transfer, ...) |
+| `notice` | `{ id, tone, title, body?, emblem? }` | To one player (level-ups, unlocks with `emblem`, sat out, top-up trimmed, host transfer, ...) |
 
 `TableView` carries the rules, status, host, all seats (`SeatPlayer` with stack,
 state, connection, cards when visible, `revealed` when shown by choice, last
@@ -597,7 +707,11 @@ App ── startSession() ──▶ Session { mode, token, me, instanceId, sdk? 
 
 `app/lazy.ts` wraps `React.lazy` for named exports with a `preload()`. The table
 screen, each feature screen (leaderboard, stats, challenges, shop, messages) and
-the profile card are separate chunks, preloaded when the page is idle.
+the profile card are separate chunks, preloaded when the page is idle. Emblems
+(`cosmetics/Emblem.tsx` with the `react-icons/gi` glyphs) are their own chunk,
+imported by path rather than through the `cosmetics` index so the icon set stays
+out of the main bundle; the toaster lazy-loads it for unlock toasts behind an
+error boundary, so a failed chunk load drops only the art.
 
 ### Design system and cosmetics
 
@@ -606,8 +720,16 @@ the profile card are separate chunks, preloaded when the page is idle.
   LevelBadge, Placard, CountBadge, Toasts, EmptyState, Spinner, icons). See
   DESIGN_STANDARDS.
 - `cosmetics/`: renderers driven by the shared catalog: `Felt` (with the
-  printed Ratbag crest), `CardBack`, `PlayingCard`, `AvatarFrame`, `TitleTag`,
-  celebrations (canvas-confetti), `ItemPreview`.
+  printed Ratbag crest), `CardBack`, `PlayingCard`, `AvatarFrame`, `TitleTag`
+  (resolves shop and earned titles through `getTitle`), celebrations
+  (canvas-confetti), `ItemPreview`, `Emblem` (career medallion or feat shield,
+  locked and secret states) and `TrophyShelf` (the showcase shelf used by the
+  trophy cabinet tab and the profile card).
+- Challenges screen (`features/challenges/`): tabs for Daily & weekly, Career,
+  Feats and Trophy cabinet. The last three share one `GET /api/achievements`,
+  joined with the shared catalog, refetched when you come back from Daily &
+  weekly and when an unlock notice arrives. The cabinet edits the showcase
+  (`PUT /api/achievements/showcase`) and equips titles through `/api/shop/equip`.
 
 ### Table screen
 
@@ -692,9 +814,10 @@ the profile card are separate chunks, preloaded when the page is idle.
 | Where | What |
 |---|---|
 | `server/src/engine/*.test.ts` | Rules, with stacked decks (`test-helpers.ts`: `setupHand`, `play`) and the randomised chip-conservation test |
-| `server/src/services/*.test.ts` | Bank, recorder, shop, rewards, chat, stats on PGlite (`test/db.ts`: `useTestDb`, `makePlayer`) |
+| `server/src/services/*.test.ts` | Bank, recorder, achievements (unlocks pay once, streaks, event hooks, showcase, titles, backfill), shop, rewards, chat, stats on PGlite (`test/db.ts`: `useTestDb`, `makePlayer`) |
+| `server/src/db/*.test.ts` | Pool settings, and migrations re-applying cleanly |
 | `server/src/rooms/*.test.ts` | `TableRoom` and `InstanceRoom` through `test/table-harness.ts` (`Harness`, `FAST` timing, `chipsInPlay`) |
-| `server/src/test/e2e/` | A real app on a random port driven by `fetch` + `socket.io-client` (`helpers.ts`: `startServer`, `signIn`, `TestClient`, `driveUntil`, `playHands`): API, realtime, table, lifecycle, show-cards |
+| `server/src/test/e2e/` | A real app on a random port driven by `fetch` + `socket.io-client` (`helpers.ts`: `startServer`, `signIn`, `TestClient`, `driveUntil`, `playHands`): API, realtime, table, lifecycle, show-cards, achievements |
 | `client/src/**/*.test.ts(x)` | Vitest + React Testing Library on jsdom; `test/harness.tsx` renders screens with a fake socket and API |
 | `shared/src/*.test.ts` | Hand evaluator, progression, shop, rules; run with `npm test -w @poker/shared` |
 

@@ -67,7 +67,7 @@ export interface LobbyState {
 // Activity + notices
 // ---------------------------------------------------------------------------
 
-export type ActivityKind = 'big-win' | 'rare-hand' | 'level-up' | 'challenge' | 'purchase' | 'table';
+export type ActivityKind = 'big-win' | 'rare-hand' | 'level-up' | 'challenge' | 'achievement' | 'purchase' | 'table';
 
 export interface ActivityEvent {
   id: string;
@@ -83,6 +83,8 @@ export interface Notice {
   tone: 'good' | 'info' | 'bad';
   title: string;
   body?: string;
+  /** Achievement unlock notices: the emblem to show next to the text. */
+  emblem?: { achievementId: string; tier: number };
 }
 
 // ---------------------------------------------------------------------------
@@ -217,12 +219,6 @@ export interface LeaderboardResponse {
   me: LeaderboardEntry | null;
 }
 
-export interface Badge {
-  id: string;
-  name: string;
-  description: string;
-}
-
 export interface ProfileCard extends PublicPlayer {
   level: number;
   levelProgress: LevelProgress;
@@ -243,8 +239,59 @@ export interface ProfileCard extends PublicPlayer {
   };
   /** Net result of the last (up to) 20 hands, oldest first. */
   recentForm: number[];
-  badges: Badge[];
+  trophies: ProfileTrophies;
   itemsOwned: number;
+}
+
+// ---------------------------------------------------------------------------
+// Achievements (career challenges, feats, trophy cabinet)
+// ---------------------------------------------------------------------------
+
+/** Most emblems a player can pin to their trophy cabinet. */
+export const SHOWCASE_MAX = 5;
+
+/** A player's standing on one achievement. Names, goals and emblems come from the shared catalog. */
+export interface AchievementProgress {
+  id: string;
+  progress: number;
+  /** 0 = locked. */
+  tier: number;
+  /** One per tier reached, lowest first. ISO timestamps. */
+  unlocks: { tier: number; unlockedAt: string }[];
+}
+
+/** `GET /api/achievements`: every achievement in the catalog (zeros when untouched) and the chosen showcase. */
+export interface AchievementsResponse {
+  achievements: AchievementProgress[];
+  showcase: string[];
+}
+
+/** `PUT /api/achievements/showcase`. */
+export type ShowcaseResult = { ok: true; showcase: string[] } | { ok: false; error: string };
+
+/** One tier reached, already paid. */
+export interface AchievementUnlock {
+  playerId: string;
+  achievementId: string;
+  tier: number;
+  chips: number;
+  xp: number;
+  /** The title this tier unlocked, if any. */
+  titleId: string | null;
+}
+
+/** The trophy cabinet on a profile card. */
+export interface ProfileTrophies {
+  /** Emblems shown on the shelf, in order: the player's pick, or the automatic one. */
+  showcase: string[];
+  /** True when the player hasn't chosen and `showcase` is the automatic pick. */
+  auto: boolean;
+  /** Each unlocked achievement once, at its highest tier. */
+  unlocked: { id: string; tier: number; unlockedAt: string }[];
+  /** Number of achievements unlocked. */
+  emblems: number;
+  /** Catalog size. */
+  total: number;
 }
 
 export type { Cosmetics };

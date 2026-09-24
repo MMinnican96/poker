@@ -15,6 +15,13 @@
       "when": 1790206431531,
       "tag": "0001_leases",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790271082425,
+      "tag": "0002_achievements",
+      "breakpoints": true
     }
   ]
 }

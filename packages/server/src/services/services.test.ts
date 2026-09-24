@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
-  activeChallenges, dmChannel, levelUpReward, periodKeyFor, roomChannel, totalXpForLevel,
-  type PlayerHandStat,
+  activeChallenges, dmChannel, getAchievement, levelUpReward, periodKeyFor, rewardFor, roomChannel, totalXpForLevel,
+  type HandFact,
 } from '@poker/shared';
 import { eq } from 'drizzle-orm';
 import { createServices } from './index.js';
@@ -16,8 +16,8 @@ const t = useTestDb();
 const NOW = new Date('2026-09-23T12:00:00Z');
 const svc = () => createServices(t.db, () => NOW);
 
-function fact(tableId: string, playerId: string, handNumber: number, over: Partial<PlayerHandStat> = {}): PlayerHandStat {
-  return baseFact({ tableId, playerId, handNumber, ...over });
+function fact(tableId: string, playerId: string, handNumber: number, over: Partial<HandFact> = {}): HandFact {
+  return { ...baseFact({ tableId, playerId, handNumber }), ...over };
 }
 
 function history(tableId: string, handNumber: number, ids: string[], shown: string[] = []): HandHistoryRecord {
@@ -47,7 +47,10 @@ describe('HandRecorder', () => {
     expect(replay.xp).toEqual({});
     expect(await s.stats.summary(a)).toMatchObject({ handsPlayed: 1, handsWon: 1, netProfit: 50 });
     const [row] = await t.db.select().from(players).where(eq(players.discordUserId, a));
-    expect(row.xp).toBe(8);
+    // 8 for the won hand, plus the "Fresh cheese" feat (first win) paid once.
+    expect(row.xp).toBe(8 + rewardFor(getAchievement('fresh-cheese')!, 1).xp);
+    expect(first.unlocks.map((u) => u.achievementId)).toEqual(['fresh-cheese']);
+    expect(replay.unlocks).toEqual([]);
   });
 
   it("doesn't lose a new player's first hands finishing at several tables at once", async () => {
@@ -84,11 +87,16 @@ describe('HandRecorder', () => {
     const daily = activeChallenges('daily', periodKeyFor('daily', NOW));
     const table = randomUUID();
     const completedIds = new Set<string>();
-    for (let hand = 1; hand <= 30; hand++) {
+    // Suited or a pair, whichever today's hole-card challenge (if any) wants.
+    const holeCards: HandFact['holeCards'] = daily.some((d) => d.metric === 'suited-wins')
+      ? [{ rank: 'A', suit: 'hearts' }, { rank: 'K', suit: 'hearts' }]
+      : [{ rank: 'A', suit: 'hearts' }, { rank: 'A', suit: 'spades' }];
+    for (let hand = 1; hand <= 50; hand++) {
       const out = await s.recorder.recordHand([
         fact(table, a, hand, {
           result: 'won', chipsWon: 5000, netResult: 4000, potTotal: 5000, wentToShowdown: true,
           handCategory: 'four-of-a-kind', finalStreet: 'showdown', pfr: true, vpip: true, wasAllIn: true,
+          threeBet: true, checkRaise: true, knockouts: 1, holeCards, board: [], startingStack: 1000,
         }),
       ], history(table, hand, [a]));
       for (const c of out.completed) {
@@ -96,7 +104,7 @@ describe('HandRecorder', () => {
         completedIds.add(c.challenge.id);
       }
     }
-    // A winning, showdown, all-in, pre-flop-raising quads hand satisfies every daily metric.
+    // A winning, showdown, all-in, three-betting, check-raising, busting quads hand satisfies every daily metric.
     for (const d of daily) expect(completedIds.has(d.id)).toBe(true);
     const list = await s.rewards.challenges(a);
     expect(list.filter((c) => c.period === 'daily').every((c) => c.completed && !c.claimed)).toBe(true);

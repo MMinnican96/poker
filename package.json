@@ -15,6 +15,7 @@
     "db:migrate": "npm run db:migrate --workspace=packages/server",
     "db:studio": "npm run db:studio --workspace=packages/server",
     "stats:recompute": "npm run stats:recompute --workspace=packages/server",
+    "achievements:recompute": "npm run achievements:recompute --workspace=packages/server",
     "db:generate": "npm run db:generate --workspace=packages/server",
     "test:pg": "npm run test:pg --workspace=packages/server"
   },

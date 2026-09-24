@@ -41,7 +41,7 @@ describe('Shell', () => {
   });
 
   it('shows bankroll, and claims the daily bonus with a toast', async () => {
-    const claimDaily = vi.fn(async () => ({ ok: true as const, amount: 750, balance: 10_750, streak: 2 }));
+    const claimDaily = vi.fn(async () => ({ ok: true as const, amount: 750, balance: 10_750, streak: 2, levelUps: [] }));
     renderWithClient(<><Main /><Toaster /></>, { me: makeMe({ daily: { available: true, streak: 2, nextAmount: 750 } }), api: { claimDaily } });
     expect(screen.getByText('10,000 chips')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Claim daily bonus' }));

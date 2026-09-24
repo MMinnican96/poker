@@ -9,6 +9,10 @@ import {
   type LeaderboardEntry,
   type PlayerStatsSummary,
   type ProfileCard,
+  type ProfileTrophies,
+  type AchievementProgress,
+  type AchievementsResponse,
+  ACHIEVEMENTS,
   type PublicPlayer,
 } from '@poker/shared';
 import type { HandHistoryView } from '../app/api';
@@ -38,9 +42,35 @@ export function makeProfile(patch: Partial<ProfileCard> = {}): ProfileCard {
       totalPlayMs: 3 * 3_600_000 + 20 * 60_000,
     },
     recentForm: [120, -50, -50, 300, 0, -200, 900],
-    badges: [{ id: 'regular', name: 'Regular', description: 'Played 100 hands.' }],
+    trophies: makeTrophies(),
     itemsOwned: 4,
     ...patch,
+  };
+}
+
+export function makeTrophies(patch: Partial<ProfileTrophies> = {}): ProfileTrophies {
+  return {
+    showcase: ['royalty', 'grinder'],
+    auto: false,
+    unlocked: [
+      { id: 'royalty', tier: 1, unlockedAt: '2026-09-20T12:00:00.000Z' },
+      { id: 'grinder', tier: 3, unlockedAt: '2026-09-10T12:00:00.000Z' },
+      { id: 'fresh-cheese', tier: 1, unlockedAt: '2026-08-02T12:00:00.000Z' },
+    ],
+    emblems: 3,
+    total: ACHIEVEMENTS.length,
+    ...patch,
+  };
+}
+
+/** `GET /api/achievements` with every catalog entry, overriding the given ones. */
+export function makeAchievements(
+  progress: Record<string, Partial<Omit<AchievementProgress, 'id'>>> = {},
+  showcase: string[] = [],
+): AchievementsResponse {
+  return {
+    achievements: ACHIEVEMENTS.map((a) => ({ id: a.id, progress: 0, tier: 0, unlocks: [], ...progress[a.id] })),
+    showcase,
   };
 }
 

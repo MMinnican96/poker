@@ -41,12 +41,12 @@ async function balance(c: TestClient): Promise<number> {
   return (await http<PlayerSelf>(server, '/me', { token: c.token })).body.balance;
 }
 
-/** Chips minted by level-ups (the only way chips enter play during a hand). */
+/** Chips minted by level-ups and achievement unlocks (the only ways chips enter play during a hand). */
 async function minted(ids: string[]): Promise<number> {
   let total = 0;
   for (const id of ids) {
     const [row] = await t.db.select({ s: sql<number>`coalesce(sum(amount),0)::int` }).from(chipTransactions)
-      .where(sql`${chipTransactions.playerId} = ${id} and ${chipTransactions.type} = 'level-up'`);
+      .where(sql`${chipTransactions.playerId} = ${id} and ${chipTransactions.type} in ('level-up', 'achievement')`);
     total += Number(row.s);
   }
   return total;
@@ -203,7 +203,7 @@ describe('a full table over sockets', () => {
     expect(await server.services.bank.escrowed(b.id)).toBe(0);
     const [balA, balB] = [await balance(a), await balance(b)];
     expect(balA + balB).toBe(20_000 + (await minted([a.id, b.id])));
-    expect(Math.abs(balA - 10_000)).toBeLessThan(1000);
+    expect(Math.abs(balA - 10_000 - (await minted([a.id])))).toBeLessThan(1000);
     await a.state('me', (m) => m.balance === balA);
     await b.state('me', (m) => m.balance === balB);
     expect(await c.send('watch_table')).toEqual({ ok: false, error: 'There is no table open.' });
@@ -289,13 +289,14 @@ describe('a full table over sockets', () => {
     for (const [itemId, nonce] of [['felt-oxblood', 'nonce-poor-felt'], ['back-navy', 'nonce-poor-back']]) {
       expect((await http(server, '/shop/purchase', { token: poor.token, body: { itemId, nonce } })).status).toBe(200);
     }
-    expect(await balance(poor)).toBe(3000);
+    // Two shop items unlock Collector I (+500 chips).
+    expect(await balance(poor)).toBe(3500);
     await openAndSeat(host, [poor], []);
     expect(await poor.send('take_seat', { seat: 1, buyIn: 4000 }))
       .toEqual({ ok: false, error: "You don't have enough chips for that buy-in." });
-    expect(await balance(poor)).toBe(3000);
+    expect(await balance(poor)).toBe(3500);
     await poor.state('table_state', (v) => v.you.role === 'spectator' && v.seats[1].player === null);
-    expect(await poor.send('take_seat', { seat: 1, buyIn: 3000 })).toEqual({ ok: true });
+    expect(await poor.send('take_seat', { seat: 1, buyIn: 3500 })).toEqual({ ok: true });
     expect(await balance(poor)).toBe(0);
     host.close();
     poor.close();

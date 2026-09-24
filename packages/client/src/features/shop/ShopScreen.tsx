@@ -4,6 +4,7 @@ import {
   LOADOUT_SLOTS,
   formatChips,
   getItem,
+  getTitle,
   isPermanent,
   type ItemCategory,
   type LoadoutSlot,
@@ -22,7 +23,7 @@ export const CATEGORIES: readonly { id: ItemCategory; label: string; intro: stri
   { id: 'felt', label: 'Felts', intro: 'The host picks the felt when they open a table. The felt you equip is the default for tables you open.' },
   { id: 'card-back', label: 'Card backs', intro: 'Everyone at the table sees this on your face-down cards.' },
   { id: 'frame', label: 'Frames', intro: 'Worn around your picture at your seat, in chat and on your profile card.' },
-  { id: 'title', label: 'Titles', intro: 'Shown with your name at your seat and on your profile card.' },
+  { id: 'title', label: 'Titles', intro: 'Shown with your name at your seat and on your profile card. Career challenges and feats earn more; equip those from the trophy cabinet in Challenges.' },
   { id: 'celebration', label: 'Celebrations', intro: 'Goes off over the table when you win a pot.' },
   { id: 'emote-pack', label: 'Emote packs', intro: 'Every emote in a pack you own can be sent from your seat.' },
   { id: 'throwable', label: 'Throwables', intro: "Lob these at another player's seat. Each purchase adds to your supply." },
@@ -221,21 +222,25 @@ function Loadout({ me, onPick }: { me: PlayerSelf; onPick(slot: LoadoutSlot): vo
       <ul className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 @4xl:flex-col @4xl:overflow-visible">
         {LOADOUT_SLOTS.map((slot) => {
           const item = getItem(me.loadout[slot]);
+          // Titles can also be earned (achievement ids have no shop item).
+          const earned = slot === 'title' && !item ? getTitle(me.loadout.title) : undefined;
+          const name = item?.name ?? earned?.text ?? 'None';
+          const isTitle = slot === 'title';
           return (
             <li key={slot} className="w-44 shrink-0 @4xl:w-auto">
               <button
                 type="button"
                 onClick={() => onPick(slot)}
                 className="flex w-full items-center gap-2.5 rounded-lg bg-walnut-950/60 p-1.5 text-left ring-1 ring-inset ring-black/40 hover:ring-walnut-500"
-                aria-label={`${SLOT_LABEL[slot]}: ${item?.name ?? 'None'}. Browse ${SLOT_LABEL[slot].toLowerCase()}s.`}
+                aria-label={`${SLOT_LABEL[slot]}: ${name}. Browse ${SLOT_LABEL[slot].toLowerCase()}s.`}
               >
-                {item && item.visual.kind !== 'title' && <ItemPreview item={item} size={44} className="rounded-md" />}
-                {item?.visual.kind === 'title' && (
+                {item && !isTitle && <ItemPreview item={item} size={44} className="rounded-md" />}
+                {isTitle && (
                   <span className="grid size-11 shrink-0 place-items-center rounded-md bg-walnut-900 font-display text-lg text-brass-light" aria-hidden="true">Aa</span>
                 )}
                 <span className="min-w-0">
                   <span className="block text-[12px] font-semibold text-muted">{SLOT_LABEL[slot]}</span>
-                  <span className="block truncate text-sm font-semibold text-stock">{item?.name ?? 'None'}</span>
+                  <span className="block truncate text-sm font-semibold text-stock">{name}</span>
                 </span>
               </button>
             </li>

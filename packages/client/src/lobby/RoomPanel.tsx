@@ -200,6 +200,7 @@ const KIND_MARK: Record<ActivityEvent['kind'], string> = {
   'rare-hand': 'bg-chip',
   'level-up': 'bg-positive',
   challenge: 'bg-positive',
+  achievement: 'bg-brass-light',
   purchase: 'bg-stock-dim',
   table: 'bg-walnut-400',
 };
@@ -209,7 +210,7 @@ export function ActivityFeed() {
   const profile = useProfileCard();
   const now = useNow();
   if (events.length === 0) {
-    return <EmptyState compact title="Nothing yet" body="Big wins, rare hands and level-ups in this room show up here." />;
+    return <EmptyState compact title="Nothing yet" body="Big wins, rare hands, level-ups and feats in this room show up here." />;
   }
   return (
     <ol className="min-h-0 flex-1 overflow-y-auto px-3 pb-3">

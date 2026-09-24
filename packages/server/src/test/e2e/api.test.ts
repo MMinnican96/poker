@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { ChallengeStatus, LeaderboardResponse, PlayerSelf, ProfileCard } from '@poker/shared';
+import { ACHIEVEMENTS, type ChallengeStatus, type LeaderboardResponse, type PlayerSelf, type ProfileCard } from '@poker/shared';
 import jwt from 'jsonwebtoken';
 import { eq } from 'drizzle-orm';
 import { players } from '../../db/schema.js';
@@ -214,7 +214,8 @@ describe('leaderboard, profiles, stats', () => {
     const b = await signIn(server, uniqueName('Viewer'));
     const card = await http<ProfileCard>(server, `/players/${encodeURIComponent(a.me.id)}/profile`, { token: b.token });
     expect(card.status).toBe(200);
-    expect(card.body).toMatchObject({ id: a.me.id, name: a.me.name, bankroll: 10_000, level: 1, badges: [], recentForm: [] });
+    expect(card.body).toMatchObject({ id: a.me.id, name: a.me.name, bankroll: 10_000, level: 1, recentForm: [],
+      trophies: { showcase: [], auto: true, unlocked: [], emblems: 0, total: ACHIEVEMENTS.length } });
     expect(card.body.stats.handsPlayed).toBe(0);
 
     expect((await http(server, '/players/mock-nobody-here/profile', { token: b.token })).status).toBe(404);

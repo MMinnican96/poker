@@ -16,8 +16,9 @@ one place, `packages/client/src/index.css` (`@theme`); primitives live in
    comes from a token (`bg-walnut-800`, `text-brass`, `shadow-edge-chip`). Write
    no hex values in components. Cosmetic colours (felts, card backs, frames,
    celebrations) come from the shared catalog in `packages/shared/src/shop.ts`
-   through `cosmetics/catalog.ts`. The one exception is the monochrome mask
-   inside `RatbagCrest`.
+   through `cosmetics/catalog.ts`; emblem metals and feat rarity colours come
+   from `TIER_INFO` and `RARITY_COLOURS` in `packages/shared/src/achievements.ts`.
+   The one exception is the monochrome mask inside `RatbagCrest`.
 2. **Build from `src/ui/` first.** Reach for a primitive before writing a new
    styled element; extend the primitive when it falls short.
 3. **Sentence case, plain words** (see [Copy](#copy)).
@@ -122,7 +123,7 @@ Store-free and prop-driven; import from `../ui`.
 | `Panel` | A `Surface` with a heading row and actions (sidebar blocks, sections). |
 | `Modal` | Dialogs. Portal, focus trap, Esc and backdrop close, focus returns to the opener, bottom sheet on narrow screens, body scrolls on short ones. `tone="paper"` for printed things (profile card). `footer` for the action row. |
 | `Drawer` | Side sheets (room panel on small screens, table chat). Same focus rules as `Modal`. |
-| `Tabs` + `tabPanelProps` | Switching views of one thing (room: chat / people / activity). WAI-ARIA tabs with arrow keys, Home, End. |
+| `Tabs` + `tabPanelProps` | Switching views of one thing (room: chat / people / activity; challenges: daily & weekly / career / feats / trophy cabinet). WAI-ARIA tabs with arrow keys, Home, End. |
 | `Switch` | An on/off setting that applies at once (timer ticks). `role="switch"`; name it with `label` or `labelledBy`. |
 | `Segmented` | Picking one value from a few (leaderboard period, blind level). A radio group drawn as chips. |
 | `Field`, `TextInput` | Label, control, hint and error wired together by ids. Inputs sit in a walnut well (`.input`). |
@@ -132,7 +133,7 @@ Store-free and prop-driven; import from `../ui`.
 | `LevelBadge` | Level as a clay chip; with `progress` the edge becomes an XP ring. |
 | `Placard`, `PlacardRow` | Brass sign for table limits and similar fixed facts. |
 | `CountBadge` | Chip-red count for unread or unclaimed items; renders nothing at 0. |
-| `ToastStack` | Card-stock toasts, top-right under the header (full width on phones). Good and info stay 5 s, bad 8 s; hovering holds one for up to 10 s more. Driven by `app/Toaster`. |
+| `ToastStack` | Card-stock toasts, top-right under the header (full width on phones). Good and info stay 5 s, bad 8 s; hovering holds one for up to 10 s more. Driven by `app/Toaster`, which passes `renderArt` to put an unlock notice's emblem beside its text (`ui/` stays free of feature imports). |
 | `EmptyState` | "Nothing here yet". Always say what to do next, usually with one button. |
 | `Spinner` | Loading; its `label` is announced. |
 | `icons` | 24px-grid stroke icons that inherit `currentColor`, decorative by default. Table-only icons are in `table/icons.tsx`. |
@@ -155,10 +156,61 @@ fallback to the free default item when an id is unknown.
 | `fireCelebration`, `CelebrationPreview` | Win celebrations through canvas-confetti (off under reduced motion), and a static preview for the shop |
 | `ItemPreview` | Any item in a square box (shop tiles, pickers) |
 | `RatbagCrest` | The crest as a single-colour print for felt, card backs and the favicon |
+| `Emblem` | An achievement's emblem (see [Emblems](#emblems-and-the-trophy-cabinet)) |
+| `TrophyShelf` | A walnut display shelf of emblems on brass plaques (the trophy cabinet and profile cards) |
 
 Other players always see your cosmetics as the catalog draws them: frame on your
 avatar, card back on your face-down cards, title under your name, celebration
 when you win. The table's felt is the host's pick.
+
+## Emblems and the trophy cabinet
+
+Career challenges and feats each have an emblem, drawn by `cosmetics/Emblem`
+as SVG in a 100×100 box and legible from 24 px (toasts, lists) to 112 px.
+
+- **Career emblems** are struck medallions: a knurled rim, a bevel into a deep
+  field, the glyph in raised relief and five tier pips along the lower rim. The
+  metal is the tier's (`TIER_INFO[tier].colours`: bronze, silver, gold,
+  platinum, diamond, each a light/base/dark triple). Platinum and diamond add an
+  engraved inner line and a star at the crown; diamond adds a prismatic sheen
+  (mixed from catalog colours) and two glints.
+- **Feat emblems** are heater-shield crests in the rarity colour
+  (`RARITY_COLOURS`) with a swallow-tail ribbon carrying one to four diamond
+  marks (common to legendary). Legendary crests have a glint that sweeps across
+  once when they appear and again on hover or when a control around them has
+  keyboard focus (`animate-emblem-shine`, `animate-emblem-shine-again`, only
+  under `motion-safe`; never looping; without motion the crest is simply still).
+- **Locked** emblems are the same shape as a dark walnut silhouette with a faint
+  glyph; a locked secret feat shows "?" instead of its glyph.
+- **Glyphs** come from game-icons.net through `react-icons/gi`, chosen in one
+  typed map (`cosmetics/emblemGlyphs.ts`, `Record<EmblemGlyph, IconType>`), so a
+  new catalog glyph without an icon fails the type-check. Pick icons that read
+  as the concept at 32 px, and keep the credit current (below). Import
+  `cosmetics/Emblem` and `cosmetics/TrophyShelf` by path (they are not in the
+  `cosmetics` index) so the icon set stays in its own chunk, loaded by the
+  screens that show emblems and lazily by the toaster.
+- **Names**: an emblem is an image named like "Grinder III, gold",
+  "Royalty, legendary feat" or "Grinder, locked" (`emblemName`). Pass
+  `decorative` when its name is written next to it. Gradient ids come from
+  `useId`, so any number can share a page.
+- **Colour never alone**: tiers are also written ("Gold · tier III of V") and
+  counted by pips; rarity is written next to its colour dot.
+- **The trophy cabinet** is a walnut frame with a brass hairline around a dark
+  back panel under a pool of lamp light; up to five emblems stand on a plank,
+  each over a small brass plaque with its name, and empty places are dashed
+  outlines. `size` is the largest an emblem gets: each shrinks to its column on
+  narrow screens, so five places never touch at 360 px. The same `TrophyShelf`
+  sits on the paper profile card, where it reads as a photo of the player's
+  shelf.
+- **Credit**: game-icons.net icons are CC BY 3.0, which asks for each author's
+  name. The Trophy cabinet tab's footer names every author ("Emblem icons by
+  Lorc, Delapouite, Skoll and Carl Olsen from game-icons.net, CC BY 3.0") with
+  links, and `packages/client/public/CREDITS.md` lists every glyph's icon and
+  author. A new icon by someone else adds their name to both.
+- **Links to other sites** use `app/ExternalLink`: inside the Discord Activity
+  it opens the page through the SDK's `openExternalLink` (a plain
+  `target="_blank"` link does nothing in the iframe); elsewhere it is a normal
+  new-tab link.
 
 ## Copy
 
@@ -180,7 +232,9 @@ when you win. The table's felt is the host's pick.
   reveals, wins, emotes and throwables, and small responses to input (a button
   pressing down, a dialog rising).
 - UI animations use the tokens `animate-rise`, `animate-fade`,
-  `animate-slide-in` under `motion-safe`. Table animations (`tbl-deal`,
+  `animate-slide-in` under `motion-safe` (and `animate-emblem-shine` /
+  `animate-emblem-shine-again` for legendary feat emblems).
+  Table animations (`tbl-deal`,
   `tbl-board`, `tbl-reveal`, `tbl-pop`, `tbl-emote`, `tbl-splat`,
   `tbl-yourturn`) are defined in `table/table.css` inside
   `prefers-reduced-motion: no-preference`.
