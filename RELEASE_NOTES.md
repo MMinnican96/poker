@@ -1,5 +1,37 @@
 # Release Notes
 
+## Unreleased
+
+### New
+
+- **Show or hide your cards.** Anyone dealt into a hand can show their cards
+  when it ends, even after a fold-out or after folding themselves. Pick "Show
+  cards at the end" during the hand, or "Show cards" / "Hide cards" while the
+  result is up. Cards tabled at showdown stay face up. A choice made mid-hand
+  stays private until the hand is over, and showing keeps the result up a
+  little longer so everyone sees it.
+- **All-new sound.** A full set of table sounds: card deals, flop, turn and
+  river, flips, folds, a knock for a check, and different chip sounds for a
+  call, bet, raise and all-in. Also a chime for your turn, the pot pushed to
+  the winner, your win, a sting when raises pile up, and soft cues for new
+  messages and achievements. Every clip is levelled to the same loudness, and
+  they play through a limiter so a busy table never clips. Your turn chime and
+  timer still play while you're browsing another screen.
+- **Sound settings.** Overall volume, a slider for each kind of sound (chips
+  and actions, cards, your turn and timer, wins and stings, messages) with a
+  "Play a sample" button, and one-tap mute. Open them from the table menu or
+  the lobby header. Your settings are kept on this device.
+- **Timer ticks.** A clock ticks through the last 5 seconds of your turn,
+  whatever the table's turn length. You can turn it off in sound settings.
+
+### Changed
+
+- Under a player's name at showdown you now see just the hand type ("Two
+  pair"); the full hand ("Two pair, jacks and eights") is still on the felt
+  with the result.
+- A hand won by everyone folding now stays on screen for 3.5 seconds, up from
+  2.5.
+
 ## v0.2.0 — The back room (2026-09-24)
 
 A ground-up rebuild of Ratbag Poker Night: new poker engine, a chip bank that

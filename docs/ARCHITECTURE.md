@@ -575,7 +575,7 @@ App ── startSession() ──▶ Session { mode, token, me, instanceId, sdk? 
           ├─ createCommands(socket)    typed, ack'd, 10 s timeout
           ├─ bindSocket(...)           server events → store; on (re)connect: join_room, request_state
           └─ createApi(token)          typed REST client, 401 → "session expired"
-     └─ ClientProvider → NavProvider → ProfileCardProvider → Main + Toaster
+     └─ ClientProvider → NavProvider → ProfileCardProvider → Main + Toaster + AppSounds
 ```
 
 - `app/session.ts`: Discord SDK or mock sign-in (dev build + `?mock`, optional
@@ -602,7 +602,7 @@ the profile card are separate chunks, preloaded when the page is idle.
 ### Design system and cosmetics
 
 - `ui/`: store-free primitives (Button, IconButton, Surface, Panel, Modal,
-  Drawer, Tabs, Segmented, Field, AmountInput, Slider, ChipAmount, Avatar,
+  Drawer, Tabs, Segmented, Switch, Field, AmountInput, Slider, ChipAmount, Avatar,
   LevelBadge, Placard, CountBadge, Toasts, EmptyState, Spinner, icons). See
   DESIGN_STANDARDS.
 - `cosmetics/`: renderers driven by the shared catalog: `Felt` (with the
@@ -638,9 +638,54 @@ the profile card are separate chunks, preloaded when the page is idle.
   toggle during the hand, hidden in an all-in run-out where your hand is tabled
   anyway and on a phone during your turn, then "Show cards"/"Hide cards" beside
   the result), `SeatMenu` (profile, throwables), `EditRulesDialog`, `TopUpDialog`.
-- `table/sound/`: `cues.ts` diffs consecutive views into sound cues (pure),
-  `SoundManager` plays them with Web Audio, `soundStore` keeps mute and volume in
-  localStorage. Clips are in `packages/client/public/audio/`.
+- `table/sound/`: all app audio.
+  - `catalog.ts` names every sound, its group (chips and actions, cards, your
+    turn and timer, wins and stings, messages), its variant files and its pitch
+    jitter.
+  - `cues.ts` diffs consecutive views into cues (pure): new hand → `deal`;
+    board +3 → `flop`, +1 → `card`; another seat's `holeCards` going from
+    null to cards within a hand → `flip` (showdown, run-out or shown by
+    choice; up to three, staggered); last actions → `check`, `call`, `bet`,
+    `raise`, `allin`, `fold`; raises in a row → `suspense` at a rising
+    rate; a result → `pot`, plus `win` if you were paid; your turn → `turn`.
+    `useTableSounds` plays them; the first view after mounting, or after the
+    table view was gone (a reconnect), is only a baseline.
+  - `turnTicks.ts` ticks the last 5 seconds of your turn (urgent for the last
+    3). It plans from `actionEndsAt` against the store's `serverNow()` (local
+    time plus the offset measured when the view arrived), so any turn length
+    works and a late plan (remount, ticks switched back on) still lands on the
+    right seconds. Timers are cleared when the deadline changes, the turn ends
+    or ticks are switched off.
+  - `useAppSounds` (mounted once in `App` as `<AppSounds />`) runs all of it
+    from the store: `useTableSounds` on the store's table view, so your turn
+    chime and ticks sound whichever section you're on (the table screen plays
+    nothing itself), and `appCues.ts`: a pop for a single new chat message or
+    DM from someone else (history loads are quiet), a chime for a new `good`
+    notice.
+  - `SoundManager` is the mixer: source → cue gain → group gain → master gain →
+    `DynamicsCompressor` limiter (threshold -1 dB, hard knee, ratio 20) →
+    makeup trim → speakers. The spec gives the compressor a fixed makeup gain of
+    (1 / curve(0 dBFS))^0.6 (+0.57 dB here); the trim cancels it, so the mix is
+    unchanged unless it would clip. Gains follow an audio taper
+    (slider²) and ramp with `setTargetAtTime`, so changes apply live without
+    clicks. It picks a random variant (never the same twice running), jitters
+    pitch, throttles the same sound within 45 ms, drops cues that can't start
+    within 350 ms (except samples the player asked for), and preloads every clip
+    on the first gesture (or on unmute, if muted then). The context is never
+    suspended when idle: resuming without a gesture isn't reliable everywhere. The
+    AudioContext and fetch are injectable for tests.
+  - `soundStore` keeps `{ muted, master, categories, timerTicks }` in
+    localStorage (`poker.sound`, version 2), validated field by field; the v1
+    `{ muted, volume }` value is migrated (`master` = √`volume`, since v1's volume
+    was linear gain and the mixer now squares the slider). A `storage` event
+    from another tab reloads it.
+  - `SoundSettingsDialog` (all settings, a sample button per group, timer
+    ticks switch, reset) opens from the table menu's Sound section and from the
+    lobby header's sound button (from 480 px up; the header has no room on
+    narrower phones). The top bar keeps a one-tap mute.
+  - Clips live in `packages/client/public/audio/` and are synthesized by
+    `packages/client/scripts/gen-sounds.mjs` (`npm run sounds:generate -w
+    @poker/client`); see its `CREDITS.md`.
 
 ## Testing
 

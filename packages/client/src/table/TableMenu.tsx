@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { formatChips, type TableView } from '@poker/shared';
 import { useCommands, useMe } from '../app/client';
 import { useNav, type Section } from '../app/nav';
@@ -15,15 +15,14 @@ import {
   IconButton,
   SeatIcon,
   ShopIcon,
-  Slider,
   TargetIcon,
   TrophyIcon,
   cx,
   type IconProps,
 } from '../ui';
 import { useRun } from './hooks';
-import { PauseIcon, SoundOffIcon, SoundOnIcon } from './icons';
-import { useSoundSettings } from './sound/soundStore';
+import { PauseIcon } from './icons';
+import { QuickSoundControls, SoundSettingsDialog } from './sound/SoundSettingsDialog';
 import { topUpBounds } from './TopUpDialog';
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
@@ -94,7 +93,11 @@ export interface TableMenuProps {
 export function TableMenu({ open, onClose, view, onTakeSeat, onTopUp, onEditRules, readyCount }: TableMenuProps) {
   const commands = useCommands();
   const nav = useNav();
-  const sound = useSoundSettings();
+  const [soundSettings, setSoundSettings] = useState(false);
+  // The sound dialog belongs to this opening of the menu: closing the menu forgets it.
+  useEffect(() => {
+    if (!open) setSoundSettings(false);
+  }, [open]);
   const [run, busy] = useRun();
   const [confirmClose, setConfirmClose] = useState(false);
   const self = useMe();
@@ -216,25 +219,8 @@ export function TableMenu({ open, onClose, view, onTakeSeat, onTopUp, onEditRule
         )}
 
         <Section title="Sound">
-          <div className="flex items-center gap-3">
-            <IconButton label={sound.muted ? 'Unmute' : 'Mute'} pressed={sound.muted} variant="ghost" size="sm" onClick={() => sound.setMuted(!sound.muted)}>
-              {sound.muted ? <SoundOffIcon size={18} /> : <SoundOnIcon size={18} />}
-            </IconButton>
-            <Slider
-              value={Math.round(sound.volume * 100)}
-              onChange={(v) => {
-                sound.setVolume(v / 100);
-                if (sound.muted && v > 0) sound.setMuted(false);
-              }}
-              min={0}
-              max={100}
-              step={5}
-              label="Volume"
-              valueText={(v) => `${v}%`}
-              disabled={sound.muted}
-              className="flex-1"
-            />
-          </div>
+          <QuickSoundControls />
+          <Button variant="ghost" size="sm" onClick={() => setSoundSettings(true)}>All sound settings</Button>
         </Section>
 
         <Section title="Elsewhere">
@@ -259,6 +245,7 @@ export function TableMenu({ open, onClose, view, onTakeSeat, onTopUp, onEditRule
           </ul>
         </Section>
       </div>
+      <SoundSettingsDialog open={open && soundSettings} onClose={() => setSoundSettings(false)} />
     </Drawer>
   );
 }

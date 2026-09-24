@@ -48,9 +48,11 @@ packages/
     cosmetics/  catalog-driven renderers (Felt, CardBack, PlayingCard, AvatarFrame...)
     lobby/      Shell, NavBar, Header, RoomPanel, TableHome, MiniTable, dialogs
     table/      TableScreen, TableStage, layout.ts (geometry engine), Seat, ActionBar,
-                PreActions, FxLayer, TopBar, TableMenu, HeroDock, sound/
+                PreActions, FxLayer, TopBar, TableMenu, HeroDock,
+                sound/ (catalog, cues, turn-timer ticks, mixer, settings store + dialog)
     features/   leaderboard, stats, challenges, shop, messages, profile (lazy chunks)
     index.css   every design token (@theme)
+  client/scripts/gen-sounds.mjs   synthesizes every clip in client/public/audio/
 ```
 
 ## Running
@@ -70,6 +72,7 @@ packages/
 | `npm run build` | Type-check and build shared, server, client |
 | `npm test` | Server (type-checks tests, then Vitest incl. e2e on PGlite) and client (Vitest + RTL) |
 | `npm test -w @poker/shared` | Shared package tests (the root `npm test` leaves these out) |
+| `npm run sounds:generate -w @poker/client` | Re-synthesize the sound clips (deterministic; prints loudness per clip) |
 | `npm run db:migrate` | Apply migrations to `DATABASE_URL` by hand (boot does this too) |
 | `npm run db:generate -w @poker/server` | Generate a migration from `schema.ts` |
 | `npm run stats:recompute` | Rebuild `player_stats` from the `player_hand_stats` facts |

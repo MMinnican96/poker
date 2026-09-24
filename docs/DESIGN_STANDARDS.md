@@ -123,6 +123,7 @@ Store-free and prop-driven; import from `../ui`.
 | `Modal` | Dialogs. Portal, focus trap, Esc and backdrop close, focus returns to the opener, bottom sheet on narrow screens, body scrolls on short ones. `tone="paper"` for printed things (profile card). `footer` for the action row. |
 | `Drawer` | Side sheets (room panel on small screens, table chat). Same focus rules as `Modal`. |
 | `Tabs` + `tabPanelProps` | Switching views of one thing (room: chat / people / activity). WAI-ARIA tabs with arrow keys, Home, End. |
+| `Switch` | An on/off setting that applies at once (timer ticks). `role="switch"`; name it with `label` or `labelledBy`. |
 | `Segmented` | Picking one value from a few (leaderboard period, blind level). A radio group drawn as chips. |
 | `Field`, `TextInput` | Label, control, hint and error wired together by ids. Inputs sit in a walnut well (`.input`). |
 | `AmountInput`, `Slider` | Chip amounts: slider plus typed number, clamped and snapped, with optional presets (buy-in, top-up, raise). |
@@ -187,7 +188,45 @@ when you win. The table's felt is the host's pick.
   transitions to effectively zero; nothing flies across the felt (`FxLayer`),
   emotes and splats still appear briefly, and celebrations don't fire. Every
   state must read correctly without its animation.
-- Sounds follow the same events and respect the mute and volume settings.
+- Sounds follow the same events (see [Sound](#sound)).
+
+## Sound
+
+Sound is a card room, not an arcade: clay chips, cards on baize, knuckles on the
+rail, and a few soft musical cues. It should sit under voice chat, never over it.
+
+- **Groups.** Every sound belongs to one group with its own volume: chips and
+  actions (check, call, bet, raise, all-in), cards (deal, flop, turn/river card,
+  flip, fold), your turn and timer (turn chime, ticks), wins and stings (pot,
+  your win, suspense, achievement), and messages. Defaults: master 70%, groups
+  70 to 80%. Sliders map to gain as slider², and a limiter on the master stops
+  overlapping sounds from clipping without making anything louder (its makeup
+  gain is cancelled).
+- **Loudness.** Clips are normalized by the generator to a short-term loudness
+  target (loudest 100 ms, K-weighted), with peaks at or under -1 dBFS:
+
+  | Group | Target |
+  |---|---|
+  | Actions | -23 (check, call) to -20 (all-in): bigger moves are a little louder |
+  | Cards | -24 to -26 (fold quietest) |
+  | Alerts | turn chime -24, tick -30, urgent tick -26 |
+  | Wins and stings | pot -22, win -21, suspense and achievement -23 |
+  | Messages | -27 |
+
+  A new clip gets a target from its group and sits within 1 to 2 dB of its
+  neighbours. Keep clips short (most under 0.6 s), fade both edges, keep energy
+  above 8 kHz low, and give sounds that repeat often 2 to 4 variants.
+- **When to add a cue.** Only for something the player should notice without
+  looking: a game event on the felt, their turn or clock, or news meant for
+  them. Say it once (no cue for a state that merely persists), keep it in the
+  pure diff (`cues.ts` or `appCues.ts`) with a test, and put it in a group.
+  Don't add sounds for UI chrome (opening menus, hovering).
+- **Controls.** The top bar has one-tap mute ("Mute sounds", a pressed toggle
+  with a ring while muted: toggles keep one name and use `pressed`).
+  The table menu has mute, the master slider and "All sound settings"; the
+  lobby header's sound button (480 px and up) opens the same dialog (a slider and a "Play a
+  sample" button per group, the timer ticks switch, "Reset to defaults").
+  Settings are saved per browser and apply live.
 
 ## Accessibility
 

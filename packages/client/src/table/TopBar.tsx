@@ -163,7 +163,13 @@ export function TopBar({ view, unseenChat, onOpenChat, onOpenMenu }: TopBarProps
         </IconButton>
         <CountBadge count={unseenChat} label={['new chat message', 'new chat messages']} className="pointer-events-none absolute -top-1 -right-1" />
       </span>
-      <IconButton label={sound.muted ? 'Unmute sounds' : 'Mute sounds'} size="sm" pressed={sound.muted} onClick={() => sound.setMuted(!sound.muted)}>
+      <IconButton
+        label="Mute sounds"
+        size="sm"
+        pressed={sound.muted}
+        onClick={() => sound.setMuted(!sound.muted)}
+        className={sound.muted ? 'ring-1 ring-inset ring-chip-light/70' : undefined}
+      >
         {sound.muted ? <SoundOffIcon size={19} /> : <SoundOnIcon size={19} />}
       </IconButton>
       <LeaveButton view={view} leaving={leaving} busy={busy === 'leave'} onLeave={() => void run('leave', commands.leaveTable)} />

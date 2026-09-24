@@ -3,6 +3,9 @@ import { formatChips } from '@poker/shared';
 import { useApi, useMe, useStore } from '../app/client';
 import { useProfileCard } from '../app/nav';
 import { Avatar, Button, ChipAmount, CountBadge, GiftIcon, IconButton, LevelBadge, UsersIcon } from '../ui';
+import { SoundOffIcon, SoundOnIcon } from '../table/icons';
+import { SoundSettingsDialog } from '../table/sound/SoundSettingsDialog';
+import { useSoundSettings } from '../table/sound/soundStore';
 
 /** The round logo (a small WebP of the brand art): its white corners are cropped away by the circle. */
 export function BrandMark({ size = 36 }: { size?: number }) {
@@ -28,6 +31,8 @@ export function Header({ showRoomButton, onOpenRoom, unseenChat }: HeaderProps) 
   const store = useStore();
   const profile = useProfileCard();
   const [claiming, setClaiming] = useState(false);
+  const [soundOpen, setSoundOpen] = useState(false);
+  const muted = useSoundSettings().muted;
 
   const claimDaily = async () => {
     setClaiming(true);
@@ -60,6 +65,14 @@ export function Header({ showRoomButton, onOpenRoom, unseenChat }: HeaderProps) 
         <span className="sr-only">Bankroll: </span>
         <ChipAmount value={me.balance} size="lg" className="text-[17px] sm:text-xl" short={false} />
       </div>
+
+      {/* Hidden on the narrowest phones, where the header has no room; the table menu has the same dialog. */}
+      <span className="hidden xs:inline-flex">
+        <IconButton label={muted ? 'Sound settings (muted)' : 'Sound settings'} size="sm" onClick={() => setSoundOpen(true)}>
+          {muted ? <SoundOffIcon size={19} /> : <SoundOnIcon size={19} />}
+        </IconButton>
+      </span>
+      <SoundSettingsDialog open={soundOpen} onClose={() => setSoundOpen(false)} />
 
       <button
         type="button"

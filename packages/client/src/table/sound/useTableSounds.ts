@@ -1,47 +1,35 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useSyncExternalStore } from 'react';
 import type { TableView } from '@poker/shared';
 import { INITIAL_CUE_STATE, soundCues, type CueState } from './cues';
-import { createSoundManager, type SoundManager } from './SoundManager';
+import type { SoundManager } from './SoundManager';
 import { getSoundSettings, subscribeSoundSettings } from './soundStore';
+import { useTurnTicks } from './turnTicks';
 
-let shared: SoundManager | null = null;
-/** One sound manager (and AudioContext) for the app. */
-export function tableSoundManager(): SoundManager {
-  if (!shared) shared = createSoundManager();
-  return shared;
-}
+const timerTicksOn = () => getSoundSettings().timerTicks;
 
 /**
- * Plays table sounds for each new table view (see `soundCues`). Unlocks audio on
- * the first pointer or key press, and follows the mute/volume settings.
+ * Plays table sounds for each new table view (see `soundCues`) and ticks the
+ * last seconds of your turn (see `useTurnTicks`). `serverNow` reads the server
+ * clock. Mounted once at app level (`useAppSounds`), so your turn still sounds
+ * while you browse another section. The first view (after mounting, or after
+ * the view was gone) only sets a baseline: nothing is replayed.
  */
-export function useTableSounds(view: TableView | null, manager: SoundManager = tableSoundManager()): void {
+export function useTableSounds(view: TableView | null, manager: SoundManager, serverNow: () => number = Date.now): void {
   const prev = useRef<TableView | null>(null);
   const state = useRef<CueState>(INITIAL_CUE_STATE);
-
-  useEffect(() => {
-    manager.setSettings(getSoundSettings());
-    const unsub = subscribeSoundSettings(() => manager.setSettings(getSoundSettings()));
-    const unlock = () => manager.unlock();
-    window.addEventListener('pointerdown', unlock, { capture: true });
-    window.addEventListener('keydown', unlock, { capture: true });
-    return () => {
-      unsub();
-      window.removeEventListener('pointerdown', unlock, { capture: true });
-      window.removeEventListener('keydown', unlock, { capture: true });
-    };
-  }, [manager]);
+  const timerTicks = useSyncExternalStore(subscribeSoundSettings, timerTicksOn, timerTicksOn);
+  useTurnTicks(view, manager, timerTicks, serverNow);
 
   useEffect(() => {
     if (view === prev.current) return;
-    // The first view after mounting only sets the baseline (no replayed sounds).
-    if (prev.current === null) {
+    if (prev.current === null || view === null) {
       prev.current = view;
+      state.current = INITIAL_CUE_STATE;
       return;
     }
     const { cues, state: nextState } = soundCues(prev.current, view, state.current);
     state.current = nextState;
     prev.current = view;
-    for (const cue of cues) manager.play(cue.name, { rate: cue.rate, gain: cue.gain });
+    for (const cue of cues) manager.play(cue.name, { rate: cue.rate, gain: cue.gain, delay: cue.delay });
   }, [view, manager]);
 }

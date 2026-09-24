@@ -10,7 +10,6 @@ import { IdleMessage } from './CenterCluster';
 import { EditRulesDialog } from './EditRulesDialog';
 import { HeroDock } from './HeroDock';
 import { useCountdown, useRun } from './hooks';
-import { useTableSounds } from './sound/useTableSounds';
 import { TableMenu } from './TableMenu';
 import { TableStage } from './TableStage';
 import { TopBar } from './TopBar';
@@ -99,7 +98,6 @@ function Table({ view }: { view: TableView }) {
   const [chat, setChat] = useState(false);
   const unseen = useUnseenRoomMessages(chat);
   const [run, busy] = useRun();
-  useTableSounds(view);
 
   const { you, rules } = view;
   const yourTurn = !!you.legal && !!view.hand && !view.hand.result;
