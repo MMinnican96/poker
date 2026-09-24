@@ -1,397 +1,242 @@
-# Design Standards — Ratbag Poker Night
+# Design standards: the back room
 
-This document is the single reference for visual style in the Discord Poker client.
-All new pages and components must follow it. Tokens live in
-[`packages/client/src/index.css`](../packages/client/src/index.css); never hardcode
-hex values in component files.
+Ratbag Poker Night looks like the rat's card club from the logo: a walnut room,
+baize felt, card-stock paper and brass fittings. Surfaces read as materials
+(wood grain, cloth, paper) rather than glossy gradients. The one bold element is
+the felt, printed with the Ratbag crest like club baize. Motion is kept for game
+events and for responses to the player.
 
----
+This page is the reference for building UI in `packages/client`. Tokens live in
+one place, `packages/client/src/index.css` (`@theme`); primitives live in
+`src/ui/`; cosmetic renderers live in `src/cosmetics/`.
 
-## Foundations
+## Rules
 
-### Felt background
+1. **Tokens only.** Every colour, font, shadow and animation in a component
+   comes from a token (`bg-walnut-800`, `text-brass`, `shadow-edge-chip`). Write
+   no hex values in components. Cosmetic colours (felts, card backs, frames,
+   celebrations) come from the shared catalog in `packages/shared/src/shop.ts`
+   through `cosmetics/catalog.ts`. The one exception is the monochrome mask
+   inside `RatbagCrest`.
+2. **Build from `src/ui/` first.** Reach for a primitive before writing a new
+   styled element; extend the primitive when it falls short.
+3. **Sentence case, plain words** (see [Copy](#copy)).
+4. **Accessible by default**: 4.5:1 text contrast, visible focus, full keyboard
+   use, reduced motion respected (see [Accessibility](#accessibility)).
 
-The root canvas of every page uses the `.felt-bg` component class:
+## Tokens
 
-```css
-.felt-bg {
-  background: radial-gradient(120% 90% at 50% -10%, #1d6044 0%, #134632 42%, #0b2c1f 100%);
-}
-```
+### Colour
 
-Apply it to the outermost container (usually the element that fills the viewport).
-
-### Fonts
-
-| Role | Family | Tailwind utility | Use for |
-|---|---|---|---|
-| Display | Fredoka 400–700 | `font-display` | Headings, labels, chip counts, numbers, tab names |
-| Body | Nunito 400–900 | `font-body` | Prose, descriptions, helper text |
-
-`font-body` is set on `<body>` in the base layer, so it is inherited everywhere.
-Switch to `font-display` explicitly on any element that is a heading, large number,
-or label.
-
-### Color tokens
-
-All tokens are declared in `@theme` inside `packages/client/src/index.css` and map
-directly to Tailwind utilities (`bg-*`, `text-*`, `border-*`).
-
-#### Felt + panels
-
-| Token name | Hex | Tailwind utilities |
+| Token | Hex | Use |
 |---|---|---|
-| `felt-900` | `#0b2c1f` | `bg-felt-900` / `text-felt-900` |
-| `felt-800` | `#0e3325` | `bg-felt-800` |
-| `felt-700` | `#134632` | `bg-felt-700` |
-| `felt-600` | `#163f2e` | `bg-felt-600` |
-| `felt-500` | `#1c4836` | `bg-felt-500` |
-| `felt-400` | `#1d6044` | `bg-felt-400` |
-| `felt-300` | `#2c5d48` | `bg-felt-300` |
-| `ink` | `#0c2418` | `bg-ink` / `text-ink` / `border-ink` |
+| `walnut-950` | `#120c09` | Deepest wells, input backgrounds, hard shadows |
+| `walnut-900` | `#1b130f` | Page background (`body`) |
+| `walnut-800` | `#2a1d17` | Default panels (`Surface tone="walnut"`), sidebar |
+| `walnut-700` | `#3a2920` | Raised chrome, danger button body |
+| `walnut-600` | `#4e382b` | Panel rings, input borders, avatar fallback |
+| `walnut-500` | `#6b4f3d` | Scrollbars, dividers |
+| `walnut-400` | `#8d6d57` | Placeholders (decorative only, not body text) |
+| `baize` | `#1f5b3f` | Felt, game surfaces |
+| `baize-light` | `#2b7150` | Felt highlights |
+| `baize-deep` | `#0f3526` | Felt shadow, wells on felt |
+| `chip` | `#c22328` | Primary action, danger, counts. Card stock on it is 4.76:1. |
+| `chip-light` | `#de4046` | Primary hover, timer's last quarter |
+| `chip-dark` | `#8a171c` | Chip edge shadow, alert strips |
+| `stock` | `#f3e6c8` | Text on dark, paper surfaces |
+| `stock-dim` | `#dccca8` | Secondary text on dark |
+| `stock-edge` | `#c9b68f` | Paper edges and rings |
+| `ink` | `#2b1d15` | Text on paper and on brass buttons |
+| `ink-soft` | `#6a5443` | Secondary text on paper |
+| `brass` | `#d9a441` | Chips, highlights, placards, secondary buttons |
+| `brass-light` | `#efc877` | Brass hover, links on dark, focus |
+| `brass-dark` | `#94691f` | Brass edge shadow, screws |
+| `ink-brass` | `#4d3829` | Engraved text on brass (4.88:1) |
+| `bronze` | `#805a1a` | Third-place plate (5:1 with card stock) |
+| `positive` | `#6fc48a` | Wins, gains |
+| `negative` | `#ef6a5f` | Losses, errors, invalid inputs |
+| `muted` | `#b09a80` | Quiet text on dark |
+| `focus` | `#efc877` | Focus outline |
+| `suit-red` | `#b8232a` | Hearts and diamonds on card stock |
+| `suit-black` | `#1d1612` | Clubs and spades on card stock |
 
-Use `felt-900` for the deepest backgrounds (modals, popout backdrops). Use
-`felt-500`/`felt-600` for panel interiors. `ink` is the hard-shadow and border
-accent color.
+Pairings that pass 4.5:1 and are the defaults: `stock` on any walnut or baize,
+`ink` on `stock` and on `brass`, `ink-brass` on `brass`, `stock` on `chip` and
+`bronze`. Sign carries meaning twice: winnings get `+` and `positive`, losses
+`-` and `negative` (`ChipAmount signed`).
 
-#### Gold
+### Type
 
-| Token name | Hex | Tailwind utilities |
+| Token | Face | Use |
 |---|---|---|
-| `gold` | `#ffc63d` | `bg-gold` / `text-gold` |
-| `gold-border` | `#c8920d` | `border-gold-border` |
-| `gold-shadow` | `#ad7a04` | (used directly in shadow tokens) |
-| `gold-soft` | `#ffd882` | `text-gold-soft` |
+| `font-display` | Alfa Slab One | `h1`–`h3`, pot and stack numbers, big chip amounts (`ChipAmount size="lg"/"xl"`), level numbers |
+| `font-ui` | Barlow 400–700 | Everything else (body default) |
+| `font-condensed` | Barlow Condensed 600–700 | Tight labels: seat plates, badges, initials, tags |
 
-Primary accent color — active tab highlights, primary CTAs, chip counts, host badge.
+Fonts are self-hosted through `@fontsource` (imported in `main.tsx`); Discord's
+Activity CSP blocks external font origins. Numbers that line up use the
+`.tabular` class (`ChipAmount` does this for you).
 
-#### Accents
+Scale in use (px): 11 (fine print, seat tags), 12 (meta, captions), 13 (small
+buttons, secondary text), 14 (`text-sm`), 15 (body and default buttons), 16–17
+(large buttons, emphasis), 18 (`text-lg`, panel headings), 20 (`text-xl`),
+24 (`text-2xl`, screen titles), 30 (`text-3xl`, hero numbers). The body is 15px
+with 1.45 line height; headings are 1.1.
 
-| Token name | Hex | Tailwind utilities |
-|---|---|---|
-| `mint` | `#44e0a3` | `bg-mint` / `text-mint` |
-| `mint-bright` | `#7df0c4` | `text-mint-bright` |
-| `mint-border` | `#1e9e6e` | `border-mint-border` |
-| `blue` | `#5bb8ff` | `bg-blue` / `text-blue` |
-| `blue-border` | `#2e86c8` | `border-blue-border` |
-| `red` | `#ff6b6b` | `bg-red` / `text-red` |
-| `red-border` | `#d63d3d` | `border-red-border` |
-| `red-shadow` | `#b32e2e` | (used directly in shadow tokens) |
-| `purple` | `#b07bff` | `bg-purple` / `text-purple` |
+### Shadows, radii, textures
 
-Semantic: `mint` = ready / success; `blue` = in-game / info; `red` = cancel / danger;
-`gold` = host / active.
-
-#### Text
-
-| Token name | Hex | Tailwind utilities |
-|---|---|---|
-| `cream` | `#f4f1e8` | `text-cream` |
-| `sage` | `#7fb89c` | `text-sage` |
-| `sage-light` | `#9ed7bd` | `text-sage-light` |
-| `sage-muted` | `#8fbfa8` | `text-sage-muted` |
-
-`cream` for primary content text on dark backgrounds. `sage` / `sage-muted` for
-secondary labels and helper text.
-
----
-
-## Elevation & shadows
-
-All shadows are design tokens in `@theme`. Never write a raw `box-shadow` value in
-a component.
-
-### Hard-offset button shadows
-
-The "chunky" look uses a flat, coloured offset with no blur — like a physical
-offset stamp. These are for interactive elements (buttons, pills, badges).
-
-| Token | Value | Tailwind utility | Use for |
-|---|---|---|---|
-| `shadow-hard-ink` | `0 4px 0 #0c2418` | `shadow-hard-ink` | Default interactive elements |
-| `shadow-hard-ink-sm` | `0 3px 0 #0c2418` | `shadow-hard-ink-sm` | Smaller controls (stepper buttons) |
-| `shadow-hard-gold` | `0 4px 0 #ad7a04` | `shadow-hard-gold` | Gold/primary CTAs |
-| `shadow-hard-gold-lg` | `0 6px 0 #ad7a04` | `shadow-hard-gold-lg` | Large primary CTAs |
-| `shadow-hard-red` | `0 4px 0 #b32e2e` | `shadow-hard-red` | Destructive/cancel buttons |
-| `shadow-pill` | `0 5px 0 #061710` | `shadow-pill` | Status pills and straddled labels |
-
-### Panel & container shadows
-
-These use diffuse outer glow plus an inner top-edge highlight to give depth.
-
-| Token | Value | Tailwind utility | Use for |
-|---|---|---|---|
-| `shadow-card` | `0 6px 0 rgba(0,0,0,.22)` | `shadow-card` | Compact cards (player rows, aside items) |
-| `shadow-panel` | `0 16px 36px rgba(0,0,0,.35), inset 0 2px 0 rgba(255,255,255,.04)` | `shadow-panel` | Side panels, rail asides |
-| `shadow-tablecard` | `0 20px 44px rgba(0,0,0,.42), inset 0 2px 0 rgba(255,255,255,.06)` | `shadow-tablecard` | The center content card (Table Settings) |
-| `shadow-modal` | `0 26px 60px rgba(0,0,0,.55), inset 0 2px 0 rgba(255,255,255,.06)` | `shadow-modal` | Full modals |
-| `shadow-popout` | `0 22px 50px rgba(0,0,0,.5), inset 0 2px 0 rgba(255,255,255,.06)` | `shadow-popout` | Popout menus anchored to a trigger |
-
----
-
-## Radii & shape
-
-Use rounded classes from the Tailwind scale plus the custom `rounded-pill` token.
-
-| Class | Radius | Use for |
-|---|---|---|
-| `rounded-xl` | 12px | Small controls, avatar image borders |
-| `rounded-2xl` | 16px | Stepper rows, stat tiles, player row buttons, nav tabs |
-| `rounded-3xl` | 24px | Aside panels |
-| `rounded-[26px]` | 26px | Modal container |
-| `rounded-[28px]` | 28px | Large content card (Table Settings) |
-| `rounded-pill` | 999px | Status badges, pills, scrollbar thumbs — anything that should be fully rounded |
-
----
-
-## Components
-
-### Chunky button
-
-The primary interaction element: solid fill, hard offset shadow, presses down on
-`:active`.
-
-```html
-<!-- Gold primary CTA -->
-<button class="rounded-2xl border-[3px] border-gold-border bg-gold
-               px-6 py-[18px] font-display text-[21px] font-semibold
-               text-[#2a1c00] shadow-hard-gold-lg
-               transition-transform hover:-translate-y-px active:translate-y-1
-               disabled:cursor-not-allowed disabled:opacity-50">
-  Start Game
-</button>
-
-<!-- Red destructive button -->
-<button class="rounded-2xl border-[2.5px] border-red-border bg-red
-               px-6 py-[15px] font-display text-base font-semibold
-               text-white shadow-hard-red active:translate-y-[3px]">
-  Cancel
-</button>
-
-<!-- Ink (neutral) button -->
-<button class="rounded-xl border-[2.5px] border-ink bg-felt-300
-               font-display text-2xl leading-none text-cream
-               shadow-hard-ink-sm active:translate-y-0.5">
-  −
-</button>
-```
-
-Key recipe: `border-[color]` + matching `bg` + `shadow-hard-*` + `active:translate-y-*`.
-The translation on `:active` simulates the shadow collapsing.
-
-### Panel / aside card
-
-Side panels use a semi-transparent background with the panel shadow and a
-strong border:
-
-```html
-<aside class="rounded-3xl border-[2.5px] border-black/30 bg-felt-900/55 shadow-panel">
-  ...
-</aside>
-```
-
-The center content card uses a slightly higher-elevation treatment:
-
-```html
-<div class="rounded-[28px] border-[2.5px] border-black/30 bg-felt-500 shadow-tablecard">
-  ...
-</div>
-```
-
-### Pill / badge
-
-Status labels and straddled headings:
-
-```html
-<!-- Status pill (mint = Ready, gold = In Lobby, blue = In-Game) -->
-<span class="inline-flex items-center gap-1.5 rounded-pill
-             px-2.5 py-1 text-[11px] font-extrabold
-             bg-mint/15 text-mint-bright">
-  <span class="h-2 w-2 rounded-pill bg-mint" />
-  Ready
-</span>
-
-<!-- Straddled label pill (sits at the top of the card) -->
-<div class="absolute left-1/2 top-0.5 z-[4]
-            -translate-x-1/2 flex items-center gap-2.5
-            rounded-pill border-[2.5px] border-ink bg-felt-800
-            py-2 pl-[18px] pr-2.5 shadow-pill">
-  <span class="font-display text-[13px] font-semibold tracking-[0.12em] text-[#cfeadd]">
-    READY STATUS
-  </span>
-  ...
-</div>
-```
-
-### Stepper row
-
-A labeled row containing − / value / + controls:
-
-```html
-<div class="flex items-center justify-between gap-3.5
-            rounded-2xl border-2 border-black/30 bg-felt-600
-            py-[15px] pl-[22px] pr-4">
-  <div class="flex flex-col leading-tight">
-    <span class="text-xs font-extrabold tracking-[0.12em] text-sage">BUY-IN</span>
-    <span class="mt-[3px] font-display text-[15px] font-semibold text-sage-light">
-      Chips to sit down
-    </span>
-  </div>
-  <div class="flex items-center gap-3">
-    <button aria-label="Decrease buy-in" ...>−</button>
-    <span class="min-w-[78px] text-center font-display text-[26px] font-bold text-gold">
-      3,000
-    </span>
-    <button aria-label="Increase buy-in" ...>+</button>
-  </div>
-</div>
-```
-
-Always provide `aria-label` on the − and + buttons — tests match on them.
-When `canEditConfig` is false, replace the stepper controls with the plain value span.
-
-### Stat tile
-
-`StatTile` from `packages/client/src/lobby/StatTile.tsx`:
-
-```tsx
-<StatTile label="WIN RATE" value="58%" />
-<StatTile label="HANDS WON" value={null} />  {/* renders — */}
-<StatTile label="BIGGEST POT" value="12,500" accent="#ffc63d" />
-```
-
-Structure:
-
-```html
-<div class="rounded-2xl border-2 border-black/30 bg-felt-600 p-4">
-  <div class="font-display text-2xl font-bold text-cream">58%</div>
-  <div class="mt-1 text-[11px] font-extrabold tracking-[0.08em] text-sage">WIN RATE</div>
-</div>
-```
-
-Always pass `null` (never `undefined`) when data is unavailable; the component
-renders `—` (em-dash, U+2014).
-
-### Modal
-
-Full overlay modal, animated with `animate-pop`:
-
-```html
-<!-- Backdrop -->
-<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
-     onClick={onClose}>
-  <!-- Card — stop propagation so clicks inside don't dismiss -->
-  <div class="animate-pop relative w-full max-w-sm rounded-[26px]
-              border-[2.5px] border-black/30 bg-felt-800 p-7 shadow-modal"
-       onClick={e => e.stopPropagation()}>
-    ...
-  </div>
-</div>
-```
-
-The `animate-pop` animation (`rpn-pop` keyframe: scale 0.92→1, translateY 6px→0,
-opacity 0→1, 0.18s with overshoot easing) is defined in `index.css` and used for
-all modals and popouts that appear on user interaction.
-
-### Popout
-
-Anchored panel, animated with `animate-fade`:
-
-```html
-<div class="animate-fade absolute right-4 top-full z-40 mt-2
-            w-[340px] rounded-[26px] border-[2.5px] border-black/30
-            bg-felt-800 shadow-popout overflow-hidden">
-  ...
-</div>
-```
-
-`animate-fade` (`rpn-fade`: opacity 0→1, 0.15s ease) is subtler than `animate-pop`
-and suits anchored panels that don't need an entry bounce.
-
----
-
-## Interaction conventions
-
-| State | Class recipe |
+| Token | Use |
 |---|---|
-| Hover lift (buttons, rows) | `transition-transform hover:-translate-y-px` |
-| Hover slide (player rows) | `transition-transform hover:translate-x-0.5 hover:bg-white/10` |
-| Active press (button shadow collapse) | `active:translate-y-[3px]` (large) or `active:translate-y-0.5` (small) |
-| Disabled | `disabled:opacity-50 disabled:cursor-not-allowed` |
-| Focus ring | Inherited browser default; do not remove `outline` without an equivalent |
+| `shadow-edge-chip`, `shadow-edge-brass`, `shadow-edge-walnut` | The hard 3px bottom edge under raised buttons, read as a clay chip's thickness; removed on press |
+| `shadow-panel` | Walnut panels |
+| `shadow-inset-well` | Recessed wells, inputs, slider track |
+| `shadow-felt` | Inner shade on felt |
+| `shadow-placard` | Brass plates |
+| `shadow-card` | Playing cards, paper surfaces |
+| `shadow-lift` | Floating layers (menus, dialogs) |
+| `rounded-chip` | Fully round (chips, pills) |
+| `tex-wood`, `tex-grain` | SVG noise that makes walnut read as wood and felt/paper read as cloth/paper |
+| `lamp-glow` | Warm light pool over the table area |
 
-The lift and press amounts are intentionally asymmetric (lift 1px, press 3px for
-large CTAs) to make the animation feel snappy rather than mechanical.
+### Breakpoints and variants
 
----
+| Name | Where | Use |
+|---|---|---|
+| `xs` | ≥ 30rem (480px) | Small phone to large phone tweaks |
+| `sm` | ≥ 640px | Nav becomes a side rail (bottom tab bar below) |
+| `lg` | ≥ 1024px | Room sidebar shown (a drawer below) |
+| `xl` | ≥ 1280px | Wider sidebar |
+| `short:` | height ≤ 520px | Compact vertical spacing, smaller art (the 640×360 Activity window) |
 
-## Layout
+Feature screens also use container queries (`@container` on `main`).
 
-### 3-column lobby grid
+## Components (`src/ui/`)
 
-The lobby uses a `flex` row at the page level with three regions:
+Store-free and prop-driven; import from `../ui`.
 
-```
-┌──────────────────────────────────────────────────────┐
-│  Header (flex-none, full-width)                      │
-├─────────────┬─────────────────────┬──────────────────┤
-│ PlayersPanel│  Center (main)      │  RecentActivity  │
-│ (left aside)│  flex-1, scrollable │  (right rail)    │
-│  ~270px     │                     │  hidden < 1080px │
-└─────────────┴─────────────────────┴──────────────────┘
-```
+| Component | Use it for |
+|---|---|
+| `Button` | Every text button. `primary` (chip red) for the one main action in a view; `brass` for secondary emphasis; `ghost` for neutral alternatives; `danger` for destructive actions; `quiet` for low-priority text actions. Sizes `sm`/`md`/`lg`. `loading` keeps the width and disables it. |
+| `IconButton` | Icon-only actions; `label` is required and becomes the accessible name. |
+| `Surface` | Any box with a material: `walnut` (default panel), `well` (recessed list or input area), `baize` (game areas), `paper` (card stock with ink text). |
+| `Panel` | A `Surface` with a heading row and actions (sidebar blocks, sections). |
+| `Modal` | Dialogs. Portal, focus trap, Esc and backdrop close, focus returns to the opener, bottom sheet on narrow screens, body scrolls on short ones. `tone="paper"` for printed things (profile card). `footer` for the action row. |
+| `Drawer` | Side sheets (room panel on small screens, table chat). Same focus rules as `Modal`. |
+| `Tabs` + `tabPanelProps` | Switching views of one thing (room: chat / people / activity). WAI-ARIA tabs with arrow keys, Home, End. |
+| `Segmented` | Picking one value from a few (leaderboard period, blind level). A radio group drawn as chips. |
+| `Field`, `TextInput` | Label, control, hint and error wired together by ids. Inputs sit in a walnut well (`.input`). |
+| `AmountInput`, `Slider` | Chip amounts: slider plus typed number, clamped and snapped, with optional presets (buy-in, top-up, raise). |
+| `ChipAmount`, `ChipGlyph` | Any chip count. `short` for tight spaces (12.3k), `signed` for results. The full amount is always in the accessible label. |
+| `Avatar` | Player picture inside their frame cosmetic, initials fallback, optional presence dot. Decorative: put the name next to it. |
+| `LevelBadge` | Level as a clay chip; with `progress` the edge becomes an XP ring. |
+| `Placard`, `PlacardRow` | Brass sign for table limits and similar fixed facts. |
+| `CountBadge` | Chip-red count for unread or unclaimed items; renders nothing at 0. |
+| `ToastStack` | Card-stock toasts, top-right under the header (full width on phones). Good and info stay 5 s, bad 8 s; hovering holds one for up to 10 s more. Driven by `app/Toaster`. |
+| `EmptyState` | "Nothing here yet". Always say what to do next, usually with one button. |
+| `Spinner` | Loading; its `label` is announced. |
+| `icons` | 24px-grid stroke icons that inherit `currentColor`, decorative by default. Table-only icons are in `table/icons.tsx`. |
 
-Skeleton:
+Feature screens sit in `features/common/Screen` (heading row plus content) and
+use `Loading` / `LoadError` for first loads and failures.
 
-```html
-<div class="flex h-full flex-col felt-bg font-body text-cream overflow-hidden">
-  <Header ... />
-  <main class="flex min-h-0 flex-1 gap-5 overflow-hidden px-5 pb-5">
-    <PlayersPanel ... />
-    <div class="flex min-w-0 flex-1 flex-col overflow-y-auto">
-      <!-- Tab content -->
-    </div>
-    <RecentActivity class="hidden rail:flex" />
-  </main>
-</div>
-```
+## Cosmetics (`src/cosmetics/`)
 
-### `rail:` breakpoint
+Renderers draw shop items from the shared catalog, sized by props, with a safe
+fallback to the free default item when an id is unknown.
 
-The custom breakpoint `--breakpoint-rail: 1080px` generates the `rail:` variant
-prefix in Tailwind v4. Use `hidden rail:flex` (or `hidden rail:block`) to hide the
-right rail at narrow widths:
+| Renderer | Draws |
+|---|---|
+| `Felt` | The table felt (oval or rectangle) in the item's base, deep, line and rail colours, with the printed crest and racetrack line |
+| `CardBack`, `CardBackPattern` | Face-down cards in the owner's pattern; the pattern alone fills the profile card's art window |
+| `PlayingCard` | Face-up cards on card stock (`xs` 28px to `xl` 96px); readable at 28px; `highlight` for the winning five, `dim` for the rest |
+| `AvatarFrame` | Frame styles (brass, chip, cheese, crown, flames) as SVG in a 100×100 box, 20px to 160px |
+| `TitleTag` | A player's title as a small brass name plate |
+| `fireCelebration`, `CelebrationPreview` | Win celebrations through canvas-confetti (off under reduced motion), and a static preview for the shop |
+| `ItemPreview` | Any item in a square box (shop tiles, pickers) |
+| `RatbagCrest` | The crest as a single-colour print for felt, card backs and the favicon |
 
-```html
-<aside class="hidden rail:flex ...">
-  <!-- RecentActivity -->
-</aside>
-```
+Other players always see your cosmetics as the catalog draws them: frame on your
+avatar, card back on your face-down cards, title under your name, celebration
+when you win. The table's felt is the host's pick.
 
-Do not use `xl:` for this purpose — `xl:` is 1280px, not 1080px.
+## Copy
 
----
+- **Sentence case** for everything: headings, buttons, tabs, menu items, toasts
+  ("Take a seat", "Leave table", "Top up").
+- Buttons say what happens, as a verb: "Buy in for 2,000", "Claim reward".
+- Errors say what went wrong and what to do, in one or two sentences, without
+  blame or codes: "You don't have enough chips for that buy-in."
+- Server ack errors are shown as they arrive, so write them to the same rules.
+- Chip amounts use `formatChips` (12,345); tight spaces use `formatChipsShort`
+  (12.3k); results use `formatSigned` (+1,200).
+- Use "you" for the player. Names are joined as "Alice, Bob and Cara".
+- The club voice (cheese, rats, the back room) lives in item names and
+  descriptions and the odd empty state. Keep controls and errors plain.
 
-## Building a new page — checklist
+## Motion
 
-1. **Root element** — apply `felt-bg font-body text-cream` to the outermost container;
-   ensure it fills its height (`h-full` or `min-h-screen`).
-2. **Compose from existing components** — prefer `StatTile`, `PlayerRow`, stepper,
-   pill patterns above before writing bespoke markup.
-3. **Colors** — pull every color from a token (`text-gold`, `bg-felt-600`, etc.).
-   Never add a raw hex literal to a component class or inline style. If a new color
-   is genuinely required, add it to `@theme` in `index.css` first.
-4. **Shadows** — use a named shadow token (`shadow-panel`, `shadow-hard-ink`, etc.).
-   Never write a raw `box-shadow` value in a component.
-5. **Radii** — use the family above (`rounded-2xl`, `rounded-pill`, etc.). Match the
-   surrounding context (panels use `rounded-3xl`; interactive rows use `rounded-2xl`).
-6. **Host-only controls** — gate config-editing controls behind `canEditConfig` (or
-   equivalent); read-only users see the value but not the steppers.
-7. **Missing data** — always pass `null` to `StatTile` when a value is unavailable;
-   never pass `undefined` or an empty string.
-8. **Animations** — use `animate-pop` for modals/overlays; `animate-fade` for
-   anchored panels and tooltips.
-9. **Responsive** — hide right-rail content below 1080px using `hidden rail:flex`.
-10. **Tests** — add a Vitest + RTL test for any component that contains logic (status
-    mapping, stepper arithmetic, conditional rendering). Pure presentational
-    components that render only tokens/text do not require tests.
+- Movement is for game events: dealing, chips moving to the pot and back,
+  reveals, wins, emotes and throwables, and small responses to input (a button
+  pressing down, a dialog rising).
+- UI animations use the tokens `animate-rise`, `animate-fade`,
+  `animate-slide-in` under `motion-safe`. Table animations (`tbl-deal`,
+  `tbl-board`, `tbl-reveal`, `tbl-pop`, `tbl-emote`, `tbl-splat`,
+  `tbl-yourturn`) are defined in `table/table.css` inside
+  `prefers-reduced-motion: no-preference`.
+- **Reduced motion**: a global rule in `index.css` shortens all animations and
+  transitions to effectively zero; nothing flies across the felt (`FxLayer`),
+  emotes and splats still appear briefly, and celebrations don't fire. Every
+  state must read correctly without its animation.
+- Sounds follow the same events and respect the mute and volume settings.
+
+## Accessibility
+
+- **Contrast**: text meets 4.5:1 against its background (large display numbers
+  at least 3:1). Check new pairings; the pairings listed under
+  [Colour](#colour) already pass. Placeholder brown (`walnut-400`) is only for
+  placeholders.
+- **Focus**: every interactive element shows the 2px `focus` outline on
+  `:focus-visible` (offset 2px). Dialogs and drawers trap focus, close on Esc
+  and return focus to the opener. After an action that removes the focused
+  element (for example buying an item), move focus somewhere sensible.
+- **Keyboard**: everything works without a pointer. Pickers (the felt picker,
+  `Segmented`) move with arrow keys; `Tabs` add Home and End; amount inputs step
+  with Up and Down; the profit chart's readout follows Left and Right; the
+  action bar has
+  F (fold), C (check or call), R (raise), Enter to confirm and Esc to cancel,
+  ignored while typing in a field or when a dialog is open.
+- **Names and roles**: icon buttons have labels; seats have a spoken summary
+  (name, stack, status, whose turn); cards have spoken names ("Queen of
+  hearts"); chip amounts carry the exact amount; sliders have labels and value
+  text.
+- **Live updates**: new chat messages, the action bar's state, connection
+  problems and form errors use `aria-live` / `role="status"` / `role="alert"`.
+- **Colour never alone**: signs, icons or words back up colour (results, turn
+  timer, presence).
+- **Touch**: controls are at least 32px (`Button sm`), 40px by default.
+
+## Responsive targets
+
+Design and test at these sizes; the table layout tests cover them.
+
+| Target | Size | Notes |
+|---|---|---|
+| Discord Activity window | 640×360 | The tightest case: `short:` variant, compact table layout, nav rail, room panel in a drawer |
+| Phone portrait | 390×844 | Bottom tab bar, the oval stands on end, dialogs as bottom sheets |
+| Desktop | 1280×800 and up | Nav rail, room sidebar, full-size table |
+
+The table layout engine (`table/layout.ts`) must report no conflicts for 2 to 9
+seats at 1280×800, 640×360, 390×844, 1000×640, 800×450, 360×640 and
+1920×1080 (`layout.test.ts`). Other screens scroll inside `main`; the page itself
+never scrolls sideways.
+
+## New screen checklist
+
+1. Wrap it in `Screen` and lazy-load it like the other feature screens if it's
+   a new section.
+2. Build it from `ui/` primitives on a `Surface`; colours and type from tokens.
+3. Write the copy in sentence case; errors say what to do next.
+4. Give it a loading state, an error state with retry, and an empty state.
+5. Check keyboard use, focus order, contrast and reduced motion.
+6. Check it at 640×360, 390×844 and desktop.
+7. Add React Testing Library tests next to it.

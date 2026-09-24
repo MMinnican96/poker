@@ -1,347 +1,333 @@
-# Setup Guide
+# Setup
 
-A multiplayer Texas Hold'em game that runs as a **Discord Activity** (an embedded
-iframe app). This guide covers two paths:
+How to run Ratbag Poker Night locally, inside Discord, and in production on
+Railway, and how to upgrade an existing deployment.
 
-- **[A. Quick local play](#a-quick-local-play-no-discord-no-database)** — click through the
-  whole game in your browser in ~1 minute, no Discord app and no database.
-- **[B. Full Discord Activity](#b-full-discord-activity)** — the real thing, embedded in a
-  Discord voice channel with persistent chip balances.
-
----
+| Path | You get | Needs |
+|---|---|---|
+| [A. Zero-setup dev](#a-zero-setup-dev) | Full game in browser tabs, embedded database | Node |
+| [B. Local Postgres](#b-local-postgres) | Data kept in a real Postgres | Node, PostgreSQL (native) |
+| [C. Real Discord](#c-real-discord) | The Activity inside Discord | A Discord app, a tunnel |
+| [D. Production on Railway](#d-production-on-railway) | The live deployment | Railway project + Railway Postgres |
+| [E. Upgrading an existing database](#e-upgrading-an-existing-database) | Moving a pre-overhaul deployment over | |
 
 ## Prerequisites
 
-| Tool | Needed for | Notes |
-|---|---|---|
-| **Node.js 20+** | everything | `node --version` |
-| **PostgreSQL 16+** (native install) | path B only | No Docker — install Postgres directly. On **PG17/18**, `db:push` needs drizzle-kit ≥ 0.31 (already pinned). |
-| **cloudflared** | path B only | Free HTTPS tunnel for local Discord dev |
-| **A Discord application** | path B only | Created at the Developer Portal |
+- Node.js 22 (LTS) and npm.
+- `npm install` at the repo root.
+- One `.env` at the repo root, copied from [`.env.example`](../.env.example). The
+  server loads it through `packages/server/src/env.ts`; Vite reads it through
+  `envDir`. Every variable is optional for path A.
 
-Install dependencies once:
+## A. Zero-setup dev
 
 ```bash
 npm install
+npm run dev        # builds shared, then watches shared + server :3001 + client :5173
 ```
 
----
+Open two tabs:
 
-## A. Quick local play (no Discord, no database)
+- `http://localhost:5173/?mock=1&name=Alice`
+- `http://localhost:5173/?mock=1&name=Bob`
 
-The server boots without a database (it falls back to an in-memory chip ledger),
-and the client has a **dev mock mode** that skips Discord auth and takes your
-identity from the URL.
+What happens:
 
-```bash
-npm run dev
-```
+- `DATABASE_URL` is blank, so the server starts **PGlite**, an embedded Postgres,
+  and applies the migrations to it. The log says
+  `DATABASE_URL not set — using embedded PGlite (in memory)`. Data is lost on
+  restart unless you set `PGLITE_DATA_DIR` (for example `.data/pglite`; the path
+  is relative to `packages/server`, and `.data/` is gitignored).
+- `?mock=1&name=Alice` signs in as the stable id `mock-alice` with 10,000 starting
+  chips. Mock sign-in exists only in a Vite dev build, and the server allows it
+  only outside production (`MOCK_AUTH=0` turns it off locally).
+- Tabs share a room called `dev-room`. Add `&room=<name>` to use another one.
+- Without `JWT_SECRET` the server uses a random secret per run, so restarting it
+  signs everyone out. Reload the tabs.
 
-This starts the server on **:3001** and the client on **:5173**. You'll see
-`running without persistence (dev/mock mode)` in the server log.
-
-Open **two browser tabs** with distinct names:
-
-```
-http://localhost:5173/?mock=1&name=Alice
-http://localhost:5173/?mock=1&name=Bob
-```
-
-Both land in the same lobby (`dev-room`) with 10,000 chips. Ready up in both →
-**Start Game** → the table deals and each tab gets its own action bar on its turn.
-
-**Mock URL params:**
-
-| Param | Default | Purpose |
-|---|---|---|
-| `mock` | — | Presence enables mock mode (dev builds only) |
-| `name` | random | Display name (use distinct names per tab) |
-| `room` | `dev-room` | Lobby id — change to run separate tables |
-| `chips` | `10000` | Starting balance |
-| `user` | `mock-<name>` | Stable player id |
-
-> Mock mode is gated by `import.meta.env.DEV` **and** `?mock`, so a production
-> build can never bypass real Discord auth.
-
----
-
-## B. Full Discord Activity
-
-### 1. Create the Discord application
-
-1. **New application.** Go to <https://discord.com/developers/applications> →
-   **New Application**, name it, accept the terms.
-2. **Client credentials.** Open **OAuth2** in the sidebar and copy the
-   **Client ID** and **Client Secret** (reset the secret if needed). The client
-   requests only the `identify` scope at runtime (already wired in code) — server
-   nicknames/avatars are read with the bot token, so no extra user scopes are
-   needed.
-3. **OAuth2 redirect.** Still under **OAuth2 → Redirects**, add `https://127.0.0.1`
-   and **Save Changes**. The Embedded App SDK needs a redirect configured or
-   `authorize()` fails at launch.
-4. **Installation contexts.** Open the **Installation** tab and enable **both
-   "User Install" and "Guild Install"**. Without these the app can't be launched
-   as an Activity (it won't appear in the picker).
-5. **Enable the Activity.** Open **Activities → Settings** and toggle on
-   **`Enable Activities`**. This auto-creates a default **"Launch" Entry Point
-   command** — the mechanism that makes the Activity launchable.
-6. **URL mapping.** Under **Activities → URL Mappings**, set the **root (`/`)
-   mapping** target to your tunnel URL (you'll have it after §5). A single root
-   mapping is enough for local dev — the Vite dev server proxies `/api` and
-   `/socket.io` to the backend on :3001. (In production you'd add a `/api` prefix
-   mapping pointing at the Railway URL.)
-7. **Bot + token.** Open **Bot** → **Add Bot**. Click **Reset Token** and copy the
-   **Bot Token** (used server-side to read each player's server nickname + guild
-   avatar). No privileged gateway intents are needed — the app reads members over
-   REST, which only requires the bot to be in the server.
-8. **Invite the bot to your test server.** Go to **OAuth2 → URL Generator**, tick
-   the **`bot`** scope, leave permissions empty, open the generated URL, and add
-   the bot to a **server with fewer than 25 members** (unverified Activities only
-   launch in small servers).
-
-Keep the **Client ID**, **Client Secret**, and **Bot Token** handy for §3.
-
-### 2. Install and set up local PostgreSQL (no Docker)
-
-#### 2a. Install PostgreSQL 16
-
-**Windows (winget):**
+To run a second stack beside the first (for example to compare branches), start
+another server on another port and point Vite at it with `VITE_PROXY_TARGET`:
 
 ```powershell
-winget install PostgreSQL.PostgreSQL.16
+$env:PORT = "3002"; npm run dev -w @poker/server
+$env:VITE_PROXY_TARGET = "http://localhost:3002"; npm run dev -w @poker/client -- --port 5174
 ```
 
-Approve the UAC prompt. The installer registers a Windows **service** (auto-starts
-on boot), creates a `postgres` superuser, and listens on port **5432**. If it asks,
-set a superuser password you'll remember and keep the default port 5432. You can
-skip Stack Builder at the end.
+## B. Local Postgres
 
-> Alternatively, download the EDB installer from
-> <https://www.postgresql.org/download/windows/> and run it.
+Install PostgreSQL natively. There's no Docker setup for this project.
 
-**macOS:** `brew install postgresql@16 && brew services start postgresql@16`
-**Linux (Debian/Ubuntu):** `sudo apt install postgresql-16 && sudo systemctl enable --now postgresql`
-
-Confirm it's running — something should be listening on 5432:
+**Windows:**
 
 ```powershell
-Get-NetTCPConnection -LocalPort 5432 -State Listen
+winget install PostgreSQL.PostgreSQL.17
 ```
 
-#### 2b. Create the role and database
+The installer registers a service on port 5432 and creates the `postgres`
+superuser. **macOS:** `brew install postgresql@17 && brew services start postgresql@17`.
+**Debian/Ubuntu:** `sudo apt install postgresql && sudo systemctl enable --now postgresql`.
 
-Open a SQL shell as the superuser. On Windows the installer adds **"SQL Shell
-(psql)"** to the Start menu (press Enter through the prompts, then enter the
-`postgres` password). Alternatively use **pgAdmin**, or `psql -U postgres` if
-`psql` is on your PATH (it's under
-`C:\Program Files\PostgreSQL\16\bin`). Then run:
+Create a role and database (SQL Shell, pgAdmin or `psql -U postgres`):
 
 ```sql
 CREATE ROLE poker WITH LOGIN PASSWORD 'poker';
 CREATE DATABASE poker OWNER poker;
 ```
 
-> You only need `psql`/pgAdmin to run these two statements. `npm run db:push`
-> (step 4) connects through the Node `pg` driver using `DATABASE_URL`, so `psql`
-> does **not** need to be on your PATH for the app itself.
+Set it in the root `.env`:
 
-### 3. Configure environment variables
-
-Create a single **`.env` at the repo root** (gitignored). Both the server and the
-Vite client read it. Copy the template and fill in the values:
-
-```bash
-cp .env.example .env    # then edit .env
 ```
-
-```bash
-# Server
 DATABASE_URL=postgresql://poker:poker@localhost:5432/poker
-DISCORD_CLIENT_ID=your_client_id
-DISCORD_CLIENT_SECRET=your_client_secret
-DISCORD_BOT_TOKEN=your_bot_token
-JWT_SECRET=any-long-random-string
-PORT=3001
-
-# Client (Vite — must be prefixed with VITE_)
-VITE_DISCORD_CLIENT_ID=your_client_id   # same value as DISCORD_CLIENT_ID
-VITE_SERVER_URL=                         # leave empty in dev (Vite proxies to :3001)
 ```
 
-> The `DATABASE_URL` password must match the password you set for the `poker`
-> role in step 2b. If you change one, change the other.
+Start the app with `npm run dev`. The server applies any pending migrations at
+boot and logs `using Postgres (DATABASE_URL)`. To apply them without starting
+the server, run `npm run db:migrate`.
 
-### 4. Create the database schema
+Changing the schema:
 
-```bash
-npm run db:push     # drizzle-kit: syncs the schema straight to Postgres
+1. Edit `packages/server/src/db/schema.ts`.
+2. `npm run db:generate -w @poker/server` writes a new SQL file in
+   `packages/server/drizzle/`.
+3. Make the SQL idempotent by hand (`IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`,
+   `DO $$ ... EXCEPTION WHEN duplicate_object ...`), matching `0000` and `0001`.
+4. Restart the server or run `npm run db:migrate`.
+
+Keep schema changes on this path; there is no `db:push` any more (it bypassed
+the migration journal).
+
+Running the DB-backed tests against this Postgres instead of PGlite (they share
+one database, so files run one at a time):
+
+```powershell
+$env:TEST_DATABASE_URL = "postgresql://poker:poker@localhost:5432/poker_test"
+npm run test:pg -w @poker/server
 ```
 
-Optional: `npm run db:studio` opens Drizzle Studio to browse tables.
+## C. Real Discord
 
-### 5. Start the dev servers and tunnel
+### 1. Create the Discord application
 
-```bash
-npm run dev         # shared (built) + server :3001 + client :5173
+In the [Developer Portal](https://discord.com/developers/applications):
+
+1. **New Application**, name it.
+2. **OAuth2**: copy the **Client ID** and **Client Secret**. Add a redirect
+   (`https://127.0.0.1` works); the Embedded App SDK's `authorize()` needs one.
+   The client only asks for the `identify` scope.
+3. **Installation**: enable **User Install** and **Guild Install**.
+4. **Activities → Settings**: turn on **Enable Activities** (this creates the
+   Launch entry point command).
+5. **Bot**: add a bot, reset and copy the **Bot Token**. It's used server-side to
+   read server nicknames and guild avatars, and for the optional instance check.
+   No privileged intents are needed.
+6. **OAuth2 → URL Generator**: tick `bot`, no permissions, and invite the bot to
+   your test server. Unverified Activities only launch in servers with fewer
+   than 25 members.
+
+### 2. URL mappings
+
+Discord serves the Activity through its proxy (`<client id>.discordsays.com`).
+The client calls `/api` and `/socket.io` on its own origin, so a single mapping
+covers everything:
+
+| Prefix | Target |
+|---|---|
+| `/` | Your tunnel host in development (`<random>.trycloudflare.com`), or your Railway domain in production |
+
+With the root mapping in place, `/api/*` and `/socket.io/*` reach the same
+target: Vite proxies them to the server in development, and the server answers
+them directly in production. No extra `/api` or `/socket.io` mappings are
+needed as long as client and server share that origin.
+
+Avatars load straight from `https://cdn.discordapp.com`. Discord's Activity CSP
+allows `cdn.discordapp.com/avatars/` without a mapping, but not guild-specific
+avatars (`/guilds/.../avatars/`) or default avatars (`/embed/avatars/`). Those
+show the player's initials instead.
+
+### 3. Environment
+
+```
+DISCORD_CLIENT_ID=<application id>
+DISCORD_CLIENT_SECRET=<client secret>
+DISCORD_BOT_TOKEN=<bot token>
+VITE_DISCORD_CLIENT_ID=<same as DISCORD_CLIENT_ID>
+JWT_SECRET=<long random string>
 ```
 
-In a second terminal, expose the client over HTTPS:
+`DATABASE_URL` can stay blank (PGlite) or point at local Postgres.
+
+### 4. Run with a tunnel
 
 ```bash
+npm run dev
 cloudflared tunnel --url http://localhost:5173
 ```
 
-Copy the `https://<random>.trycloudflare.com` URL into the Discord Developer
-Portal under **Activities → URL Mappings** as the **root (`/`) mapping** target
-(some portal versions also expose a per-developer **Activity URL override** for
-local testing — set that too if present). The Vite dev server already allows
-`*.trycloudflare.com` hosts and proxies `/api` + `/socket.io` to the backend, so
-the tunnel only needs to expose port 5173.
+Put the `https://<random>.trycloudflare.com` host in the root (`/`) URL mapping.
+Vite already accepts `*.trycloudflare.com` and proxies `/api` and `/socket.io`
+to :3001, so only port 5173 needs exposing. The free tunnel host changes on
+every restart; update the mapping each time.
 
-> The free `trycloudflare.com` URL changes every time you restart the tunnel —
-> update the mapping whenever it changes.
+### 5. Launch
 
-### 6. Launch in Discord
+1. Discord **User Settings → Advanced**: turn on **Developer Mode**, then
+   **Application Test Mode** with your application id.
+2. Join a voice channel in the test server, open **Activities**, find the app
+   by name, and launch it.
 
-First, enable test visibility for your in-development (unverified) Activity:
+## D. Production on Railway
 
-1. **User Settings → Advanced** → turn on **Developer Mode**.
-2. In the same **Advanced** page, toggle on **Application Test Mode**, paste your
-   **Application ID** (same as your `DISCORD_CLIENT_ID`), and click **Activate**.
-3. Use a **server with fewer than 25 members** (unverified Activities are
-   restricted to small servers).
+The whole app is one always-on Railway service plus a Railway Postgres service
+in the same project. The server serves the built client, so client, REST and
+WebSocket share one origin behind the Discord proxy.
 
-Then join a **voice channel** → click the **Activities (rocket) icon** → find your
-app (**search by its name** if it's not at the top of the list) → launch. It
-authenticates you, shows your server nickname + avatar, and drops you into the
-lobby.
+`railway.json` pins the build: builder `RAILPACK`, `npm run build`, start
+command `node packages/server/dist/index.js` (run directly so SIGTERM reaches
+Node — don't wrap it in `npm run`), healthcheck `/api/health` (120 s timeout),
+restart on failure (up to 10 times), and `drainingSeconds: 20` so a deploy
+waits for graceful shutdown to cash tables out. The root `package.json` has a
+matching `start` script.
 
-> If it still doesn't appear: restart Discord (Ctrl+R), and double-check
-> **Installation** (User + Guild install) and **Activities → Settings**
-> (`Enable Activities`) from §1 are both on.
+In production the server refuses to boot without `DATABASE_URL` (unless
+`PGLITE_DATA_DIR` is set deliberately), so an unresolved reference can't
+silently start an empty in-memory database. Every statement has a 10 s
+timeout.
 
----
+### 1. Project and database
 
-## Path C — Deploy to production (Railway + Railway Postgres)
+1. **New Project → Deploy from GitHub repo**, pick this repo. Root directory is
+   the repo root.
+2. **+ New → Database → PostgreSQL**. Its variables include `DATABASE_URL`
+   (private `*.railway.internal` host) and `DATABASE_PUBLIC_URL` (TCP proxy).
+3. App service **Settings → Networking → Generate Domain**.
 
-This hosts the whole app on **Railway** as a single always-on service: the
-server (Express + Socket.io) **also serves the built client**, so client,
-server, and WebSocket traffic share one origin behind the Discord proxy. The
-database is **Railway Postgres** in the same project (private networking, no
-separate provider).
+### 2. Variables on the app service
 
-> Config-as-code lives in **`railway.json`** at the repo root (builder, build +
-> start commands, healthcheck). Railway picks it up automatically.
+| Variable | Value | Notes |
+|---|---|---|
+| `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` | A reference to the Postgres service (the name must match). Resolves to the private host. |
+| `JWT_SECRET` | Long random string | Required: the server refuses to start in production without it. Changing it signs everyone out. |
+| `DISCORD_CLIENT_ID` | Application id | |
+| `DISCORD_CLIENT_SECRET` | Client secret | |
+| `DISCORD_BOT_TOKEN` | Bot token | Nicknames, guild avatars, instance check |
+| `VITE_DISCORD_CLIENT_ID` | Same as `DISCORD_CLIENT_ID` | Inlined into the client **at build time**; changing it needs a redeploy |
+| `VERIFY_ACTIVITY_INSTANCE` | `1` (optional) | Refuse `join_room` unless Discord confirms the player is in that Activity instance. Off by default. |
 
-### 1. Create the project + database
+Leave these unset:
 
-1. Sign in at **railway.com** with GitHub → **New Project** → **Deploy from
-   GitHub repo** → pick this repo. (Grant repo access via **Configure GitHub App**
-   if it's not listed.)
-2. In the project, **+ New → Database → Add PostgreSQL**. The `Postgres` service
-   exposes two connection strings in its **Variables** tab:
-   - `DATABASE_URL` — private (`*.railway.internal`), for the running server.
-   - `DATABASE_PUBLIC_URL` — TCP proxy, for connecting from your laptop.
+- `PORT`: Railway injects it and the server reads it.
+- `VITE_SERVER_URL`: the client always uses its own origin. The variable is no
+  longer read.
+- `MOCK_AUTH`: mock sign-in is always off on Railway (any `RAILWAY_ENVIRONMENT*`
+  variable or `NODE_ENV=production` disables it), and production client builds
+  don't offer it.
+- `PGLITE_DATA_DIR`: only used when `DATABASE_URL` is blank.
 
-### 2. Configure the app service
+### 3. Deploy
 
-Click the **app service → Settings**:
+1. Push to the deploy branch or press **Deploy**.
+2. Watch the logs for `using Postgres (DATABASE_URL)`,
+   `serving client from …/client/dist` and `listening on port …`. Migrations run
+   before the server listens; nothing needs to run in the build (private
+   networking isn't available at build time anyway).
+3. In the Developer Portal, set the root (`/`) URL mapping to the Railway domain.
 
-- **Root Directory**: repo root (`/`) — it's an npm-workspaces monorepo.
-- Build/start commands come from `railway.json` (no need to set them by hand).
-- **Networking → Generate Domain** → note the `*.up.railway.app` URL.
-
-Then **app service → Variables** (see [`.env.example`](../.env.example)):
-
-```
-DATABASE_URL          = ${{Postgres.DATABASE_URL}}   # reference, keeps traffic on the private network
-DISCORD_CLIENT_ID     = <your app id>
-DISCORD_CLIENT_SECRET = <your secret>
-DISCORD_BOT_TOKEN     = <your bot token>
-JWT_SECRET            = <long random string>
-VITE_DISCORD_CLIENT_ID = <same value as DISCORD_CLIENT_ID>   # baked into the client at BUILD time
-```
-
-> **Do NOT set** `PORT` (Railway injects it; the server reads `process.env.PORT`),
-> `VITE_SERVER_URL` (must stay empty so the client uses the same origin), or
-> `VITE_MOCK_DISCORD` (dev-only). `VITE_*` vars are inlined into the client bundle
-> at build time, so changing them requires a **redeploy**.
-
-### 3. Push the schema to Railway Postgres
-
-Private networking isn't reachable from your laptop, so use the **public** URL
-once (don't commit it). In PowerShell:
+To run migrations or `stats:recompute` from your machine against Railway
+Postgres, use the public URL for that one command and don't commit it:
 
 ```powershell
-$env:DATABASE_URL = "<paste DATABASE_PUBLIC_URL>"
-npm run db:push
+$env:DATABASE_URL = "<DATABASE_PUBLIC_URL>"
+npm run db:migrate          # or: npm run stats:recompute
 ```
 
-Repeat only when the schema changes. Runtime traffic still uses the private
-`DATABASE_URL` from step 2.
+### Restarts and deploys
 
-### 4. Deploy and point Discord at it
+- On SIGTERM the server voids any hand in progress, cashes every seated player
+  out at their stack from before that hand, tells them the server is restarting,
+  and releases its lease.
+- If the process dies first, each open seat stays in escrow until a server's
+  recovery sees the dead lease go stale (60 s) and refunds the last checkpoint.
+  Recovery runs at boot and every 30 s.
+- During a rolling deploy the new process leaves the old one's seats alone while
+  the old one still heartbeats.
 
-1. Push to your default branch (Railway auto-deploys) or hit **Deploy**.
-   Watch the logs for `[server] listening on port …` and
-   `[server] serving client from …`.
-2. Open the `*.up.railway.app` URL — you should get the client app.
-3. In the Discord Developer Portal → **Activities → URL Mappings**, map root
-   (`/`) → your Railway domain, and add the OAuth2 redirect under that domain.
+## E. Upgrading an existing database
 
-> **Gotchas:** private networking is IPv6-only and **not available during
-> build** — never run `db:push`/migrations in the build command (do step 3
-> locally). If the server logs `running without persistence`, the
-> `${{Postgres.DATABASE_URL}}` reference name doesn't match your Postgres service
-> name.
+The first overhaul deploy upgrades the pre-overhaul database in place. There's
+no manual step.
 
----
+- At boot `0000_init.sql` runs against the existing `db:push` schema. It keeps
+  `players` (balances), `chip_transactions`, `player_hand_stats` and
+  `player_stats`; adds the new tables (`table_seats`, `hand_history`,
+  `player_items`, `player_challenges`, `chat_messages`, `chat_reads`), columns
+  (XP, daily streak, loadout, `big_blind`, `flops_seen`), CHECK constraints,
+  foreign keys and indexes; and drops the never-written `games`, `hands`,
+  `game_players` and `hand_actions` tables. `0001_leases.sql` adds
+  `server_leases` and `table_seats.lease_id`.
+- Every statement is idempotent, so a migration interrupted halfway is safe to
+  rerun, and a database that was already `db:push`ed to the new schema is left
+  as it is.
+- Back up first anyway: Railway Postgres → **Backups**, or
+  `pg_dump "<DATABASE_PUBLIC_URL>" > before-overhaul.sql`.
+
+**Deploy with no tables open.** Seats opened by a build without leases have no
+lease id, and any running server's recovery treats those as orphaned. If a
+lease-less build is still serving a table while the new build boots, the new
+build would refund those seats while the old process keeps playing them. The
+pre-overhaul build kept stacks in memory and never wrote `table_seats`, so this
+matters only when upgrading from an intermediate build without `0001`. Close
+tables first (or wait until nobody is playing), then deploy. Every later deploy
+is safe with tables open, but hands in progress are voided (see above), so a
+quiet moment is still kinder.
+
+Players keep their bankroll, ledger and lifetime stats. XP, levels, items and
+challenges start from zero for everyone.
 
 ## Scripts
 
-Run from the repo root:
+Root scripts (`npm run <name>`):
 
-| Script | Action |
+| Script | Does |
 |---|---|
-| `npm run dev` | Build `shared`, then run server + client in watch mode |
-| `npm run build` | Type-check and build all three packages |
-| `npm test` | Run the Vitest suite (engine + lobby + game backend + stats) |
-| `npm run db:push` | Sync the Drizzle schema to Postgres |
-| `npm run db:migrate` | Apply generated migrations |
-| `npm run db:studio` | Open Drizzle Studio |
-| `npm run stats:recompute` | Rebuild `player_stats` aggregates from `player_hand_stats` |
+| `dev` | Build shared, then watch shared, server and client |
+| `build` | Type-check and build shared, server, client |
+| `start` | Start the built server (`packages/server/dist/index.js`) |
+| `test` | Server tests (type-check, then Vitest incl. e2e on PGlite) and client tests |
+| `db:migrate` | Apply migrations to `DATABASE_URL` |
+| `db:studio` | Drizzle Studio |
+| `stats:recompute` | Rebuild `player_stats` from `player_hand_stats` |
+| `db:generate` | Generate a migration from `schema.ts` (then make it idempotent) |
+| `test:pg` | Server tests against `TEST_DATABASE_URL`, files run serially |
 
----
+Workspace scripts: `npm run db:generate -w @poker/server`,
+`npm run test:pg -w @poker/server`, `npm run typecheck -w @poker/server`,
+`npm test -w @poker/shared` (shared's own tests; the root `test` doesn't run
+them).
 
-## Testing
-
-```bash
-npm test          # 82 tests: poker engine, lobby flow, game backend, stats
-npm run build     # confirms all packages type-check and build
-```
-
-The test suite needs **no** Discord and **no** database — engine logic is pure,
-and the lobby/game integration tests run a real in-memory Socket.io server with a
-faked chip ledger.
-
----
+`db:migrate` and `stats:recompute` use `DATABASE_URL`. With it blank they run
+against a throwaway in-memory PGlite unless `PGLITE_DATA_DIR` is set.
 
 ## Troubleshooting
 
-| Symptom | Fix |
+| Symptom | Cause and fix |
 |---|---|
-| Browser shows "Couldn't start" | Expected outside Discord — use mock mode (path A) or launch inside Discord. |
-| `DATABASE_URL is not set` when hitting `/api/auth/token` | Create `packages/server/.env` with `DATABASE_URL` (path B). |
-| Server log: `running without persistence` | No `DATABASE_URL` — fine for mock play, set it for real games. |
-| `EADDRINUSE :3001` | Another server instance is running; stop it or change `PORT`. |
-| Discord can't load the Activity | Re-check the URL override (must be the current tunnel URL) and the `/api` URL mapping. |
-| Tunnel host rejected by Vite | Confirmed allowed via `allowedHosts: ['.trycloudflare.com']` in `packages/client/vite.config.ts`. |
-| `db:push` fails with `column "discord_user_id" is in a primary key` (42P16) | Postgres 17/18 with drizzle-kit < 0.31. Upgrade it: `npm i -D drizzle-kit@^0.31 -w @poker/server` (already pinned in this repo). |
-| **(Railway)** Activity shows `Auth failed: 500` | The server threw during `/api/auth/token`. The browser only shows `500` — read the real error in the Railway app logs (`[auth] token exchange failed: …`) and match it to the rows below. |
-| **(Railway)** Auth log shows `ECONNREFUSED 127.0.0.1:5432` / `::1:5432` | The app service's `DATABASE_URL` isn't resolving to Railway Postgres, so `pg` falls back to localhost. Set it to the reference `${{Postgres.DATABASE_URL}}` (use the variable reference picker; the service name must match). Reveal the resolved value — it should be the private `…@postgres.railway.internal:5432/…` host, never localhost. |
-| **(Railway)** Auth log shows `Discord token exchange failed (401)` / `invalid_client` | Wrong/missing `DISCORD_CLIENT_SECRET` on the app service. Re-copy it from the Discord portal. |
-| **(Railway)** Auth log shows `DISCORD_BOT_TOKEN is not set` | Bot token missing — `fetchGuildMember` needs it when the activity passes a `guildId`. Set `DISCORD_BOT_TOKEN` on the app service. |
-| **(Railway)** No `[server] serving client from …` in logs / blank page at `/` | The client build didn't land at `packages/client/dist`. Confirm `npm run build` ran (it's the `buildCommand` in `railway.json`) and built all three packages. |
-| **(Railway)** Build error: `No start command detected` | Railpack needs a root `start` script — present in `package.json` (`"start": "npm run start --workspace=packages/server"`) and pinned in `railway.json`. |
+| "Open this from Discord" in the browser | You opened the app outside Discord without `?mock=1`. Add `?mock=1&name=Alice` (dev server only). |
+| Everyone is signed out after a server restart in dev | No `JWT_SECRET`, so each run uses a new random secret. Set one in `.env`. |
+| "Your session expired" | The 24 h token lapsed, or `JWT_SECRET` changed. Reload the Activity. |
+| Server exits with `JWT_SECRET must be set in production` | Set `JWT_SECRET` on the Railway service. |
+| `POST /api/auth/mock` returns 404 | Mock sign-in is off: production, a Railway env var, or `MOCK_AUTH=0`. |
+| `ECONNREFUSED 127.0.0.1:5432` on Railway | `DATABASE_URL` isn't resolving to Railway Postgres. Use the reference `${{Postgres.DATABASE_URL}}` with the right service name; the resolved value should be a `*.railway.internal` host. |
+| Local `ECONNREFUSED ::1:5432` | Postgres isn't running, or `DATABASE_URL` points at the wrong port. Blank it to use PGlite. |
+| "Sign-in didn't go through" / log `Discord token exchange failed (401)` | Wrong `DISCORD_CLIENT_SECRET` or `DISCORD_CLIENT_ID`. |
+| "This build isn't set up for Discord" | `VITE_DISCORD_CLIENT_ID` was empty at build time. Set it and redeploy. |
+| `join_room` refused with "You're not in this activity." | `VERIFY_ACTIVITY_INSTANCE=1` and Discord didn't list the player, or `DISCORD_BOT_TOKEN` is missing (the log shows `instance check failed`). |
+| Avatars show initials inside Discord | The avatar is a guild avatar or a default avatar, which the Activity CSP blocks. See [URL mappings](#2-url-mappings). |
+| Log: `refunded N chips from M seats left open by a stopped server` | Recovery after a crash or a shutdown that ran out of time. Expected; players got their last checkpoint back. |
+| Log: `tables did not finish cashing out in time` | Shutdown hit its 15 s budget. Recovery refunds the rest. Check `drainingSeconds` in `railway.json`. |
+| Migration error on boot | Read the failing statement in the log. A new migration that isn't idempotent fails on databases that already have the object. |
+| Blank page at `/` on Railway, no `serving client from` log | The client build didn't land in `packages/client/dist`. Check the build log for `npm run build`. |
+| `EADDRINUSE :3001` | Another server is running. Stop it or set `PORT` (dev only). |
+| Tunnel host rejected by Vite | `allowedHosts` covers `.trycloudflare.com`; other tunnel providers need adding in `packages/client/vite.config.ts`. |
+| Server can't find `@poker/shared` exports after editing shared | The server uses shared's built `dist/`. Run `npm run build -w @poker/shared` (or keep `npm run dev` running). |
 
-For how it all fits together, see [ARCHITECTURE.md](./ARCHITECTURE.md).
+How the pieces fit together is in [ARCHITECTURE.md](./ARCHITECTURE.md).

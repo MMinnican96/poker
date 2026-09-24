@@ -1,0 +1,94 @@
+import { Suspense, createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
+import { Modal, Spinner } from '../ui';
+import { ErrorBoundary, LoadFailed } from './ErrorBoundary';
+import { lazyNamed } from './lazy';
+
+/** Loaded the first time a profile card opens. */
+const ProfileCardModal = lazyNamed(() => import('../features/profile/ProfileCardModal'), 'ProfileCardModal');
+
+/** The profile card's own loading state, shown while its chunk loads (so it doesn't jump when it arrives). */
+function ProfileCardFallback({ onClose }: { onClose(): void }) {
+  return (
+    <Modal open onClose={onClose} tone="paper" size="sm" hideHeader title="Player profile card">
+      <div className="grid min-h-72 place-items-center pt-5">
+        <Spinner size={28} label="Loading profile" className="text-brass-dark" />
+      </div>
+    </Modal>
+  );
+}
+
+/** Top-level sections of the app. `table` is the lobby home (or the table screen while you're at it). */
+export type Section = 'table' | 'leaderboard' | 'stats' | 'challenges' | 'shop' | 'messages';
+
+export interface Nav {
+  section: Section;
+  go(section: Section): void;
+  /** Jump to Messages, optionally straight into a DM with `partnerId`. */
+  openMessages(partnerId?: string): void;
+  /** Partner requested by the last `openMessages` call (MessagesScreen's `initialPartnerId`). */
+  messagesPartner: string | undefined;
+}
+
+const NavContext = createContext<Nav | null>(null);
+
+export function NavProvider({ children, initial = 'table' }: { children: ReactNode; initial?: Section }) {
+  const [section, setSection] = useState<Section>(initial);
+  const [messagesPartner, setPartner] = useState<string | undefined>();
+  const go = useCallback((s: Section) => {
+    setSection(s);
+    if (s !== 'messages') setPartner(undefined);
+  }, []);
+  const openMessages = useCallback((partnerId?: string) => {
+    setPartner(partnerId);
+    setSection('messages');
+  }, []);
+  const value = useMemo(() => ({ section, go, openMessages, messagesPartner }), [section, go, openMessages, messagesPartner]);
+  return <NavContext.Provider value={value}>{children}</NavContext.Provider>;
+}
+
+/** Navigate between sections from anywhere. */
+export function useNav(): Nav {
+  const n = useContext(NavContext);
+  if (!n) throw new Error('useNav must be used inside <NavProvider>');
+  return n;
+}
+
+interface ProfileCardApi {
+  /** Open a player's profile card over the current screen. */
+  open(playerId: string): void;
+  close(): void;
+}
+
+const ProfileContext = createContext<ProfileCardApi | null>(null);
+
+/** Hosts the single ProfileCardModal; any component can open it with `useProfileCard().open(id)`. */
+export function ProfileCardProvider({ children }: { children: ReactNode }) {
+  const [playerId, setPlayerId] = useState<string | null>(null);
+  const close = useCallback(() => setPlayerId(null), []);
+  const value = useMemo(() => ({ open: (id: string) => setPlayerId(id), close }), [close]);
+  return (
+    <ProfileContext.Provider value={value}>
+      {children}
+      {playerId && (
+        <ErrorBoundary
+          key={playerId}
+          fallback={({ retry, reload }) => (
+            <Modal open onClose={close} tone="paper" size="sm" hideHeader title="Player profile card">
+              <LoadFailed layout="inline" onRetry={retry} onReload={reload} />
+            </Modal>
+          )}
+        >
+          <Suspense fallback={<ProfileCardFallback onClose={close} />}>
+            <ProfileCardModal playerId={playerId} onClose={close} />
+          </Suspense>
+        </ErrorBoundary>
+      )}
+    </ProfileContext.Provider>
+  );
+}
+
+export function useProfileCard(): ProfileCardApi {
+  const p = useContext(ProfileContext);
+  if (!p) throw new Error('useProfileCard must be used inside <ProfileCardProvider>');
+  return p;
+}

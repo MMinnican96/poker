@@ -1,75 +1,85 @@
-import type { DiscordIdentity } from '@poker/shared';
+import { useState } from 'react';
+import { formatChips } from '@poker/shared';
+import { useApi, useMe, useStore } from '../app/client';
+import { useProfileCard } from '../app/nav';
+import { Avatar, Button, ChipAmount, CountBadge, GiftIcon, IconButton, LevelBadge, UsersIcon } from '../ui';
 
-export type LobbyTab = 'home' | 'leaderboard' | 'stats' | 'shop';
-
-const TABS: { id: LobbyTab; label: string }[] = [
-  { id: 'home', label: 'Home' },
-  { id: 'leaderboard', label: 'Leaderboard' },
-  { id: 'stats', label: 'Stats' },
-  { id: 'shop', label: 'Shop' },
-];
-
-export interface HeaderProps {
-  activeTab: LobbyTab;
-  onTabChange: (tab: LobbyTab) => void;
-  identity: DiscordIdentity;
-  onOpenUser: () => void;
+/** The round logo (a small WebP of the brand art): its white corners are cropped away by the circle. */
+export function BrandMark({ size = 36 }: { size?: number }) {
+  return (
+    <span className="relative inline-block shrink-0 overflow-hidden rounded-full bg-walnut-950 ring-1 ring-walnut-600" style={{ width: size, height: size }}>
+      <img src={size > 48 ? '/brand/logo-320.webp' : '/brand/logo-96.webp'} alt="" width={size} height={size} className="absolute inset-0 h-full w-full scale-[1.2] object-cover" draggable={false} />
+    </span>
+  );
 }
 
-export function Header({ activeTab, onTabChange, identity, onOpenUser }: HeaderProps) {
+export interface HeaderProps {
+  /** Show the room button (when the sidebar is collapsed). */
+  showRoomButton: boolean;
+  onOpenRoom(): void;
+  /** Room chat messages you haven't seen. */
+  unseenChat: number;
+}
+
+/** Brand, daily bonus, bankroll and you. */
+export function Header({ showRoomButton, onOpenRoom, unseenChat }: HeaderProps) {
+  const me = useMe();
+  const api = useApi();
+  const store = useStore();
+  const profile = useProfileCard();
+  const [claiming, setClaiming] = useState(false);
+
+  const claimDaily = async () => {
+    setClaiming(true);
+    try {
+      const r = await api.claimDaily();
+      if (r.ok) store.notify({ tone: 'good', title: 'Daily bonus claimed', body: `+${formatChips(r.amount)} chips. Day ${r.streak} of your streak.` });
+      else store.notify({ tone: 'bad', title: "Couldn't claim the daily bonus", body: r.error });
+    } catch (err) {
+      store.notify({ tone: 'bad', title: "Couldn't claim the daily bonus", body: err instanceof Error ? err.message : undefined });
+    } finally {
+      setClaiming(false);
+    }
+  };
+
   return (
-    <header className="flex flex-none items-center gap-5 px-6 py-4">
-      <div className="flex flex-none items-center gap-3">
-        <div className="flex h-12 w-12 -rotate-3 items-center justify-center rounded-2xl border-[2.5px] border-gold-border bg-gold text-2xl text-[#2a1c00] shadow-hard-gold">
-          ♠
-        </div>
-        <div className="flex flex-col leading-none">
-          <span className="font-display text-lg font-bold text-white">RATBAG</span>
-          <span className="mt-[3px] text-[11px] font-extrabold tracking-[0.22em] text-sage">
-            POKER NIGHT
-          </span>
-        </div>
+    <header className="relative z-10 flex h-14 shrink-0 items-center gap-2 border-b border-walnut-950 bg-walnut-800 tex-wood px-2 shadow-[0_1px_0_var(--color-walnut-700)] sm:gap-3 sm:px-3 short:h-12">
+      <BrandMark size={36} />
+      <span className="hidden font-display text-lg leading-none text-stock md:block">
+        Ratbag Poker Night
+      </span>
+      <div className="flex-1" />
+
+      {me.daily.available && (
+        <Button variant="brass" size="sm" icon={<GiftIcon size={16} />} onClick={claimDaily} loading={claiming} aria-label="Claim daily bonus" title={`Claim ${formatChips(me.daily.nextAmount)} free chips`}>
+          <span className="hidden xs:inline">Daily bonus</span>
+        </Button>
+      )}
+
+      <div className="flex items-center rounded-lg bg-walnut-950/70 px-2.5 py-1 ring-1 ring-inset ring-black/40" title="Your bankroll">
+        <span className="sr-only">Bankroll: </span>
+        <ChipAmount value={me.balance} size="lg" className="text-[17px] sm:text-xl" short={false} />
       </div>
 
-      <nav className="mx-auto flex gap-2">
-        {TABS.map((t) => {
-          const active = t.id === activeTab;
-          return (
-            <button
-              key={t.id}
-              onClick={() => onTabChange(t.id)}
-              className={[
-                'font-display text-base font-semibold rounded-2xl px-5 py-2.5 transition-transform hover:-translate-y-px border-[2.5px]',
-                active
-                  ? 'border-gold-border bg-gold text-[#2a1c00] shadow-hard-gold'
-                  : 'border-transparent bg-white/5 text-sage-light',
-              ].join(' ')}
-            >
-              {t.label}
-            </button>
-          );
-        })}
-      </nav>
-
       <button
-        onClick={onOpenUser}
-        className="flex flex-none items-center gap-2.5 rounded-2xl border-[2.5px] border-black/30 bg-white/5 py-1.5 pl-1.5 pr-3.5 shadow-hard-ink transition-transform hover:-translate-y-px"
+        type="button"
+        onClick={() => profile.open(me.id)}
+        className="flex items-center gap-2 rounded-full py-0.5 pr-1 pl-0.5 hover:bg-walnut-700/60 sm:pr-2"
+        aria-label={`Your profile: ${me.name}, level ${me.level.level}`}
       >
-        <img
-          src={identity.avatarUrl}
-          alt=""
-          className="h-10 w-10 rounded-xl border-[2.5px] border-gold-border object-cover"
-        />
-        <span className="flex flex-col items-start leading-tight">
-          <span className="font-display text-sm font-semibold text-white">
-            {identity.displayName}
-          </span>
-          <span className="text-xs font-extrabold text-gold-soft">
-            ● {identity.chipBalance.toLocaleString()}
-          </span>
-        </span>
-        <span className="ml-0.5 text-xs text-sage">▼</span>
+        <Avatar src={me.avatarUrl} name={me.name} frameId={me.loadout.frame} size={36} />
+        <span className="hidden max-w-32 truncate font-semibold text-stock lg:block">{me.name}</span>
+        <LevelBadge level={me.level.level} progress={me.level} size={28} className="hidden xs:inline-grid" />
       </button>
+
+      {showRoomButton && (
+        <span className="relative">
+          <IconButton label="Room: people, chat and activity" onClick={onOpenRoom} variant="ghost">
+            <UsersIcon size={20} />
+          </IconButton>
+          <CountBadge count={unseenChat} label={['new chat message', 'new chat messages']} className="absolute -top-1 -right-1" />
+        </span>
+      )}
     </header>
   );
 }

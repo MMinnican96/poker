@@ -1,58 +1,165 @@
-import type { Card, GamePhase, Pot } from '@poker/shared';
-import { PlayingCard } from './Card';
+import type { ReactNode } from 'react';
+import { formatChips, type HandResultView, type HandView, type PotView } from '@poker/shared';
+import { PlayingCard, feltVisual } from '../cosmetics';
+import { ChipAmount, ChipGlyph, cx } from '../ui';
+import type { Rect, StageLayout } from './layout';
+import { cardKey } from './Seat';
 
-const PHASE_LABEL: Partial<Record<GamePhase, string>> = {
-  'pre-flop': '♦ PRE-FLOP', flop: '♦ FLOP', turn: '♦ TURN', river: '♦ RIVER',
-  showdown: '♠ SHOWDOWN', 'hand-complete': '♠ SHOWDOWN', waiting: '♣ WAITING',
-};
-
-interface Props {
-  phase: GamePhase;
-  community: Card[];
-  pots: Pot[];
-  banner?: string | null;
+/** Joins names: "Alice", "Alice and Bob", "Alice, Bob and Cara". */
+export function joinNames(names: string[]): string {
+  if (names.length <= 1) return names[0] ?? '';
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
 }
 
-export function CenterCluster({ phase, community, pots, banner }: Props) {
-  const main = pots[0]?.amount ?? 0;
-  const sidePots = pots.slice(1);
+export interface ResultLine {
+  key: string;
+  /** "Main pot", "Side pot 1" — only when there are several pots. */
+  pot: string | null;
+  text: string;
+  label: string | null;
+}
+
+/**
+ * One line per pot: "Bob wins 1,200" / "You win 300" / "Alice and Bob split
+ * 800", with the winning hand's label. Neighbouring pots with the same winners
+ * and label merge into one line.
+ */
+export function resultLines(result: HandResultView, nameOf: (id: string) => string, youId: string): ResultLine[] {
+  const merged: { winnerIds: string[]; amount: number; handLabel: string | null; first: number; last: number }[] = [];
+  result.pots.forEach((p, i) => {
+    const prev = merged[merged.length - 1];
+    if (prev && prev.handLabel === p.handLabel && prev.winnerIds.join() === p.winnerIds.join()) {
+      prev.amount += p.amount;
+      prev.last = i;
+    } else merged.push({ winnerIds: [...p.winnerIds], amount: p.amount, handLabel: p.handLabel, first: i, last: i });
+  });
+  const many = merged.length > 1;
+  return merged.map((m) => {
+    const names = m.winnerIds.map((id) => (id === youId ? 'You' : nameOf(id)));
+    const verb = m.winnerIds.length > 1 ? 'split' : m.winnerIds[0] === youId ? 'win' : 'wins';
+    const pot = !many ? null : m.first === 0 ? 'Main pot' : m.first === m.last ? `Side pot ${m.first}` : `Side pots ${m.first}–${m.last}`;
+    return { key: `${m.first}`, pot, text: `${joinNames(names)} ${verb} ${formatChips(m.amount)}`, label: m.handLabel };
+  });
+}
+
+/** Pot chips shown while there are several pots. */
+function PotBreakdown({ pots, className }: { pots: PotView[]; className?: string }) {
+  if (pots.length < 2) return null;
+  return (
+    <ul className={cx('flex flex-wrap justify-center gap-1', className)} aria-label="Pots">
+      {pots.map((p, i) => (
+        <li key={i} className="tabular inline-flex items-center gap-1 rounded-full bg-walnut-950/60 px-2 font-condensed text-[12px] leading-5 font-bold text-stock-dim">
+          <ChipGlyph size={11} />
+          <span>{i === 0 ? 'Main' : `Side ${i}`}</span>
+          <span className="text-stock">{formatChips(p.amount)}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+export interface CenterClusterProps {
+  layout: StageLayout;
+  feltId: string;
+  hand: HandView | null;
+  /** Cards of the winning five, to highlight on the board. */
+  highlight: ReadonlySet<string>;
+  nameOf(id: string): string;
+  youId: string;
+  /** Shown instead of the board when no hand is running. */
+  idle?: ReactNode;
+}
+
+const box = (r: Rect) => ({ left: r.left, top: r.top, width: r.right - r.left, height: r.bottom - r.top });
+
+/**
+ * The middle of the felt: pot, board, side pots, and the result. Each part sits
+ * in the box the layout reserved for it; the pot/result lines are anchored to
+ * the board and grow upward.
+ */
+export function CenterCluster({ layout, feltId, hand, highlight, nameOf, youId, idle }: CenterClusterProps) {
+  const w = layout.boardCard;
+  const line = feltVisual(feltId).line;
+  const result = hand?.result ?? null;
+  const lines = result ? resultLines(result, nameOf, youId) : [];
+  // Hand labels get their own line while there's room for them.
+  const withLabels = layout.compact ? lines.length === 1 : lines.length <= 2;
+  const compactPots = layout.compact && !!hand && hand.pots.length > 1;
+
+  if (!hand) {
+    return (
+      <div
+        className="pointer-events-none absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center"
+        style={{ left: layout.cx, top: layout.cy, width: Math.max(layout.boardRow.right - layout.boardRow.left, 230) }}
+      >
+        <div style={{ fontSize: Math.max(12, Math.min(16, w * 0.28)) }}>{idle}</div>
+      </div>
+    );
+  }
 
   return (
-    <div className="absolute left-1/2 top-[47%] flex w-full -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-2.5">
-      <div className="inline-flex items-center gap-2 rounded-pill border-[2.5px] border-gold-border bg-gold px-4 py-1.5 font-display text-[13px] font-semibold tracking-[0.18em] text-felt-900 shadow-hard-gold">
-        {PHASE_LABEL[phase] ?? ''}
+    <div className="pointer-events-none absolute inset-0" data-testid="center-cluster">
+      {/* Pot, or the result once the hand is over */}
+      <div className="absolute flex flex-col items-center justify-end" style={{ ...box(layout.potZone), fontSize: layout.potFont }} aria-live="polite">
+        {result ? (
+          <div key={`result-${hand.handNumber}`} className="tbl-pop flex flex-col items-center gap-0.5" role="status">
+            {lines.map((l) => (
+              <p key={l.key} className="text-center leading-tight">
+                {l.pot && <span className="mr-1.5 font-condensed text-[0.8em] font-bold text-stock-dim">{l.pot}</span>}
+                <span className="font-display text-brass-light drop-shadow-[0_2px_0_rgb(0_0_0/0.45)]">{l.text}</span>
+                {l.label && withLabels && <span className="block font-condensed text-[0.85em] font-bold text-stock">{l.label}</span>}
+              </p>
+            ))}
+          </div>
+        ) : compactPots ? (
+          <PotBreakdown pots={hand.pots} />
+        ) : hand.potTotal > 0 ? (
+          <p className="flex items-center gap-1.5 rounded-full bg-walnut-950/55 px-3 py-0.5">
+            <span className="font-condensed text-[0.8em] font-bold text-stock-dim">Pot</span>
+            <ChipAmount value={hand.potTotal} size="lg" className="text-[1.15em]!" />
+          </p>
+        ) : null}
       </div>
 
-      {banner && (
-        <div className="inline-flex items-center gap-2 rounded-pill border-[2.5px] border-gold-border bg-felt-900/85 px-4 py-1.5 font-display text-sm font-bold tracking-[0.04em] text-gold-soft shadow-hard-gold animate-pop">
-          <span aria-hidden>🏆</span>
-          <span>{banner}</span>
+      <ol className="absolute flex" style={{ ...box(layout.boardRow), gap: layout.boardGap }} aria-label="Board">
+        {Array.from({ length: 5 }, (_, i) => {
+          const c = hand.board[i];
+          if (!c) {
+            return (
+              <li
+                key={`slot-${i}`}
+                aria-hidden="true"
+                className="rounded-[8%/5.7%]"
+                style={{ width: w, height: Math.round(w * 1.4), border: `1.5px dashed ${line}`, opacity: 0.16 }}
+              />
+            );
+          }
+          const k = cardKey(c);
+          const lit = highlight.size > 0 && highlight.has(k);
+          return (
+            <li key={`${hand.handNumber}-${i}`} className="tbl-board [perspective:600px]" style={{ animationDelay: i < 3 ? `${i * 110}ms` : '0ms' }}>
+              <PlayingCard card={c} width={w} highlight={lit} dim={result !== null && result.wentToShowdown && highlight.size > 0 && !lit} />
+            </li>
+          );
+        })}
+      </ol>
+
+      {!result && !layout.compact && (
+        <div className="absolute" style={box(layout.breakdown)}>
+          <PotBreakdown pots={hand.pots} />
         </div>
       )}
+    </div>
+  );
+}
 
-      <div className="flex h-[112px] items-center gap-2.5">
-        {Array.from({ length: 5 }).map((_, i) =>
-          community[i] ? (
-            <div key={i} className="animate-deal" style={{ animationDelay: `${i * 90}ms` }}>
-              <PlayingCard card={community[i]} size="md" reveal />
-            </div>
-          ) : (
-            <div key={i} className="h-[106px] w-[76px] rounded-xl border-[2.5px] border-dashed border-white/15" />
-          ),
-        )}
-      </div>
-
-      <div className="flex items-center gap-2.5">
-        <div className="inline-flex items-center gap-2.5 rounded-pill border-[2.5px] border-ink bg-felt-900/70 py-1.5 pl-2.5 pr-2.5 shadow-pill">
-          <span className="text-[11px] font-extrabold tracking-[0.12em] text-sage">POT</span>
-          <span className="font-display text-[22px] font-bold leading-none text-gold-soft">{main.toLocaleString()}</span>
-        </div>
-        {sidePots.map((p, i) => (
-          <span key={i} className="inline-flex items-center gap-1.5 rounded-pill border-2 border-blue/40 bg-felt-900/70 px-2.5 py-1.5 text-[11px] font-extrabold text-blue">
-            <span aria-hidden>SIDE ● </span>{p.amount.toLocaleString()}
-          </span>
-        ))}
-      </div>
+/** The quiet message in the middle of the felt between hands. */
+export function IdleMessage({ title, body, action, className }: { title: string; body?: string; action?: ReactNode; className?: string }) {
+  return (
+    <div className={cx('pointer-events-auto flex flex-col items-center gap-[0.5em] rounded-2xl bg-baize-deep/40 px-[1em] py-[0.6em] text-center', className)} role="status">
+      <p className="font-display text-[1.3em] leading-tight text-stock drop-shadow-[0_2px_0_rgb(0_0_0/0.4)]">{title}</p>
+      {body && <p className="max-w-[28ch] text-[0.88em] leading-snug text-stock-dim">{body}</p>}
+      {action}
     </div>
   );
 }

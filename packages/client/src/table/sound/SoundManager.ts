@@ -16,7 +16,8 @@ export interface SoundManager {
   /** Resume the AudioContext after a user gesture (browser autoplay policy). */
   unlock(): void;
   setSettings(s: SoundSettings): void;
-  play(name: SoundName, opts?: { rate?: number }): void;
+  /** `rate` shifts pitch; `gain` (0..1) scales the user's volume for quieter cues. */
+  play(name: SoundName, opts?: { rate?: number; gain?: number }): void;
 }
 
 type Ctx = AudioContext;
@@ -75,7 +76,7 @@ export function createSoundManager(): SoundManager {
     setSettings(s: SoundSettings) {
       settings = s;
     },
-    play(name: SoundName, opts?: { rate?: number }) {
+    play(name: SoundName, opts?: { rate?: number; gain?: number }) {
       if (settings.muted || settings.volume <= 0) return;
       const c = ensureCtx();
       if (!c) return;
@@ -85,7 +86,7 @@ export function createSoundManager(): SoundManager {
         source.buffer = buf;
         if (opts?.rate && opts.rate > 0) source.playbackRate.value = opts.rate;
         const gain = c.createGain();
-        gain.gain.value = settings.volume;
+        gain.gain.value = settings.volume * Math.max(0, Math.min(1, opts?.gain ?? 1));
         source.connect(gain).connect(c.destination);
         source.start();
       });

@@ -1,98 +1,115 @@
 import './env.js';
-import express from 'express';
-import { createServer } from 'http';
-import { Server } from 'socket.io';
-import cors from 'cors';
-import path from 'path';
-import fs from 'fs';
-import { fileURLToPath } from 'url';
-import type {
-  ServerToClientEvents,
-  ClientToServerEvents,
-  InterServerEvents,
-  SocketData,
-} from '@poker/shared';
-import { authRouter } from './routes/auth.js';
-import { registerSocketHandlers, noopStatsService, type ChipService, type StatsService } from './rooms/index.js';
-import { InMemoryChipService } from './rooms/in-memory-chips.js';
-import { adjustChips } from './db/index.js';
-import { dbStatsService, dbStatsRepository, noopStatsRepository } from './db/stats.js';
-import { createStatsRouter } from './routes/stats.js';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { assertDatabaseConfigured, openDatabase } from './db/client.js';
+import { createServices } from './services/index.js';
+import { LEASE_RECOVERY_MS, ServerLease } from './services/leases.js';
+import { createApp, SHUTDOWN_CASHOUT_MS } from './app.js';
+import { isProduction, mockAuthAllowed, resolveSecret } from './auth.js';
+import { isInActivityInstance } from './discord.js';
+import { guardTablesWithLease } from './rooms/lease-guard.js';
 
-const app = express();
-const httpServer = createServer(app);
+/**
+ * Longest a stop may take before the process exits regardless. Railway sends
+ * SIGKILL `drainingSeconds` (20, in railway.json) after SIGTERM; this stays
+ * under it so the exit is ours, logged, after the cash-outs had their budget.
+ */
+const SHUTDOWN_HARD_MS = 18_000;
 
-const allowedOrigins = [
-  /\.discordsays\.com$/,
-  /localhost/,
-  /\.trycloudflare\.com$/,
-];
+// Fails fast (before touching anything) rather than running production on a throwaway database.
+assertDatabaseConfigured(process.env, isProduction());
 
-app.use(cors({
-  origin: (origin, callback) => {
-    if (!origin) return callback(null, true);
-    const allowed = allowedOrigins.some(pattern =>
-      typeof pattern === 'string' ? pattern === origin : pattern.test(origin)
-    );
-    callback(null, allowed);
-  },
-  credentials: true,
-}));
+const handle = await openDatabase();
+console.log(handle.kind === 'postgres'
+  ? '[server] using Postgres (DATABASE_URL)'
+  : `[server] DATABASE_URL not set — using embedded PGlite (${process.env.PGLITE_DATA_DIR || 'in memory'})`);
 
-app.use(express.json());
+// This process's lease: seats it opens carry it, and other processes' recovery
+// leaves them alone while it keeps heartbeating (e.g. during a rolling deploy).
+const lease = new ServerLease(handle.db);
+await lease.register();
 
-app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
-});
+const services = createServices(handle.db, undefined, { leaseId: lease.id });
 
-app.use('/api/auth', authRouter);
-
-export const io = new Server<
-  ClientToServerEvents,
-  ServerToClientEvents,
-  InterServerEvents,
-  SocketData
->(httpServer, {
-  cors: {
-    origin: allowedOrigins,
-    credentials: true,
-  },
-});
-
-// With a database configured, chips + stats persist; without one (dev/mock mode)
-// chips use an authoritative in-memory ledger and stats are a no-op, so the
-// server can boot without Postgres.
-const hasDb = !!process.env.DATABASE_URL;
-const chips: ChipService = hasDb ? { adjust: adjustChips } : new InMemoryChipService();
-const stats: StatsService = hasDb ? dbStatsService : noopStatsService;
-if (!hasDb) {
-  console.warn('[server] DATABASE_URL not set — running without persistence (dev/mock mode).');
+// Refund seats whose process is gone (stale or missing lease, or pre-lease rows)
+// — at boot, and periodically for processes that die while this one runs.
+async function recover(when: string) {
+  const recovered = await services.bank.recoverOpenSeats();
+  if (recovered.seats > 0) {
+    console.warn(`[bank] ${when}: refunded ${recovered.chips} chips from ${recovered.seats} seats left open by a stopped server`);
+  }
 }
-registerSocketHandlers(io, { chips, stats });
-app.use('/api/stats', createStatsRouter(hasDb ? dbStatsRepository : noopStatsRepository));
+await recover('boot');
+const recoveryTimer = setInterval(() => {
+  recover('recovery').catch((err) => console.error('[bank] recovery failed', err));
+}, LEASE_RECOVERY_MS);
+recoveryTimer.unref();
 
-// Serve the built client for a single-origin deploy (e.g. Railway behind the
-// Discord proxy). Compiled to packages/server/dist, so the client build sits at
-// ../../client/dist. In local dev Vite serves the client, so the build won't
-// exist here and this stays inert.
-const clientDist = path.join(
-  path.dirname(fileURLToPath(import.meta.url)),
-  '..',
-  '..',
-  'client',
-  'dist',
-);
-if (fs.existsSync(clientDist)) {
-  app.use(express.static(clientDist));
-  // SPA fallback: hand any non-API, non-socket route to the client's index.html.
-  app.get('*', (req, res, next) => {
-    if (req.path.startsWith('/api') || req.path.startsWith('/socket.io')) return next();
-    res.sendFile(path.join(clientDist, 'index.html'));
-  });
-  console.log(`[server] serving client from ${clientDist}`);
+const verify = process.env.VERIFY_ACTIVITY_INSTANCE === '1';
+const app = createApp({
+  services,
+  jwtSecret: resolveSecret(),
+  allowMockAuth: mockAuthAllowed(),
+  clientDist: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../client/dist'),
+  verifyInstance: verify
+    ? (playerId, instanceId) => isInActivityInstance(instanceId, playerId).catch((err) => {
+        console.error('[discord] instance check failed', err);
+        return false;
+      })
+    : undefined,
+});
+
+// Losing the lease is fatal for this process's tables (see ServerLease); wired
+// before the heartbeat starts so a loss is never missed.
+guardTablesWithLease(lease, services.bank, app.realtime.rooms);
+lease.start();
+
+const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3001;
+app.http.listen(PORT, () => {
+  console.log(`[server] listening on port ${PORT}${mockAuthAllowed() ? ' (mock sign-in enabled)' : ''}`);
+});
+
+/** Wait for `work` at most `ms`; true if it finished in time. Errors are logged, not thrown. */
+async function within(work: Promise<unknown>, ms: number, label: string): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const done = await Promise.race([
+    work.then(() => true, (err) => {
+      console.error(`[server] ${label} failed`, err);
+      return true;
+    }),
+    new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), Math.max(0, ms)); }),
+  ]);
+  clearTimeout(timer);
+  if (!done) console.error(`[server] ${label} did not finish in time`);
+  return done;
 }
 
-const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3001;
-httpServer.listen(PORT, () => {
-  console.log(`[server] listening on port ${PORT}`);
-});
+let shuttingDown = false;
+
+async function shutdown(signal: string) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[server] ${signal} — shutting down`);
+  const started = Date.now();
+  // Whatever hangs (a stuck query, a socket that won't close), the process exits
+  // before the platform's SIGKILL.
+  const hardExit = setTimeout(() => {
+    console.error(`[server] shutdown took over ${SHUTDOWN_HARD_MS / 1000}s — exiting now; recovery will refund any open seats`);
+    process.exit(1);
+  }, SHUTDOWN_HARD_MS);
+  const left = () => SHUTDOWN_HARD_MS - (Date.now() - started) - 250;
+  clearInterval(recoveryTimer);
+  // Cash everyone out (voiding hands in progress) while sockets can still be
+  // told. New tables, seats and top-ups are refused from here on.
+  const cashedOut = await within(app.realtime.rooms.shutdown(), SHUTDOWN_CASHOUT_MS, 'cashing out tables');
+  if (!cashedOut) console.error('[server] recovery will refund the tables that did not cash out');
+  // Dropping the lease makes any seat still open recoverable by the next process at once.
+  await within(lease.release(), Math.min(3_000, left()), 'releasing the lease');
+  // Tables are already closed; this only closes sockets and the HTTP server.
+  await within(app.close({ cashoutTimeoutMs: 0 }), Math.min(3_000, left()), 'closing sockets');
+  await within(handle.close(), Math.min(3_000, left()), 'closing the database');
+  clearTimeout(hardExit);
+  process.exit(0);
+}
+process.on('SIGTERM', () => void shutdown('SIGTERM'));
+process.on('SIGINT', () => void shutdown('SIGINT'));

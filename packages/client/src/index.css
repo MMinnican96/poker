@@ -1,106 +1,262 @@
 @import "tailwindcss";
 
+/*
+ * Ratbag Poker Night — "The back room".
+ * Every colour, font and shadow used by components is a token here. Components
+ * never hardcode hex values; cosmetic renderers take colours from the shared
+ * catalog (packages/shared/src/shop.ts) instead.
+ */
+
+@custom-variant short (@media (max-height: 520px));
+
 @theme {
-  /* Fonts */
-  --font-display: "Fredoka Variable", "Fredoka", system-ui, sans-serif;
-  --font-body: "Nunito Variable", "Nunito", system-ui, sans-serif;
+  /* Type */
+  --font-display: "Alfa Slab One", Georgia, serif;
+  --font-ui: "Barlow", system-ui, sans-serif;
+  --font-condensed: "Barlow Condensed", "Barlow", system-ui, sans-serif;
 
-  /* Felt + panels */
-  --color-felt-900: #0b2c1f;
-  --color-felt-800: #0e3325;
-  --color-felt-700: #134632;
-  --color-felt-600: #163f2e;
-  --color-felt-500: #1c4836;
-  --color-felt-400: #1d6044;
-  --color-felt-300: #2c5d48;
-  --color-ink: #0c2418;
+  /* Walnut — the room, rails and most chrome */
+  --color-walnut-950: #120c09;
+  --color-walnut-900: #1b130f;
+  --color-walnut-800: #2a1d17;
+  --color-walnut-700: #3a2920;
+  --color-walnut-600: #4e382b;
+  --color-walnut-500: #6b4f3d;
+  --color-walnut-400: #8d6d57;
 
-  /* Gold */
-  --color-gold: #ffc63d;
-  --color-gold-border: #c8920d;
-  --color-gold-shadow: #ad7a04;
-  --color-gold-soft: #ffd882;
+  /* Baize — felt, primary surfaces */
+  --color-baize: #1f5b3f;
+  --color-baize-light: #2b7150;
+  --color-baize-deep: #0f3526;
 
-  /* Accents */
-  --color-mint: #44e0a3;
-  --color-mint-bright: #7df0c4;
-  --color-mint-border: #1e9e6e;
-  --color-blue: #5bb8ff;
-  --color-blue-border: #2e86c8;
-  --color-red: #ff6b6b;
-  --color-red-border: #d63d3d;
-  --color-red-shadow: #b32e2e;
-  --color-purple: #b07bff;
+  /* Chip red — primary action, danger. Deep enough for card-stock text (4.76:1). */
+  --color-chip: #c22328;
+  --color-chip-light: #de4046;
+  --color-chip-dark: #8a171c;
 
-  /* Text */
-  --color-cream: #f4f1e8;
-  --color-sage: #7fb89c;
-  --color-sage-light: #9ed7bd;
-  --color-sage-muted: #8fbfa8;
+  /* Card stock — text on dark, paper surfaces */
+  --color-stock: #f3e6c8;
+  --color-stock-dim: #dccca8;
+  --color-stock-edge: #c9b68f;
+  --color-ink: #2b1d15;
+  --color-ink-soft: #6a5443;
 
-  /* Radii */
-  --radius-pill: 999px;
+  /* Brass — chips, highlights, placards */
+  --color-brass: #d9a441;
+  --color-brass-light: #efc877;
+  --color-brass-dark: #94691f;
+  /* Engraved text on brass (4.88:1 on brass) and the bronze 3rd-place plate (5:1 with card stock) */
+  --color-ink-brass: #4d3829;
+  --color-bronze: #805a1a;
 
-  /* Shadows */
-  --shadow-hard-ink: 0 4px 0 #0c2418;
-  --shadow-hard-ink-sm: 0 3px 0 #0c2418;
-  --shadow-hard-gold: 0 4px 0 #ad7a04;
-  --shadow-hard-gold-lg: 0 6px 0 #ad7a04;
-  --shadow-hard-red: 0 4px 0 #b32e2e;
-  --shadow-pill: 0 5px 0 #061710;
-  --shadow-panel: 0 16px 36px rgba(0, 0, 0, 0.35), inset 0 2px 0 rgba(255, 255, 255, 0.04);
-  --shadow-card: 0 6px 0 rgba(0, 0, 0, 0.22);
-  --shadow-tablecard: 0 20px 44px rgba(0, 0, 0, 0.42), inset 0 2px 0 rgba(255, 255, 255, 0.06);
-  --shadow-modal: 0 26px 60px rgba(0, 0, 0, 0.55), inset 0 2px 0 rgba(255, 255, 255, 0.06);
-  --shadow-popout: 0 22px 50px rgba(0, 0, 0, 0.5), inset 0 2px 0 rgba(255, 255, 255, 0.06);
+  /* Semantic */
+  --color-positive: #6fc48a;
+  --color-negative: #ef6a5f;
+  --color-muted: #b09a80;
+  --color-focus: #efc877;
 
-  /* Breakpoint that hides the right rail (matches mock @1080px) */
-  --breakpoint-rail: 1080px;
+  /* Suits on card stock */
+  --color-suit-red: #b8232a;
+  --color-suit-black: #1d1612;
 
-  /* Animations */
-  --animate-pop: rpn-pop 0.18s cubic-bezier(0.2, 1.2, 0.4, 1);
-  --animate-fade: rpn-fade 0.15s ease;
-  --animate-deal: rpn-deal 0.44s cubic-bezier(0.2, 1.05, 0.3, 1) both;
-  --animate-reveal: rpn-reveal 0.36s ease-out both;
+  /* Shadows: hard "edge" shadows read as thickness, like a clay chip */
+  --shadow-edge-chip: 0 3px 0 var(--color-chip-dark);
+  --shadow-edge-brass: 0 3px 0 var(--color-brass-dark);
+  --shadow-edge-walnut: 0 3px 0 var(--color-walnut-950);
+  --shadow-lift: 0 12px 28px rgb(0 0 0 / 0.45);
+  --shadow-inset-well: inset 0 2px 6px rgb(0 0 0 / 0.45);
+  --shadow-panel: inset 0 1px 0 rgb(255 255 255 / 0.04), 0 6px 18px rgb(0 0 0 / 0.35);
+  --shadow-felt: inset 0 0 40px rgb(0 0 0 / 0.35);
+  --shadow-placard: inset 0 1px 0 var(--color-brass-light), inset 0 -2px 0 var(--color-brass-dark), 0 4px 0 var(--color-walnut-950), 0 10px 20px rgb(0 0 0 / 0.4);
+  --shadow-card: 0 1px 0 rgb(0 0 0 / 0.25), 0 4px 10px rgb(0 0 0 / 0.3);
+
+  --radius-chip: 999px;
+
+  --breakpoint-xs: 30rem;
+
+  /* Motion (only used under motion-safe) */
+  --animate-rise: rise 0.18s cubic-bezier(0.2, 0.9, 0.3, 1) both;
+  --animate-fade: fade 0.15s ease both;
+  --animate-slide-in: slide-in 0.2s cubic-bezier(0.2, 0.9, 0.3, 1) both;
+  --animate-spin-slow: spin 1.1s linear infinite;
 }
 
-@keyframes rpn-pop {
-  0% { transform: scale(0.92) translateY(6px); opacity: 0; }
-  100% { transform: scale(1) translateY(0); opacity: 1; }
+@keyframes rise {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: none; }
 }
-@keyframes rpn-fade {
-  0% { opacity: 0; }
-  100% { opacity: 1; }
+@keyframes fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
-@keyframes rpn-deal {
-  0% { opacity: 0; transform: translateY(-56px) scale(0.84); }
-  100% { opacity: 1; transform: none; }
+@keyframes slide-in {
+  from { transform: translateX(100%); }
+  to { transform: none; }
 }
-@keyframes rpn-reveal {
-  0% { transform: rotateY(82deg); opacity: 0.2; }
-  100% { transform: none; opacity: 1; }
+
+/* Material textures: a faint grain so surfaces read as wood, cloth and paper. */
+@utility tex-grain {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.09 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+@utility tex-wood {
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='120'%3E%3Cfilter id='w'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.004 0.09' numOctaves='3' seed='3'/%3E%3CfeColorMatrix values='0 0 0 0 0.05  0 0 0 0 0.03  0 0 0 0 0.02  0 0 0 0.22 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23w)'/%3E%3C/svg%3E");
 }
 
 @layer base {
-  html, body, #root { margin: 0; height: 100%; }
-  body { font-family: var(--font-body); }
-  ::-webkit-scrollbar { width: 10px; height: 10px; }
-  ::-webkit-scrollbar-thumb {
-    background: rgba(0, 0, 0, 0.28);
-    border-radius: 999px;
-    border: 2px solid transparent;
-    background-clip: padding-box;
+  html {
+    color-scheme: dark;
+    -webkit-text-size-adjust: 100%;
   }
-  ::-webkit-scrollbar-track { background: transparent; }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    margin: 0;
+    background-color: var(--color-walnut-900);
+    color: var(--color-stock);
+    font-family: var(--font-ui);
+    font-size: 15px;
+    line-height: 1.45;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1, h2, h3 {
+    font-family: var(--font-display);
+    font-weight: 400;
+    line-height: 1.1;
+    letter-spacing: 0.005em;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+  }
+  ::selection {
+    background: var(--color-brass);
+    color: var(--color-ink);
+  }
+  button {
+    cursor: pointer;
+  }
+  button:disabled {
+    cursor: not-allowed;
+  }
+  input[type="number"]::-webkit-inner-spin-button {
+    opacity: 0.4;
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-walnut-500) transparent;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
 }
 
 @layer components {
-  .felt-bg {
-    background: radial-gradient(120% 90% at 50% -10%, #1d6044 0%, #134632 42%, #0b2c1f 100%);
+  /* Chip amounts and anything numeric that should line up. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
   }
-  .animate-deal { animation: var(--animate-deal); }
-  .animate-reveal { animation: var(--animate-reveal); }
-  @media (prefers-reduced-motion: reduce) {
-    .animate-deal, .animate-reveal { animation: none; }
+}
+
+@layer components {
+  /* Range slider: walnut groove, brass fill, a clay-chip thumb. Set --fill (0–100%). */
+  .range {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 28px;
+    background: transparent;
+    cursor: pointer;
+    --fill: 0%;
   }
+  .range:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+  .range::-webkit-slider-runnable-track {
+    height: 8px;
+    border-radius: 999px;
+    background: linear-gradient(to right, var(--color-brass) var(--fill), var(--color-walnut-950) var(--fill));
+    box-shadow: var(--shadow-inset-well);
+  }
+  .range::-moz-range-track {
+    height: 8px;
+    border-radius: 999px;
+    background: var(--color-walnut-950);
+    box-shadow: var(--shadow-inset-well);
+  }
+  .range::-moz-range-progress {
+    height: 8px;
+    border-radius: 999px;
+    background: var(--color-brass);
+  }
+  .range::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 22px;
+    height: 22px;
+    margin-top: -7px;
+    border-radius: 999px;
+    background: var(--color-chip);
+    border: 3px dashed var(--color-stock);
+    box-shadow: 0 0 0 2px var(--color-chip), 0 2px 0 2px var(--color-chip-dark);
+  }
+  .range::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    border-radius: 999px;
+    background: var(--color-chip);
+    border: 3px dashed var(--color-stock);
+    box-shadow: 0 0 0 2px var(--color-chip), 0 2px 0 2px var(--color-chip-dark);
+  }
+  .range:focus-visible {
+    outline: none;
+  }
+  .range:focus-visible::-webkit-slider-thumb {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 3px;
+  }
+  .range:focus-visible::-moz-range-thumb {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 3px;
+  }
+
+  /* Text-like inputs sit in a walnut well. */
+  .input {
+    height: 40px;
+    width: 100%;
+    border-radius: 8px;
+    padding: 0 12px;
+    background: var(--color-walnut-950);
+    color: var(--color-stock);
+    box-shadow: var(--shadow-inset-well);
+    border: 1px solid var(--color-walnut-600);
+    font: 500 15px/1 var(--font-ui);
+  }
+  .input::placeholder {
+    color: var(--color-walnut-400);
+  }
+  .input:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 1px;
+  }
+  .input[aria-invalid="true"] {
+    border-color: var(--color-negative);
+  }
+}
+
+/* A pool of warm lamp light over the table area. */
+@utility lamp-glow {
+  background-image: radial-gradient(ellipse 70% 55% at 50% 38%, color-mix(in srgb, var(--color-brass) 9%, transparent), transparent 70%);
 }

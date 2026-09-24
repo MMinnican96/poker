@@ -1,47 +1,44 @@
-import type { Card } from '@poker/shared';
-import { RANKS, SUITS } from './cards.js';
+import { randomInt } from 'node:crypto';
+import { RANKS, SUITS, type Card } from '@poker/shared';
 
-/** Random source in [0, 1). Injectable so tests can be deterministic. */
-export type Rng = () => number;
+/** Returns an integer in [0, maxExclusive). Injectable so tests are deterministic. */
+export type RandomInt = (maxExclusive: number) => number;
 
-/** A fresh, ordered 52-card deck. */
+/** Cryptographically secure by default: shuffles must not be predictable. */
+export const secureRandomInt: RandomInt = (max) => randomInt(max);
+
+/** A seeded generator for tests and simulations (mulberry32). */
+export function seededRandomInt(seed: number): RandomInt {
+  let a = seed >>> 0;
+  return (max) => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return Math.floor((((t ^ (t >>> 14)) >>> 0) / 4294967296) * max);
+  };
+}
+
 export function createDeck(): Card[] {
   const deck: Card[] = [];
-  for (const suit of SUITS) {
-    for (const rank of RANKS) {
-      deck.push({ rank, suit });
-    }
-  }
+  for (const suit of SUITS) for (const rank of RANKS) deck.push({ rank, suit });
   return deck;
 }
 
-/**
- * Return a shuffled copy using the Fisher-Yates algorithm. Does not mutate the
- * input. `rng` defaults to Math.random but can be injected for determinism.
- */
-export function shuffle(deck: Card[], rng: Rng = Math.random): Card[] {
+/** Fisher–Yates shuffle into a new array. */
+export function shuffle(deck: Card[], random: RandomInt = secureRandomInt): Card[] {
   const out = deck.slice();
   for (let i = out.length - 1; i > 0; i--) {
-    const j = Math.floor(rng() * (i + 1));
+    const j = random(i + 1);
     [out[i], out[j]] = [out[j], out[i]];
   }
   return out;
 }
 
-/** A shuffled fresh deck. */
-export function freshShuffledDeck(rng: Rng = Math.random): Card[] {
-  return shuffle(createDeck(), rng);
-}
-
 /**
- * Deal `count` cards from the top (end) of the deck. Mutates `deck` (pops) and
- * returns the dealt cards — mirrors dealing off a physical deck.
+ * Deal from the top of the deck. The deck is stored top-first so a test can
+ * stack it in reading order.
  */
-export function deal(deck: Card[], count: number): Card[] {
+export function draw(deck: Card[], count: number): Card[] {
   if (count > deck.length) throw new Error('Not enough cards to deal');
-  const dealt: Card[] = [];
-  for (let i = 0; i < count; i++) {
-    dealt.push(deck.pop()!);
-  }
-  return dealt;
+  return deck.splice(0, count);
 }

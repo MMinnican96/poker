@@ -1,612 +1,626 @@
 # Architecture
 
-## Overview
+Ratbag Poker Night is a no-limit Texas Hold'em game that runs as a Discord
+Activity. This document describes the system as it's built on `feat/overhaul`.
+For running it see [SETUP.md](./SETUP.md); for the visual system see
+[DESIGN_STANDARDS.md](./DESIGN_STANDARDS.md).
 
-A Discord Activity poker game built as an npm-workspaces monorepo. The **server is
-the single source of truth** for all game state; clients render what they're told
-and send action intents. Real-time communication is over Socket.io; the poker
-rules live in a pure, fully-tested engine with no I/O.
+## Contents
 
-```
-┌────────────────────────── Discord client (iframe) ──────────────────────────┐
-│  React + Tailwind                                                            │
-│  ┌───────────┐   Embedded App SDK   ┌──────────────┐   Socket.io (ws)        │
-│  │  Lobby UI │◄────── identity ─────│ TableScreen  │◄───────────────┐        │
-│  │  (React)  │                      │ (React DOM)  │                │        │
-│  └───────────┘                      └──────────────┘                │        │
-└──────────────────────────────────────────────────────────────────── │ ──────┘
-                      │ POST /api/auth/token (OAuth code)               │
-                      ▼                                                 ▼
-┌───────────────────────────────── Server (Node) ─────────────────────────────┐
-│  Express (auth) + Socket.io                                                  │
-│   ┌────────────┐   ┌──────────────┐   ┌──────────────────────────────────┐  │
-│   │ auth route │   │ LobbyManager │   │ GameRoom  ── drives ──► Engine    │  │
-│   │ (Discord + │   │ (per         │   │ (per instanceId)       (pure TS)  │  │
-│   │  JWT + DB) │   │  instanceId) │   │  turn timer, chips, sanitization  │  │
-│   └─────┬──────┘   └──────────────┘   └────────────────┬─────────────────┘  │
-└─────────│──────────────────────────────────────────────│────────────────────┘
-          ▼ Drizzle ORM                                   ▼ ChipService
-   ┌──────────────┐                              ┌──────────────────────┐
-   │  PostgreSQL  │  players, chip_transactions  │ adjustChips (atomic, │
-   │              │  (+ audit tables)            │ idempotent ledger)   │
-   └──────────────┘                              └──────────────────────┘
-```
+1. [Packages](#packages)
+2. [Data flow](#data-flow)
+3. [Authentication](#authentication)
+4. [Rooms and the table lifecycle](#rooms-and-the-table-lifecycle)
+5. [Engine rules](#engine-rules)
+6. [Bank, escrow, leases and recovery](#bank-escrow-leases-and-recovery)
+7. [Stats, XP, levels and challenges](#stats-xp-levels-and-challenges)
+8. [Shop and cosmetics](#shop-and-cosmetics)
+9. [Chat, DMs and activity](#chat-dms-and-activity)
+10. [Database](#database)
+11. [REST API](#rest-api)
+12. [Socket contract](#socket-contract)
+13. [Privacy guarantees](#privacy-guarantees)
+14. [Client architecture](#client-architecture)
+15. [Testing](#testing)
+16. [Production hosting](#production-hosting)
 
-## Monorepo layout
+## Packages
 
-```
-packages/
-├── shared/   # TypeScript types + Socket.io event contracts (no runtime deps)
-│   └── src/{types,events}.ts
-├── server/   # Node + Express + Socket.io + Drizzle
-│   └── src/
-│       ├── index.ts          # HTTP + Socket.io bootstrap
-│       ├── routes/{auth,stats}.ts  # Discord OAuth → JWT session; read-only /api/stats
-│       ├── discord.ts         # Discord HTTP helpers (server-side only)
-│       ├── db/               # schema, pool + adjustChips, and the stats layer
-│       │   └── {schema,index,stats,stats-aggregate,stats-leaderboard,stats-recompute}.ts
-│       ├── engine/            # pure poker rules (see below)
-│       └── rooms/             # LobbyManager, GameRoom, hand-stats, state sanitization
-└── client/   # React + Tailwind (the Activity iframe)
-    └── src/
-        ├── index.css          # Tailwind v4 @import + @theme design tokens + keyframes
-        ├── discord.ts         # SDK handshake (+ dev mock)
-        ├── socket.ts          # typed Socket.io client
-        ├── App.tsx
-        ├── lobby/             # Lobby screen components (see below)
-        └── table/             # React/DOM table scene (see "Client table view")
-```
+npm-workspaces monorepo with three packages.
 
-`@poker/shared` is the contract glued to both ends: it defines `GameState`,
-`LobbyState`, `Card`, `TableConfig`, and the typed Socket.io event maps, so the
-client and server can never drift on the wire format.
-
-## Client lobby components
-
-The lobby UI lives in `packages/client/src/lobby/` and was built with
-**Tailwind CSS v4** (CSS-first config via `@tailwindcss/vite`). Design tokens
-(colors, shadows, radii, fonts, animations) are declared in a single `@theme` block
-in `src/index.css`; see [`docs/DESIGN_STANDARDS.md`](./DESIGN_STANDARDS.md) for the
-full token table and component patterns.
-
-```
-lobby/
-  LobbyScreen.tsx        # Top-level: owns socket subscription, tab + modal state, layout
-  Header.tsx             # Logo, nav tabs (Home / Leaderboard / Stats / Shop), user button
-  PlayersPanel.tsx       # Left aside: players list + count badge
-  PlayerRow.tsx          # One clickable player row; exports playerStatus() + STATUS_STYLE
-  TableSettings.tsx      # Center Home tab: steppers, status pills, action buttons
-  ComingSoon.tsx         # Reusable Coming Soon placeholder (Leaderboard / Stats / Shop)
-  RecentActivity.tsx     # Right rail: scaffolded feed (empty state; hidden below 1080px)
-  UserPopout.tsx         # Top-right popout: Profile / Settings (Coming Soon) / How to Play
-  PlayerProfileModal.tsx # Quick-view stats for a clicked player
-  StatTile.tsx           # Shared stat tile; renders "—" when value is null
-  useStats.ts            # Hook: fetch /api/stats/:id; sample data in mock mode
-```
-
-**`LobbyScreen`** owns the `lobby_state_update` / `game_start` subscription (moved
-from the old `Lobby.tsx`, which is deleted), the countdown tick, and local UI state:
-`activeTab`, `userPopoutOpen`, `selectedPlayerId`. It computes derived values
-(`isHost`, `readyCount`, `canEditConfig`, `secondsLeft`, per-player status) and
-passes them down as props.
-
-**Tabs:** Home shows full content (`TableSettings` + panels). Leaderboard, Stats, and
-Shop render `<ComingSoon />` — the data exists on the server but is out of scope for
-the current lobby implementation; quick-view stat tiles in the popout and modal still
-show real (or mock-mode sample) data.
-
-**`useStats(playerId)`** returns `{ stats: PlayerStatsSummary | null, loading }`.
-In mock mode it returns deterministic sample data seeded from a hash of `playerId`
-(no fetch). In real mode it calls `GET /api/stats/:id` with session credentials; on
-non-OK / network error it returns `null` and the UI shows `—` placeholders.
-
-### Deferred lobby UI features
-
-The following are intentionally deferred and shown as Coming Soon / disabled:
-
-- Player **titles** and **levels** (no backend concept yet).
-- **Shop** tab — no items or purchases.
-- **Leaderboard** and **Stats** tab data — routes exist; UI content deferred.
-- **Friends / Add Friend** — removed from the design.
-- **Recent Activity** — scaffold and empty-state only; no data written.
-- **User Settings** toggles — Settings sub-tab shows a Coming Soon placeholder.
-- **View Profile** full page — button present but disabled.
-- **Log Out** — visual only.
-- Per-player **In-Game** status while others remain in the lobby (the current
-  architecture transitions the whole lobby at once; only `lobby.status === 'in-game'`
-  maps to the In-Game pill).
-
-## Client table view
-
-The in-game table is rendered as **React + Tailwind DOM** (no Phaser — the old
-Phaser scene and `GameCanvas`/`game/` bridge were removed). It renders the same
-per-viewer `GameState` the server broadcasts, lives in
-`packages/client/src/table/`, and reuses the lobby's `UserPopout`,
-`PlayerProfileModal`, `useStats`, and `StatTile` components.
-
-```
-table/
-  TableScreen.tsx    # Top-level: owns game_state_update + timer_tick, lays out the felt
-  TableHeader.tsx    # Top bar: table name, spectator eye + list, leave/sit controls
-  CenterCluster.tsx  # Felt center: community cards (dealt to position) + pot / side pots
-  Seat.tsx           # One opponent seat: avatar, chips, dealer/SB/BB badges, action pill,
-                     #   hole-card fan, turn-timer ring
-  HeroHud.tsx        # Bottom-center hero: own hole cards + named hand, table/bank chips, timer
-  TableActionBar.tsx # Hero action controls: quick-raise, bet slider, fold/check/call/raise
-  Card.tsx           # A single playing card (face/back, size, rotation, reveal flag)
-  SeatLayout.ts      # Pure seat geometry — evenly splits opponents around the oval, hero at
-                     #   bottom-center; returns left/top + bet-chip offsets per slot
-  useHandName.ts     # Hook: names the hero's best hand via shared describeBestHand
-```
-
-Two supporting changes back this view:
-
-- **`GamePlayer.lastAction`** — the engine now records each player's most recent
-  action on their `GamePlayer` (in `@poker/shared`), which drives the per-seat
-  action pill (Fold / Check / Call / Raise / All-in).
-- **Hand evaluation moved to `@poker/shared`** (`hand-eval.ts`, exporting
-  `describeBestHand`), so the client can name the hero's hand client-side. The
-  server engine's `hand-evaluator.ts` is now a thin re-export shim, preserving its
-  existing import paths.
-
-**Showdown reveal** uses the server's existing `viewFor()` card exposure
-(non-folded hands are revealed at showdown; folded hands never are), so the table
-simply renders whatever hole cards the sanitized state contains. Revealing *all*
-remaining hands at hand-end is a **future phase**.
-
-### Showdown polish (`GameState.showdown` + `showdownMs`)
-
-When a hand ends, `GameRoom.concludeHand` populates `GameState.showdown`:
-
-```ts
-interface ShowdownSummary {
-  winnerIds: string[];           // one or more player IDs (split-pot aware)
-  potAmount: number;
-  handName?: string;             // best hand description for the winner(s)
-  shownHands: ShownHand[];       // { playerId, cards, handName } for every non-folded player
-}
-```
-
-The state is broadcast for `GameTiming.showdownMs` (default ~6 500 ms) before
-`GameRoom` advances to the next hand. During this window:
-
-- **`ShowdownBanner`** renders the winner's name and hand name at the centre of
-  the felt.
-- Each non-folded `Seat` shows a per-player **hand label** below the hole cards
-  (driven by `shownHands`).
-- **`ConfettiLayer`** (wraps `canvas-confetti`) fires a gold burst anchored to
-  the winner's seat element (located via `data-seat-id`).
-
-### Client sound layer (`table/sound/`)
-
-Three modules in `packages/client/src/table/sound/` form the audio stack:
-
-| Module | Role |
+| Package | Role |
 |---|---|
-| `SoundManager.ts` | Thin `HTMLAudioElement` pool — loads, plays, and volume-scales named clips |
-| `soundStore.ts` | Zustand store for `{ muted, volume }` — persisted to `localStorage`; the first live Settings feature |
-| `useTableSounds.ts` | React hook — diffs incoming `GameState` and calls `SoundManager` on changes |
+| `@poker/shared` | Wire types and the Socket.io contract (`events.ts`), table rules and `validateRules` (`table.ts`), hand evaluator with descriptive labels (`hand-eval.ts`), shop catalog (`shop.ts`), levels, XP, daily bonus and challenges (`progression.ts`), lobby, chat and stats types (`social.ts`), number formatting (`format.ts`). ESM, built to `dist/`. |
+| `@poker/server` | Node + Express + Socket.io + Drizzle. Postgres through node-postgres when `DATABASE_URL` is set, embedded PGlite otherwise. |
+| `@poker/client` | React 19 + Tailwind 4 single-page app, the Activity iframe. Built with Vite 8. |
 
-**Sound triggers** (all produced by `useTableSounds`):
+The server consumes shared's built `dist/` through the workspace symlink; the
+client aliases `@poker/shared` to `shared/src` in both `vite.config.ts` and
+`tsconfig.json`.
 
-| Game event | Clip |
+Server source map:
+
+| Path | Contents |
 |---|---|
-| Bet / raise / all-in | `bet.mp3` (chips) |
-| Call (detected as `callAmount` rise → 0) | `bet.mp3` |
-| Check | `check.mp3` (knock) |
-| New street card dealt | `deal.mp3` |
-| Fold | `fold.wav` |
-| Consecutive raises (escalating suspense) | `suspense.wav` at rising playback rate; resets on call/check/new street |
-| Winner revealed at showdown | `win.wav` |
-
-The fold/suspense/win clips are synthesized `.wav` placeholders in
-`packages/client/public/audio/`; chip/check/deal clips are `.mp3`. All are
-swappable without code changes — `SoundManager` maps `SoundName` strings to
-`/audio/<file>` paths.
+| `index.ts` | Boot: open DB (migrations), register lease, recovery at boot and every 30 s, `createApp`, listen, graceful shutdown |
+| `app.ts` | `createApp()`: Express (CORS, 32 kB JSON limit, JSON body errors), Socket.io, `/api`, static client with SPA fallback, `close()` |
+| `auth.ts` | JWT sign/verify (HS256, 24 h), `resolveSecret`, `isProduction`, `mockAuthAllowed`, mock identities |
+| `discord.ts` | OAuth code exchange, `/users/@me`, guild member lookup, Activity instance check |
+| `engine/` | Pure rules: `startHand`, `legalActions`, `applyAction`, `progress`, pots, deck |
+| `rooms/instance-room.ts` | `InstanceRoom` (presence, activity feed, the table) and `RoomManager` |
+| `rooms/table-room.ts` | `TableRoom`: seats, hands, timers, boundary changes, per-viewer views |
+| `rooms/serial.ts` | `Serial` (one-at-a-time async queue) and `RateLimiter` |
+| `socket/realtime.ts` | Socket auth middleware and every event handler |
+| `http/api.ts` | REST routes |
+| `services/` | `bank`, `leases`, `recorder`, `hand-facts`, `stats-aggregate`, `stats-repo`, `rewards`, `shop`, `chat`, `profiles`, `players`, `recompute` |
+| `db/` | `schema.ts`, `client.ts` (`openDatabase`, `openPglite`), `migrate-cli.ts` |
+| `drizzle/` | `0000_init.sql`, `0001_leases.sql`, `meta/` journal and snapshots |
 
 ## Data flow
 
-1. **Identity** — The client runs the Discord Embedded App SDK handshake, gets an
-   OAuth `code`, and POSTs it to `/api/auth/token`. The server exchanges the code,
-   uses the **bot token** to fetch the player's server nickname + guild avatar,
-   upserts the `players` row (seeding 10,000 chips on first login), and returns a
-   JWT session cookie + the trusted identity. The client never self-reports
-   identity to the game.
-2. **Lobby** — The client opens a Socket.io connection and emits `join_lobby` with
-   `{ instanceId, identity }`. The `LobbyManager` keys a room by Discord
-   `instanceId`, so everyone in the same Activity session shares a lobby.
-3. **Game** — When a countdown completes with ≥2 funded players, a `GameRoom` is
-   created. It owns the engine `HandContext`, broadcasts per-viewer sanitized
-   state, and routes player actions.
+```
+ Discord client ──SDK authorize(code)──▶ client ──POST /api/auth/token──▶ server
+                                           ◀── { token, accessToken, me } ──┘
+ client ──socket.io (auth.token)──▶ realtime.ts ──▶ RoomManager ──▶ InstanceRoom
+        ◀── me / lobby_state / table_state / chat / notice ──┐        │
+                                                             │        ▼
+ client ──REST (Bearer)──▶ http/api.ts ──▶ services ◀──── TableRoom ──▶ engine (pure)
+                                              │              │ Serial queue
+                                              ▼              ▼
+                                   Postgres / PGlite  ◀──  Bank, HandRecorder
+```
 
-## Socket.io event reference
+1. The client signs in (Discord or mock) and gets a session token plus its own
+   `PlayerSelf`.
+2. It opens one socket with the token and sends `join_room` with its Activity
+   instance id. The server replies with `lobby_state`, `activity_history` and the
+   room's `chat_history`.
+3. Commands (`take_seat`, `act`, ...) go to the `TableRoom` for that instance.
+   The table asks the engine what's legal, drives timers, and moves chips only
+   through the `Bank`.
+4. After every change the table sends each member a `table_state` built for that
+   viewer, and the instance broadcasts a cards-free `lobby_state`.
+5. Everything outside a live hand (profiles, stats, leaderboard, shop,
+   challenges, DM history) is REST.
 
-Defined in [`packages/shared/src/events.ts`](../packages/shared/src/events.ts).
+## Authentication
 
-### Server → Client
+- **Discord.** The client calls `sdk.commands.authorize` with scope `identify`
+  only and posts the code to `POST /api/auth/token` with the `guildId`. The
+  server exchanges the code, reads `/users/@me`, and with the bot token reads the
+  guild member for the server nickname and guild avatar. It upserts the player
+  (new players start with 10,000 chips) and returns a signed session token and
+  the Discord access token, which the client passes to
+  `sdk.commands.authenticate`.
+- **Mock (development).** `POST /api/auth/mock { name }` makes a stable
+  `mock-<slug>` identity with a default Discord avatar. The server refuses it
+  (404) when `mockAuthAllowed()` is false: always in production (`NODE_ENV=production`,
+  `RAILWAY_ENVIRONMENT` or `RAILWAY_ENVIRONMENT_NAME` set), and when
+  `MOCK_AUTH=0`. The client only tries it in a Vite dev build with `?mock` in
+  the URL.
+- **Session token.** HS256 JWT, 24 h, claims `{ sub, name, avatar }`. Tokens
+  signed with any other algorithm are refused. `JWT_SECRET` is required in
+  production; elsewhere a random per-process secret is used, so dev sessions end
+  on restart.
+- **Transport.** Socket.io reads `handshake.auth.token` in middleware and loads
+  the player row; failure is `connect_error('unauthorized')`. REST reads
+  `Authorization: Bearer <token>`; failure is `401 { error: 'Sign in again.' }`.
+  The client shows "Your session expired" for either.
+- **Instance check (optional).** With `VERIFY_ACTIVITY_INSTANCE=1`, `join_room`
+  asks Discord (bot token) whether the player is in that Activity instance and
+  refuses otherwise. Off by default.
 
-| Event | Payload | Meaning |
+## Rooms and the table lifecycle
+
+### Rooms
+
+`RoomManager` holds one `InstanceRoom` per Discord Activity instance. A room
+tracks presence (a player is present while any of their sockets is joined), a
+feed of the last 40 activity events (in memory), and at most one `TableRoom`.
+Rooms are pruned when nobody is present and no table is open. Lobby presence is
+`lobby`, `playing` (seated) or `watching`.
+
+### Opening and starting
+
+```
+             open_table (host)                start_table (host, ≥2 eligible)
+  no table ─────────────────────▶ open ─────────────────────────────▶ running
+                                   │ rules editable (host)               │ hands deal automatically
+                                   │ watch / take seat                   │ rules locked
+                                   ▼                                     ▼
+                        close_table / everyone leaves ─────────▶ closed (table_left to members)
+```
+
+- `open_table` needs the opener present in the room, no existing table, rules
+  that pass `validateRules`, a felt the opener owns, and a bankroll of at least
+  the minimum buy-in. The opener becomes host and joins as a spectator.
+- Table rules: name (1 to 32 chars), a blind level from `BLIND_LEVELS`, ante
+  (0 to the small blind), buy-in range (10 to 500 big blinds), seats (2 to 9),
+  turn timer (10 to 120 s in steps of 5), felt. Unknown fields are dropped.
+- While the table is `open` the host can change rules (`update_rules`), except
+  shrinking seats below an occupied one or picking a felt they don't own.
+- `start_table` switches to `running` once two players are eligible. There's no
+  way back to `open`.
+
+### Seats and hands
+
+- **Members** are seated players or spectators. `watch_table` joins as a
+  spectator. `take_seat { seat, buyIn }` joins first if needed, then buys in
+  (bank transaction) and takes the seat; the player is dealt in from the next
+  hand.
+- **Eligible for a hand**: seated, not sitting out, stack above 0, no pending
+  change, connected. With fewer than two eligible the table idles.
+- **Dealing** is scheduled `handGapMs` after the previous hand and runs inside
+  the table's serial queue, which re-checks eligibility. So a hand is never dealt
+  while a buy-in, top-up or cash-out is in flight.
+- **Pacing** (`DEFAULT_TIMING`): 700 ms before the next street, 1.5 s per street
+  in an all-in run-out, result held 6.5 s after a showdown or 2.5 s after a
+  fold-out, 1.5 s between hands.
+
+### Changes at hand boundaries
+
+A seated player in a hand can't leave mid-hand. These requests queue and apply
+when the hand ends; otherwise they apply at once:
+
+| Request | Mid-hand | Applied |
 |---|---|---|
-| `lobby_state_update` | `LobbyState` | Full lobby snapshot (players, ready, config, status, `activeGame`) |
-| `countdown_start` | `{ endsAt }` | Pre-game countdown started (absolute epoch ms) |
-| `countdown_cancel` | — | Countdown aborted (cancelled or under-funded at expiry) |
-| `game_start` | `{ gameId }` | A game session has begun (host-path only; clients switch on `joined_table`) |
-| `joined_table` | `{ gameId, role }` | Client should mount the table UI with the given role |
-| `left_table` | — | Client should return to the lobby |
-| `game_state_update` | `GameState` | Per-viewer sanitized table state |
-| `timer_tick` | `{ playerId, remainingMs }` | Live turn-timer broadcast (~every 500ms) |
-| `action_rejected` | `{ reason }` | Your last action was illegal |
-| `hand_result` | `{ winnerIds, potAmount, handName?, finalState }` | Hand concluded; cards revealed |
+| `leave_table` | `pending: 'leave'` | Cash out, `table_left { code: 'left' }`, back to the lobby |
+| `stand_up` | `pending: 'stand'` | Cash out, stay as a spectator |
+| `top_up { amount }` | `pendingTopUp += amount` | Chips move before the next hand, trimmed to stay within `maxBuyIn` (with a notice) |
+| `cancel_pending` | Clears the pending leave/stand and any queued top-up | |
 
-### Client → Server
+`sit_out { sittingOut }` applies immediately: the player keeps the seat and
+isn't dealt in. Spectators can leave at any time.
 
-| Event | Payload | Meaning |
-|---|---|---|
-| `join_lobby` | `{ instanceId, identity }` | Join/reconnect to a lobby (and any running game) |
-| `player_ready` / `player_unready` | — | Toggle ready state |
-| `start_countdown` | — | Begin the countdown (needs ≥2 ready) |
-| `cancel_countdown` | — | Cancel the countdown (ready players only) |
-| `update_config` | `Partial<TableConfig>` | Host-only, before anyone readies |
-| `player_action` | `PlayerAction` | `fold` / `check` / `call` / `raise{amount}` / `all-in` |
-| `join_table` | — | Spectate a running game |
-| `sit_in` | — | Queue spectator→seated transition (resolves at next hand boundary) |
-| `sit_out` | — | Queue seated→spectator transition (resolves at next hand boundary) |
-| `cancel_pending` | — | Cancel a queued `sit_in` / `sit_out` / `leave_table` |
-| `leave_table` | — | Leave the table (deferred to hand end if seated; immediate if spectator) |
+Boundary resolution runs in the serial queue in this order: retry failed
+cash-outs; then for each seated player, pending leave, pending stand, queued
+top-up, bust (stack 0: stood up with "You're out of chips"), and disconnect
+handling. After it, the host is handed on if needed and an abandoned table
+closes.
 
-## Poker engine (`server/src/engine/`)
+### Timeouts and disconnects
 
-Pure functions, zero I/O, exhaustively unit-tested. The **deck is never part of
-`GameState`** — it lives in the server-only `HandContext`, so cards can't leak.
+- **Turn timer.** When it runs out the server checks if it can, otherwise folds.
+  Two timeouts in a row sit the player out, with a notice ("Tap I'm back").
+  `HandView.actionStartedAt` / `actionEndsAt` are server-clock epoch ms, and
+  `serverNow` lets the client correct for clock skew.
+- **Disconnect.** A spectator who loses their last socket leaves the table. A
+  seated player is marked disconnected and isn't dealt into further hands; at
+  the next boundary they're sat out, and after 90 s away they're removed
+  (cashed out, `table_left { code: 'removed' }`). An idle table sweeps for this
+  every 10 s. Reconnecting (`join_room`, then `request_state`) restores them.
 
-| Module | Responsibility |
+### Host transfer and closing
+
+- If the host leaves, the host passes to the first seated member (else any
+  member), who gets a notice.
+- `close_table` (host only) closes at once between hands, or sets `closing` and
+  closes when the current hand ends. Every seated player is cashed out and every
+  member gets `table_left { code: 'host-closed' }`.
+- The table closes as `abandoned` when it has no members, or when it's running
+  with nobody seated and no hand in progress.
+- On server shutdown every table closes with `shutdown` (see below).
+
+### `table_left` codes
+
+| Code | Meaning |
 |---|---|
-| `cards.ts` / `deck.ts` | Ranks/suits, Fisher-Yates shuffle (injectable RNG), deal |
-| `hand-evaluator.ts` | 5-card eval + best-of-7, monotonic comparable score |
-| `pot.ts` | Side-pot construction by contribution layer |
-| `blinds.ts` | Blind positions (heads-up aware), posting |
-| `actions.ts` | `validateAction` / `applyActionToState` (min-raise, all-in rules) |
-| `game-state.ts` | `startHand`, `act`, street transitions, all-in run-out |
-| `showdown.ts` | Winner determination, split + side pots, odd-chip rule |
+| `left` | You left the table |
+| `host-closed` | The host closed the table |
+| `abandoned` | Everyone left |
+| `removed` | Away too long; your chips went back to your bankroll |
+| `shutdown` | The server is restarting; your chips are back in your bankroll |
+| `not-member` | Answer to `request_state` when you aren't at the table |
+| `interrupted` | This server lost its database lease; the hand was voided and your chips are refunded at the last completed hand |
 
-State machine: `WAITING → PRE_FLOP → FLOP → TURN → RIVER → SHOWDOWN → HAND_COMPLETE`.
+The client routes on `code` and shows `reason` as a toast, except for `left`
+(and a host who closed their own table sees "You closed the table.").
 
-## Server authority & state sanitization
+## Engine rules
 
-The `GameRoom` is the only mutator of game state. Before broadcasting, every
-update passes through `viewFor(state, viewerId)`
-([`rooms/state-view.ts`](../packages/server/src/rooms/state-view.ts)):
+`engine/hand.ts` is pure: no I/O, no timers, randomness injected (crypto-secure
+by default, seeded in tests). The hand's deck lives only in the server-side
+`Hand` object.
 
-- you always see **your own** hole cards;
-- opponents' hole cards are `null` during play;
-- at showdown, non-folded hands are revealed; folded hands never are.
-
-Each player therefore receives a *different* `game_state_update`. The
-`hand_result.finalState` is the public showdown view.
-
-## Turn timer
-
-`GameRoom` runs a per-turn `setTimeout` and broadcasts `timer_tick` ~twice a second.
-On expiry the player is auto-**checked** (if free) or auto-**folded**. The timer
-resets each turn and is cleared whenever the hand advances.
-
-**Host-configurable duration.** `TableConfig.turnSeconds` (integer 10–120, multiple
-of 5, default 30) is set by the host via the lobby's Turn Timer stepper before the
-game starts. `rooms/index.ts` translates it when constructing the `GameRoom`:
-
-```ts
-timing: { ...options.gameTiming, turnMs: options.gameTiming?.turnMs ?? config.turnSeconds * 1000 }
-```
-
-Test code still injects a short `gameTiming.turnMs` (which takes precedence), so
-unit tests don't need real-time waits. `sanitizeConfig` in `rooms/lobby.ts` rejects
-out-of-range or non-step values.
-
-## Chip transactions & idempotency
-
-Persistent bankroll lives in `players.chip_balance`. Chips move through
-`adjustChips()` ([`db/index.ts`](../packages/server/src/db/index.ts)), which runs
-in a **single transaction**: it inserts a `chip_transactions` row with
-`onConflictDoNothing` on a **unique `idempotency_key`**, then updates the balance.
-A duplicated/retried call (e.g. a socket replay) is a no-op — chips can never be
-double-credited.
-
-**Accounting model** (a deliberate simplification of the original per-hand plan):
-
-- **Game start** — deduct `buyIn` from each player's bankroll
-  (`idempotencyKey = ${gameId}:buyin:${playerId}`); the table stack lives in memory.
-- **During play** — chip movement happens entirely in the in-memory engine state.
-- **Leave / game end** — cash the remaining table stack back to the bankroll
-  (`${gameId}:cashout:${playerId}`).
-
-This is chip-conserving and far less error-prone than per-hand DB writes; the
-integrity tests assert the ledger nets to zero. The `ChipService` interface is
-injected, so the server uses the real DB-backed ledger when `DATABASE_URL` is set
-and an authoritative in-memory ledger (`InMemoryChipService`) otherwise (dev/mock
-mode).
-
-### Chip balance authority
-
-The chip ledger is the single source of truth for every player's balance.
-`adjustChips` (DB) and `InMemoryChipService` (mock mode) share the `overdraws`
-rule (`db/chip-rules.ts`) so a deduction can never drive a balance below zero —
-an overdraw returns `{ applied: false }` and changes nothing. `GameRoom` gates
-every buy-in (start, sit-in) on that `applied` result: a refused buy-in keeps the
-player a spectator and sends `sit_in_rejected`. Each member's `bankroll` is set
-from the ledger's returned `balance` (never a stale delta), pushed to the lobby
-(`updateChipBalance`) and to the player's own client as `GameState.viewerBankroll`,
-so chip displays and the "Join Next Hand" affordability gate are live without an
-activity reload. Mock mode (`InMemoryChipService`) is seeded from each player's
-identity balance on `join_lobby`; spectators (re)joining a table are gated against
-the lobby's live balance (`LobbyRoom.getChipBalance`), not a stale identity value.
-
-## Database schema
-
-[`db/schema.ts`](../packages/server/src/db/schema.ts):
-
-| Table | Role | Used today |
-|---|---|---|
-| `players` | bankroll per Discord user | ✅ active |
-| `chip_transactions` | append-only ledger, unique `idempotency_key` | ✅ active |
-| `player_hand_stats` | append-only per-hand **fact** table (stats source of truth) | ✅ active |
-| `player_stats` | denormalized per-player **aggregate** counters | ✅ active |
-| `games`, `game_players`, `hands`, `hand_actions` | audit/history | provisioned; live game state is in-memory |
-
-> Live game state is held in memory by the `GameRoom` for latency; the bankroll,
-> the chip ledger, and **player statistics** are persisted today. The
-> `games`/`hands` audit tables remain ready for hand-history persistence without a
-> schema change (the stats fact table is separate — see below).
-
-## Player statistics
-
-A **hybrid** capture pipeline records a wide range of per-player stats so
-leaderboards, stat pages, and challenges can be built later — including
-retrospectively over historical data. UIs are out of scope; this delivers
-capture → storage → read APIs. Spec:
-[`docs/superpowers/specs/2026-06-20-player-statistics-tracking-design.md`](./superpowers/specs/2026-06-20-player-statistics-tracking-design.md).
-
-**Storage (two tables).**
-
-- `player_hand_stats` — append-only **fact** table, one row per player per hand:
-  chips contributed/won, net, result, hand category (incl. `royal-flush`), pot,
-  went-to-showdown, VPIP/PFR/aggression, all-in, final street, duration. This is
-  the retrospective source of truth. `UNIQUE (game_id, player_id, hand_number)`;
-  indexes on `(player_id, created_at)` and `(game_id)`.
-- `player_stats` — denormalized per-player **aggregate** counters (hands, chips
-  bet/won/lost, net profit, biggest pot, showdowns, VPIP/PFR/action counts,
-  per-category `jsonb` tally, total play time, games played). Always recomputable
-  from the fact table.
-
-**Capture flow.** Capture lives entirely in `GameRoom`, keeping the engine pure:
-
-1. `startHand()` creates a pure `HandStatsTracker` ([`rooms/hand-stats.ts`](../packages/server/src/rooms/hand-stats.ts)).
-2. `handleAction()` records each applied action **with the street captured before
-   `act()`** mutates the phase — so VPIP/PFR/aggression/final-street (which the
-   final state can't reconstruct) are accurate.
-3. `concludeHand()` assembles one `PlayerHandStat` per dealt-in player via
-   `buildHandFacts(...)` (royal-flush detected from the winning cards) and writes
-   them through the injected `StatsService`.
-4. Per-seat play-time is accrued from join → leave/disconnect (reconnect-aware)
-   and written once at game end via `recordSession`.
-
-**Idempotency & atomicity.** `dbStatsService.recordHand` ([`db/stats.ts`](../packages/server/src/db/stats.ts))
-runs one transaction: bulk-insert facts with `onConflictDoNothing`, then fold
-**only the newly-inserted** facts into the aggregates (read-modify-write via the
-pure reducer in `stats-aggregate.ts`). A replayed hand can never double-count.
-Session recording is at-most-once (guarded), and `total_play_ms`/`games_played`
-are **not** present in the fact table, so the `stats:recompute` backfill rebuilds
-every hand-derived aggregate but **preserves** those session columns.
-
-**Derived, never stored.** Ratios (win rate, VPIP, PFR, aggression factor,
-showdown-win%) are computed at read time in `toPlayerStatsSummary`; only raw
-counts/sums live in the DB, so the definitions can evolve without migration.
-
-**Read API (REST, not Socket.io).** `StatsRepository` is exposed via `statsRouter`
-([`routes/stats.ts`](../packages/server/src/routes/stats.ts)), mounted at
-`/api/stats`. All routes require a valid `poker_session` JWT cookie (same auth as
-the rest of `/api`); without a DB they no-op (mock mode).
-
-| Method | Route | Returns |
-|---|---|---|
-| GET | `/api/stats/:playerId` | `PlayerStatsSummary` (404 if none) |
-| GET | `/api/stats/leaderboard?metric=&limit=&since=` | `LeaderboardEntry[]` (400 on unknown metric) |
-| GET | `/api/stats/:playerId/hands?limit=&since=` | recent `PlayerHandStat[]` |
-
-`metric` ∈ `net_profit \| chips_won \| hands_won \| biggest_pot_won \| hands_played`.
-All-time leaderboards read `player_stats`; a `since` window aggregates the fact
-table. Contract types live in `@poker/shared`.
-
-> **Postgres 18 / drizzle-kit:** `db:push` requires **drizzle-kit ≥ 0.31** on
-> PG17+. Older 0.30.x mis-reads PG's named NOT NULL constraints and emits a
-> spurious `DROP CONSTRAINT "<table>_<col>_not_null"` for every column, which
-> fails on the `players` PK column (`42P16`).
-
-## Table membership (spectate / join / leave)
-
-`GameRoom` owns the full table population as a list of role-tagged **`Member`**
-objects (`role: 'seated' | 'spectator'`). A spectator is a connected member with
-no engine seat — they receive a sanitized table view (hole cards hidden as normal)
-but are never dealt in.
-
-### Member model
-
-```ts
-interface Member {
-  id: string;          // Discord user id
-  socketId: string;
-  role: 'seated' | 'spectator';
-  seatIndex?: number;  // only when role === 'seated'
-  seatSession: string; // unique UUID per seat occupancy
-  pending?: 'sit_in' | 'sit_out' | 'leave_table';
-  left?: true;         // marked gone; entry retained until hand boundary cleanup
-}
-```
-
-### Hand-boundary transition resolver (`applyPending`)
-
-Queued role changes resolve **at hand boundaries** (top of `startHand` and
-`scheduleNextHand`) via a centralised `applyPending()` call:
-
-- **`sit_in`** (spectator → seated): a new `seatSession` UUID is minted, the
-  buy-in is charged (`ChipService`), and the member is assigned the next
-  available seat. Gated on the lobby-known `bankroll ≥ buyIn`.
-- **`sit_out`** (seated → spectator): the table stack is cashed out and the seat
-  is released; the member keeps watching from the rail.
-- **`leave_table`** (deferred): the stack is cashed out and the member is emitted
-  to the lobby via `left_table`. For spectators `leave_table` is immediate (no
-  hand boundary needed).
-- **`cancel_pending`**: clears the queued transition.
-
-A seated player who **busts** (stack reaches 0 at settle) is automatically moved
-to spectator with a cash-out of 0, so they can watch the rest of the game
-without being stuck.
-
-### Teardown: idle-at-1 / end-at-0
-
-- **≥ 2 seated** — game runs normally.
-- **Exactly 1 seated** — `waitingForPlayers` flag is set; the table idles until a
-  spectator sits in or the remaining player leaves.
-- **0 seated** — game ends: all remaining members (including spectators) receive
-  `left_table` and are ejected to the lobby.
-
-### `seatSession`-scoped ledger keys
-
-Because a player can leave and rejoin the same game, the buy-in and cash-out
-idempotency keys carry the per-occupancy `seatSession` UUID:
-
-```
-${gameId}:buyin:${playerId}:${seatSession}
-${gameId}:cashout:${playerId}:${seatSession}
-```
-
-This ensures each distinct seat occupancy is a separate accounting unit, so
-leave→rejoin in the same game re-deducts the buy-in correctly rather than
-hitting the `onConflictDoNothing` guard from the first occupancy.
-
-### `activeGame` lobby summary + player filtering
-
-While a game is running, `LobbyRoom.toState()` folds a cards-free
-**`ActiveGameSummary`** into `LobbyState.activeGame`:
-
-```ts
-interface ActiveGameSummary {
-  gameId: string;
-  seatedCount: number;
-  watchingCount: number;
-  members: Array<{ id: string; name: string; role: 'seated' | 'spectator' }>;
-  buyIn: number;
-  waitingForPlayers: boolean;
-}
-```
-
-Table members are **no longer filtered out** of the lobby player list; instead the
-client tags each player by their `activeGame.members` role (see *Lobby host model*
-below). `GameRoom` calls `onMembershipChange()` whenever membership changes so the
-lobby re-broadcasts immediately.
-
-### `joined_table` / `left_table` view-switch protocol
-
-The client-side lobby↔table switch is driven by two server→client events:
-
-| Event | Payload | Effect |
-|---|---|---|
-| `joined_table` | `{ gameId, role }` | `App.tsx` mounts the table UI (spectator or seated) |
-| `left_table` | — | `App.tsx` returns to the lobby |
-
-This replaces the old `game_start`-based switch, which had a latent bug where
-non-ready players were yanked into the table view when a game started.
-
-Client→server events that drive transitions:
-
-| Event | Meaning |
+| Topic | Rule |
 |---|---|
-| `join_table` | Spectate a running game |
-| `sit_in` | Queue a spectator→seated transition (next hand) |
-| `sit_out` | Queue a seated→spectator transition (next hand) |
-| `cancel_pending` | Undo a queued transition |
-| `leave_table` | Leave the table (deferred to hand end if seated; immediate if spectator) |
+| Seats | Persistent seat numbers; dealt-in players ordered by seat. |
+| Button | Simplified moving button: the next dealt-in seat clockwise from the previous button (`nextButton`). No dead button or dead small blind. |
+| Blinds | Small blind left of the button, big blind next. Heads-up the button posts the small blind, acts first pre-flop and last after. A short blind posts what it can and is all-in; the bet to call is still the full big blind. |
+| Ante | Optional, per player, posted before blinds; doesn't count toward the bet to call. |
+| Dealing | One card at a time from left of the button; a burn before each street. |
+| Legal actions | Computed once in `legalActions` and used for validation and the client's action bar. |
+| Raise rights (TDA) | A player who has acted may re-raise only when facing at least one full raise since they acted. An incomplete all-in raise doesn't reopen betting. Minimum raise is current bet + last full raise; a short all-in may be below it. |
+| Pointless raises | No raise is offered when no opponent can put in more than the current bet. `maxRaiseTo` is capped at the most any opponent can call. |
+| Capped shoves | `all-in` means "as much as matters": a raise to `maxRaiseTo` when raising is possible, otherwise a call (or check). A big stack facing a smaller all-in calls rather than shoving. |
+| Uncalled bets | Returned to the bettor before pots are built (`returned` in the result). |
+| Pots | Built from contribution layers; folded chips stay in but folded players are never eligible; adjacent layers with the same contenders merge. |
+| Run-out | When fewer than two players can still bet, remaining streets are dealt one at a time, paced by the room. |
+| Showdown | Every live hand is tabled automatically (no muck option). Best five of seven; ties split. |
+| Odd chips | Go to the first winner clockwise from the button's left. |
+| Conservation | A randomised property test checks chips are conserved every hand. |
 
-### Lobby host model (Create a Game)
+## Bank, escrow, leases and recovery
 
-There is no implicit host. `LobbyRoom` tracks a nullable, transferable `hostId`
-surfaced in `LobbyState`. When `hostId` is null and no game is active, every
-lobby player edits a **local** draft of the table config and can click **Create a
-Game** (`create_game`), which sets them as host. The host can keep editing the
-config (`update_config`, host-only while forming), **Cancel Game** (`cancel_game`)
-to disband back to the open state, or **Start** the countdown (host-only). If the
-host leaves while forming or in countdown, `removeBySocket` transfers `hostId` to
-the next player (or null). When the active game ends, `resetAfterGame` clears the
-host + ready flags and reopens the lobby.
+### Where chips live
 
-Table members are **no longer filtered out** of `LobbyState.players`; the client
-tags each player by their `activeGame.members` role: `In-Game · At Table`
-(seated) or `In-Game · Spectating` (spectator), falling back to `Ready` /
-`In Lobby`. Live bankroll changes flow from `GameRoom.onChipBalanceChange`
-(fired on every buy-in/sit-in/cash-out) into `LobbyRoom.updateChipBalance`, so the
-lobby chip column stays current without a reload.
+A chip is in exactly one place: a player's bankroll (`players.chip_balance`) or
+an open seat (`table_seats.stack`, escrow). `Bank` (`services/bank.ts`) is the
+only code that moves chips. Every movement is one transaction that updates the
+balance and writes a `chip_transactions` row with a unique `idempotency_key`.
+CHECK constraints stop balances, stacks and item quantities going negative, and
+`move()` throws if a balance would.
 
-### Rendering an idle table
+| Operation | Effect | Ledger type and key |
+|---|---|---|
+| `buyIn({ tableId, playerId, amount })` | Bankroll → new open seat; returns `seatId` | `buy-in`, `buyin:<seatId>` |
+| `topUp({ seatId, playerId, amount })` | Bankroll → open seat | `top-up`, `topup:<seatId>:<uuid>` |
+| `checkpoint(hand, [{ seatId, stack }])` | Absolute stacks written after every hand | none (escrow only) |
+| `cashOut({ seatId, playerId, stack })` | Close seat, credit bankroll; a second call finds it closed and does nothing | `cash-out`, `cashout:<seatId>` |
+| `recoverOpenSeats()` | Refund orphaned open seats at their last checkpoint | `recovery`, `recovery:<seatId>` |
+| `credit(...)` / `creditIn(tx, ...)` | Idempotent reward credit | `daily-bonus`, `level-up`, `challenge`, `grant` |
+| Shop purchase (`move`) | Bankroll debit | `purchase`, `purchase:<player>:<nonce>` |
 
-`GameRoom.currentView(viewerId)` returns the live engine view only while a hand is
-in progress with ≥2 seated; otherwise it builds a board-free **waiting view** from
-the *current* seated members. This is what removes a player who left/spectated
-from the table (they no longer appear in `state.players`, only under
-`spectators`). A freshly-mounted or reconnecting client pulls the current view via
-the `request_game_state` event (handled by `GameRoom.sendStateTo`).
+Rules the bank keeps: lock the player row first, then the seat row, everywhere;
+one open seat per player per table (partial unique index); bank operations
+address seats by id, so a stale cash-out can never touch a newer seat.
 
-## Lobby & countdown logic
+`TableRoom` runs buy-ins, top-ups, cash-outs, checkpoints, boundary resolution
+and dealing through its `Serial` queue. Membership commands from one player are
+also serialised across all their sockets in `realtime.ts`, so a double-tapped
+`take_seat` can't strand a buy-in. A cash-out that fails (DB down) is retried at
+each boundary and by the idle sweep.
 
-`LobbyManager` ([`rooms/lobby.ts`](../packages/server/src/rooms/lobby.ts)) keys a
-`LobbyRoom` per `instanceId`. There is **no implicit host** — the lobby opens with
-`hostId: null`, and the host is whoever clicks **Create a Game** (see *Lobby host
-model* above; host edits config while forming, before the countdown). The
-countdown is a server-side `setTimeout`:
-any ready player can cancel it, it does **not** reset when new players ready
-mid-countdown, and at expiry it re-validates that ≥2 players still hold ≥ buy-in
-before creating the game.
+### Leases
 
-## Disconnect & reconnect
+Each server process registers a `server_leases` row at boot and heartbeats it
+every 10 s (timestamps come from the database's `now()`, so app clocks don't
+matter). Every seat it opens carries its lease id.
 
-- **Disconnect** — the seat is flagged `disconnected` and auto-folds on its turn;
-  committed chips are forfeited to the pot. Disconnected seats are excluded from
-  the ≥2 quorum that continues to the next hand, so tables don't zombie.
-- **Reconnect** — rejoining the instance (`join_lobby`) rebinds the seat to the
-  new socket, clears the flag, and resends the current state. You can reconnect
-  mid-hand; if you missed the action you're folded for that hand and active again
-  next hand.
+`recoverOpenSeats()` runs at boot and every 30 s. It refunds an open seat only
+when its lease is missing, stale (no heartbeat for 60 s) or null (seats from
+before leases), and never one of its own. It re-checks each seat under a row
+lock, and forgets dead leases that own no open seats. This makes rolling deploys
+safe: the new process leaves the old process's live seats alone.
 
-## Dev mock mode
+A refund returns the last checkpoint, so a hand interrupted by a crash is
+voided.
 
-For zero-setup local play: the client's `setupDiscord()` returns a fake identity
-from URL params when `import.meta.env.DEV && ?mock`, and the server falls back to
-the in-memory `ChipService` when `DATABASE_URL` is unset. See
-[SETUP.md → Quick local play](./SETUP.md#a-quick-local-play-no-discord-no-database).
+**Losing the lease.** A process treats its lease as lost when a heartbeat
+updates no row (another process already recovered its seats), when the row is
+older than the 60 s stale limit, or after 30 s without a successful heartbeat.
+Then it never cashes those seats out itself: every table is voided and closed
+without cash-out, members get `table_left { code: 'interrupted' }`, new tables,
+seats and top-ups are refused ("The server is reconnecting to its database"),
+and once a fresh lease is registered new seats carry it. Recovery refunds the
+old seats, so no chip is ever paid twice (`rooms/lease-guard.ts`).
 
-## Production hosting (Railway, single origin)
+### Graceful shutdown
 
-The app is deployed to **Railway** as **one always-on service** plus a **Railway
-Postgres** service in the same project. Rather than hosting client and server
-separately, the server **also serves the built client**, so everything lives on a
-single origin behind the Discord `*.discordsays.com` proxy:
+On SIGTERM or SIGINT (`index.ts`):
 
-- `packages/server/src/index.ts` mounts `express.static` on `../../client/dist`
-  with an SPA fallback (any non-`/api`, non-`/socket.io` route → `index.html`),
-  guarded by `fs.existsSync` so local dev (Vite serves the client) is unaffected.
-- Build/start are pinned in repo-root **`railway.json`** (`builder: RAILPACK`,
-  `buildCommand: npm run build`, `startCommand: npm run start`,
-  `healthcheckPath: /api/health`). The root `package.json` also exposes a `start`
-  script delegating to `@poker/server`, which Railpack requires.
-- **DB connection**: the app service's `DATABASE_URL` is a Railway **reference**
-  (`${{Postgres.DATABASE_URL}}`) resolving to the **private** `*.railway.internal`
-  host (IPv6, no SSL, no egress). Schema is applied with `npm run db:push` run
-  **locally** against the Postgres service's `DATABASE_PUBLIC_URL` — private
-  networking is unavailable during build, so this is never a build step.
-- **Client env** (`VITE_DISCORD_CLIENT_ID`) is inlined at build time;
-  `VITE_SERVER_URL` is left empty so the client connects to the same origin.
-  `PORT` is injected by Railway and read via `process.env.PORT`.
-- **Discord Developer Portal** — map the root (`/`) URL mapping to the
-  `*.up.railway.app` domain; client, REST, and Socket.io all flow through it.
+1. Stop the recovery timer.
+2. `rooms.shutdown()`: every table voids any hand in progress and cashes every
+   seated player out at their pre-hand stack, telling members
+   `table_left { code: 'shutdown' }` while sockets are still open. The budget is
+   `SHUTDOWN_CASHOUT_MS` (15 s). From here on, opening tables, taking seats and
+   top-ups are refused ("The server is restarting").
+3. Release the lease, so anything left open is recoverable at once by the next
+   process.
+4. `app.close()`: the same cash-out (idempotent) within what's left of the
+   budget, then close sockets and HTTP. Close the DB and exit. A hard deadline
+   (18 s) forces the exit if anything hangs.
 
-CORS already allows `*.discordsays.com`, `*.trycloudflare.com`, and `localhost`,
-so no server code changes are required to switch environments. Full runbook:
-[SETUP.md → path C](./SETUP.md#path-c--deploy-to-production-railway--railway-postgres).
+`railway.json` sets `drainingSeconds: 20` so Railway waits for this, and the
+start command runs `node` directly so SIGTERM reaches the process (an `npm run`
+wrapper can swallow it). If the process is killed anyway, recovery refunds its
+seats as soon as the lease is released or goes stale.
+
+## Stats, XP, levels and challenges
+
+### Pipeline
+
+```
+hand completes (TableRoom.conclude)
+  ├─ buildHandFacts(state)   one PlayerHandStat per dealt-in player   (pure)
+  ├─ buildHistory(state)     board, pots, cards, results, card backs  (pure)
+  └─ Serial queue:
+       Bank.checkpoint(stacks)
+       HandRecorder.recordHand(facts, history)   ── one transaction ──
+         insert facts ON CONFLICT DO NOTHING → only fresh facts continue
+         insert hand_history
+         update player_stats aggregates (rows locked, sorted ids)
+         add XP, credit level-up rewards
+         add challenge progress, mark completed
+       notices (level-up, challenge complete) + activity feed
+       refreshMe → `me` + lobby update for each player
+```
+
+Facts are unique on `(table, player, hand)`, and only newly inserted facts feed
+aggregates, XP and challenges, so a replay never double-counts. Session play
+time is recorded once when a player leaves a seat (`recordSession`); it can't be
+rebuilt from facts.
+
+Ratios (win rate, VPIP, PFR, aggression factor, showdown win rate) are derived
+at read time. `npm run stats:recompute` rebuilds aggregates from facts and keeps
+the session columns.
+
+### Progression rules (`shared/progression.ts`)
+
+| Item | Rule |
+|---|---|
+| XP per hand | 2, +6 for a win, +4 more if won at showdown |
+| Levels | XP to next level = 100 + 60 × (level − 1); max level 100 |
+| Level-up reward | 250 × new level chips, credited once per level |
+| Daily bonus | 500 + 250 × (streak day − 1), capped at day 7 (2,000). Consecutive UTC days grow the streak; a missed day resets it. |
+| Challenges | 3 daily and 3 weekly, picked deterministically from the pool by period key (UTC day, ISO week), so everyone gets the same set. Progress comes from hand facts; completed challenges are claimed for chips and XP. |
+| Badges | Derived at read time in `profiles.ts` (quads, straight flush, royal, hands played, biggest pot, level, items owned). |
+
+### Leaderboard
+
+`GET /api/leaderboard` ranks with `rank() over (order by value desc)`, so ties
+share a rank, and returns the top entries plus your own entry wherever you rank.
+
+| Metric | All time from | Weekly (last 7 days) from |
+|---|---|---|
+| `net_profit`, `chips_won`, `hands_won`, `biggest_pot_won`, `hands_played` | `player_stats` (players with ≥1 hand) | `player_hand_stats` |
+| `bankroll` | balance + chips in open seats | all-time only |
+| `level` | ranked by XP, shown as level | all-time only |
+
+## Shop and cosmetics
+
+- The catalog is static data in `shared/shop.ts`: felts, card backs, avatar
+  frames, titles, win celebrations, emote packs and throwables. Items have a
+  price, rarity, optional `minLevel`, and a `visual` the client renders.
+  Price-0 items are owned by everyone.
+- `POST /api/shop/purchase { itemId, nonce }` debits the bankroll through the
+  ledger. The nonce makes retries idempotent. Permanent items can be bought
+  once; throwables add their quantity.
+- The loadout (one equipped item per slot: felt, card back, frame, title,
+  celebration) lives on the `players` row and is changed with
+  `POST /api/shop/equip`. Other players see your `Cosmetics` (frame, card back,
+  title text, celebration) in every `PublicPlayer`.
+- The felt shown at a table is the host's choice in the table rules, and the
+  host must own it.
+- Emotes: every emote in an owned pack (the free pack always). Throwables are
+  consumed one per throw, at a seated player other than yourself. Emotes and
+  throws share a limit of 3 per 4 s per player and go to the whole room as
+  `table_fx`.
+
+## Chat, DMs and activity
+
+- **Room chat** (`room:<instanceId>`) is shared by the lobby and the table and
+  persisted. The last 50 messages arrive with `join_room`.
+- **DMs** (`dm:<idA>:<idB>`, ids sorted) are persisted; unread counts come from
+  `chat_reads`. The conversation list and paged history are REST; new messages
+  arrive live on the socket to both players.
+- Limits: 5 messages per 5 s per player; 1 to 280 characters after stripping
+  control, zero-width and bidi-override characters and collapsing blank lines.
+  A malformed target is refused, never sent to the room.
+- **Activity feed** (in memory, last 40 per room): table opened or started,
+  level-ups, completed challenges, big wins (payout ≥ 50 big blinds), rare hands
+  (four of a kind or better).
+
+## Database
+
+Drizzle schema in `packages/server/src/db/schema.ts`; migrations in
+`packages/server/drizzle/`.
+
+| Table | Purpose |
+|---|---|
+| `players` | One row per Discord user: bankroll (`chip_balance ≥ 0`), XP, daily streak, loadout, timestamps |
+| `chip_transactions` | Append-only ledger; unique `idempotency_key` |
+| `table_seats` | Escrow: one row per buy-in; `open`/`closed`, `stack ≥ 0`, `last_hand` checkpoint, `lease_id` |
+| `server_leases` | One row per live server process, heartbeat timestamp |
+| `player_hand_stats` | Append-only fact per player per hand; unique `(game_id, player_id, hand_number)`. `game_id` is the table session id (no FK). |
+| `player_stats` | Per-player aggregates; rebuildable from facts except session columns |
+| `hand_history` | One row per hand: board, pots, each player's cards/result/card back; GIN index on `player_ids` |
+| `player_items` | Owned items and consumable quantities (`≥ 0`) |
+| `player_challenges` | Progress, completion and claim per player, period and challenge |
+| `chat_messages`, `chat_reads` | Room and DM messages; last-read time per player and channel |
+
+`openDatabase()` applies migrations before returning, for Postgres and PGlite
+alike, so every boot upgrades its own database. `0000_init.sql` is written to be
+idempotent: it creates a fresh database, or upgrades a pre-overhaul `db:push`
+database in place (drops the never-written `games`/`hands`/`game_players`/
+`hand_actions` tables, adds new tables, columns, constraints and indexes, and
+keeps players, balances, ledger and stats). `0001_leases.sql` follows the same
+pattern. New migrations must be idempotent as well.
+
+## REST API
+
+All routes are under `/api`. JSON in and out. Bodies over 32 kB get 413;
+malformed JSON gets 400; unhandled errors get `500 { error }`. Business-rule
+refusals are `409 { ok: false, error }`.
+
+| Route | Auth | Returns |
+|---|---|---|
+| `GET /health` | none | `{ status: 'ok', timestamp }` (Railway healthcheck) |
+| `POST /auth/token` `{ code, guildId? }` | none | `AuthResponse { token, accessToken, me }`; 400 missing code; 502 Discord failure |
+| `POST /auth/mock` `{ name }` | none | `AuthResponse`; 404 when mock sign-in is off; 400 bad name |
+| `GET /me` | Bearer | `PlayerSelf` |
+| `POST /me/daily` | Bearer | `{ ok, amount, balance, streak }` or 409 |
+| `GET /players/:id/profile` | Bearer | `ProfileCard` (bankroll includes escrow) or 404 |
+| `GET /players/:id/stats` | Bearer | `{ summary: PlayerStatsSummary, curve }` (curve: last 200 hands, cumulative) |
+| `GET /me/hands?limit=` | Bearer | Your recent hands (1 to 50, default 20), opponents' unshown cards removed |
+| `GET /leaderboard?metric=&period=all\|week&limit=` | Bearer | `{ entries, me }` (limit 1 to 100, default 25); 400 unknown metric |
+| `POST /shop/purchase` `{ itemId, nonce }` | Bearer | `{ ok, balance, quantity }` or 409 |
+| `POST /shop/equip` `{ slot, itemId }` | Bearer | `{ ok, loadout }`, 400 unknown slot, or 409 |
+| `GET /challenges` | Bearer | `ChallengeStatus[]` for the current day and week |
+| `POST /challenges/claim` `{ periodKey, challengeId }` | Bearer | `{ ok, chips, xp, balance, levelUps }` or 409 |
+| `GET /messages/conversations` | Bearer | `Conversation[]`, most recent first, with unread counts |
+| `GET /messages/history?channel=&before=` | Bearer | Up to 50 `ChatMessage`s, oldest first; 403 unless it's your DM or a room you're in |
+
+Successful purchases, equips, claims and daily bonuses push a fresh `me` over
+the socket.
+
+## Socket contract
+
+Types live in `packages/shared/src/events.ts`. Rooms used by the server:
+`inst:<instanceId>` (everyone in the room), `inst:<instanceId>:user:<id>` (one
+player's sockets in that room: table views) and `user:<id>` (all of a player's
+sockets: `me`, notices, DMs).
+
+### Client to server
+
+Every command except `chat_read` and `request_state` takes an ack callback that
+receives `{ ok: true }` or `{ ok: false, error }`, where `error` is a sentence to
+show the player. A handler that throws acks "Something went wrong. Try again."
+The client resolves an unanswered command after 10 s with "The server didn't
+answer. Try again." and refuses immediately while offline.
+
+| Event | Payload | Notes |
+|---|---|---|
+| `join_room` | `{ instanceId }` | Id must match `^[\w:.-]{1,128}$`; optional Discord instance check. Replies `lobby_state`, `activity_history`, `chat_history`. Switching rooms leaves the old one. |
+| `open_table` | `{ rules: Partial<TableRules> }` | See [Opening and starting](#opening-and-starting) |
+| `update_rules` | `{ rules: Partial<TableRules> }` | Host only, while `open` |
+| `start_table` | none | Host only; ≥2 eligible players |
+| `close_table` | none | Host only; deferred to the end of a hand |
+| `watch_table` | none | Join as a spectator |
+| `take_seat` | `{ seat, buyIn }` | Joins first if needed; buy-in within the table range and your bankroll |
+| `top_up` | `{ amount }` | Stack + queued + amount ≤ max buy-in; queued mid-hand |
+| `stand_up` | none | Deferred mid-hand |
+| `leave_table` | none | Deferred mid-hand for seated players |
+| `sit_out` | `{ sittingOut }` | Immediate |
+| `cancel_pending` | none | Clears pending leave/stand and queued top-up |
+| `act` | `{ type: 'fold'\|'check'\|'call'\|'raise'\|'all-in', amount? }` | `amount` is the raise-to total for this street |
+| `emote` | `{ emote }` | Must own it; rate limited |
+| `throw_item` | `{ itemId, targetId }` | Consumes one; target seated, not you |
+| `chat_send` | `{ to: { room: true } \| { dm: playerId }, body }` | Rate and length limited |
+| `chat_read` | `{ channel }` | No ack. Your DMs or your current room only |
+| `request_state` | none | No ack. Members get `table_state`; others get `table_left { code: 'not-member' }` |
+
+### Server to client
+
+| Event | Payload | Sent |
+|---|---|---|
+| `me` | `PlayerSelf` | On connect, and after anything changes your balance, XP, items or unread counts (coalesced) |
+| `lobby_state` | `LobbyState { instanceId, members, table: TableSummary \| null }` | On join, then to the room on every change. Cards-free. |
+| `table_state` | `TableView` | To each table member on every change, built for that viewer |
+| `table_left` | `{ code, reason }` | When you stop being a member, or in answer to `request_state` |
+| `table_fx` | `{ id, kind: 'emote'\|'throw', fromId, toId?, value }` | To the room |
+| `chat_message` | `ChatMessage` | Room messages to the room; DMs to both players |
+| `chat_history` | `{ channel, messages }` | Room history on join |
+| `activity` / `activity_history` | `ActivityEvent` / `ActivityEvent[]` | Live / on join |
+| `notice` | `{ id, tone, title, body? }` | To one player (level-ups, sat out, top-up trimmed, host transfer, ...) |
+
+`TableView` carries the rules, status, host, all seats (`SeatPlayer` with stack,
+state, connection, cards when visible, last action, pending change), spectators,
+the hand (`HandView`: street, board, settled pots, pot total, button and blind
+seats, seat to act, turn start and deadline, current bet, result), and `you`
+(`ViewerInfo`: role, seat, bankroll, pending change, legal actions when it's
+your turn, your emotes).
+
+## Privacy guarantees
+
+- The deck exists only in the server's `Hand`; no payload contains it.
+- `TableRoom.viewFor(viewerId)` sets `holeCards` for a seat only when it's the
+  viewer's own, or the player is live and either the hand ended at showdown with
+  their hand tabled, or betting is over with an all-in run-out (live hands turn
+  face up). Folded cards are never shown. Otherwise `holeCards` is null and
+  `hasHiddenCards` says whether cards are there.
+- Spectators get the same view as any non-owner.
+- `lobby_state` never carries cards.
+- `GET /me/hands` returns only hands you played, with other players' cards only
+  if they were shown at showdown.
+- The e2e suite plays full multi-client games and asserts no client ever
+  receives an opponent's unshown cards.
+
+## Client architecture
+
+### Boot and state
+
+```
+App ── startSession() ──▶ Session { mode, token, me, instanceId, sdk? }
+     └─ createClient(session)
+          ├─ connectSocket(token)      socket.io, same origin
+          ├─ AppStore                  pure reduce(state, event), useSyncExternalStore
+          ├─ createCommands(socket)    typed, ack'd, 10 s timeout
+          ├─ bindSocket(...)           server events → store; on (re)connect: join_room, request_state
+          └─ createApi(token)          typed REST client, 401 → "session expired"
+     └─ ClientProvider → NavProvider → ProfileCardProvider → Main + Toaster
+```
+
+- `app/session.ts`: Discord SDK or mock sign-in (dev build + `?mock`, optional
+  `&name=` and `&room=`). One in-flight sign-in per page load, so StrictMode
+  and HMR don't call `authorize()` twice. Failures are typed
+  (`outside-discord`, `config`, `auth`, `network`) for the boot screen.
+- `app/store.ts`: the whole client state is reduced from events: `me`, `lobby`,
+  `table`, `tableLeft`, chat per channel, activity, notices, connection status,
+  and `clockOffset` (server clock minus local). `lobby_state` is the source of
+  truth for which table exists: if the lobby shows ours gone, the stale table
+  view is dropped and late `table_state`s for it are ignored (`closedTables`).
+- Hooks (`app/client.tsx`): `useMe`, `useLobby`, `useTable`, `useCommands`,
+  `useApi`, `useChannel`, `useRoomChat`, `useTableFx`, `useAppState(selector)`.
+- `Main` shows the table screen while you're a table member and the section is
+  `table`; everything else is the `Shell` (header, nav rail or phone tab bar,
+  section, room sidebar or drawer below 1024 px).
+
+### Code splitting
+
+`app/lazy.ts` wraps `React.lazy` for named exports with a `preload()`. The table
+screen, each feature screen (leaderboard, stats, challenges, shop, messages) and
+the profile card are separate chunks, preloaded when the page is idle.
+
+### Design system and cosmetics
+
+- `ui/`: store-free primitives (Button, IconButton, Surface, Panel, Modal,
+  Drawer, Tabs, Segmented, Field, AmountInput, Slider, ChipAmount, Avatar,
+  LevelBadge, Placard, CountBadge, Toasts, EmptyState, Spinner, icons). See
+  DESIGN_STANDARDS.
+- `cosmetics/`: renderers driven by the shared catalog: `Felt` (with the
+  printed Ratbag crest), `CardBack`, `PlayingCard`, `AvatarFrame`, `TitleTag`,
+  celebrations (canvas-confetti), `ItemPreview`.
+
+### Table screen
+
+- `table/layout.ts` is a pure geometry engine. Seats sit on the rail of an
+  oval, spaced evenly by arc length; your seat is display slot 0 at the bottom
+  (spectators see seat 0 there). The oval stands on end in portrait. Every
+  element (avatar, plate, shown cards, face-down cards, bets, dealer button,
+  pot, board, side pots) is a rectangle. The centre cluster goes in the free
+  band, and bets, cards and the button search for a spot that overlaps nothing.
+  If a size doesn't fit, the table is laid out again smaller, with a compact
+  form on short screens. `layoutConflicts()` reports anything that still
+  overlaps; tests keep it empty for 2 to 9 seats at 1280×800, 640×360, 390×844
+  and four other sizes.
+- `TableStage` renders the felt, seats, markers, `CenterCluster` (pot, board,
+  side pots, result lines) and `FxLayer` (chips to the pot, payouts, emotes,
+  throwables via the Web Animations API).
+- `ActionBar` is built from `you.legal`: fold, check or call, bet or raise with
+  presets (min, pot fractions, max; "All-in" only when max is the whole stack).
+  Shortcuts: F, C, R, Enter, Esc. Folding when you could check needs a second
+  press. `PreActions` queues check/fold, check or call any for your next turn;
+  a pre-action expires on a new street or hand.
+- `TurnTimer` drains a ring from `actionStartedAt` to `actionEndsAt` corrected
+  by `clockOffset`. `TurnPill` keeps your clock visible above menus and
+  dialogs.
+- `TopBar`, `TableMenu` (seat, host controls, sound, the rest of the app, one
+  combined pending-change note with "Cancel all"), `HeroDock` (your hand's
+  name), `SeatMenu` (profile, throwables), `EditRulesDialog`, `TopUpDialog`.
+- `table/sound/`: `cues.ts` diffs consecutive views into sound cues (pure),
+  `SoundManager` plays them with Web Audio, `soundStore` keeps mute and volume in
+  localStorage. Clips are in `packages/client/public/audio/`.
+
+## Testing
+
+| Where | What |
+|---|---|
+| `server/src/engine/*.test.ts` | Rules, with stacked decks (`test-helpers.ts`: `setupHand`, `play`) and the randomised chip-conservation test |
+| `server/src/services/*.test.ts` | Bank, recorder, shop, rewards, chat, stats on PGlite (`test/db.ts`: `useTestDb`, `makePlayer`) |
+| `server/src/rooms/*.test.ts` | `TableRoom` and `InstanceRoom` through `test/table-harness.ts` (`Harness`, `FAST` timing, `chipsInPlay`) |
+| `server/src/test/e2e/` | A real app on a random port driven by `fetch` + `socket.io-client` (`helpers.ts`: `startServer`, `signIn`, `TestClient`, `driveUntil`, `playHands`): API, realtime, table, lifecycle |
+| `client/src/**/*.test.ts(x)` | Vitest + React Testing Library on jsdom; `test/harness.tsx` renders screens with a fake socket and API |
+| `shared/src/*.test.ts` | Hand evaluator, progression, shop, rules; run with `npm test -w @poker/shared` |
+
+`TEST_DATABASE_URL` runs the DB-backed server tests against real Postgres
+(`npm run test:pg -w @poker/server`).
+
+## Production hosting
+
+One Railway service runs the server, which also serves the built client
+(`express.static` on `packages/client/dist` with an SPA fallback for anything
+outside `/api` and `/socket.io`). Client, REST and WebSocket share one origin
+behind Discord's `*.discordsays.com` proxy. CORS allows `*.discordsays.com`,
+localhost and `*.trycloudflare.com`. Railway Postgres is the database; the
+server migrates it at boot. Deployment steps are in [SETUP.md](./SETUP.md).

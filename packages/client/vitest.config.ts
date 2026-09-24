@@ -9,7 +9,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      '@poker/shared': path.resolve(__dirname, '../shared/src/index.ts'),
+      '@poker/shared': path.resolve(import.meta.dirname, '../shared/src/index.ts'),
     },
   },
 });

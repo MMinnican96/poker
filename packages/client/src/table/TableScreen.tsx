@@ -1,207 +1,213 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import type { DiscordIdentity, GameState, PlayerAction, LobbyPlayer } from '@poker/shared';
-import type { ClientSocket } from '../socket';
-import { TableHeader } from './TableHeader';
-import { CenterCluster } from './CenterCluster';
-import { Seat } from './Seat';
-import { HeroToken } from './HeroToken';
-import { HeroHud } from './HeroHud';
-import { TableActionBar } from './TableActionBar';
-import { arrangeSeats, seatPositions } from './SeatLayout';
-import { UserPopout, type SeatActions } from '../lobby/UserPopout';
-import { PlayerProfileModal } from '../lobby/PlayerProfileModal';
-import { useStats } from '../lobby/useStats';
-import { createSoundManager } from './sound/SoundManager';
-import { useSoundSettings } from './sound/soundStore';
+import { useState } from 'react';
+import { createPortal } from 'react-dom';
+import type { TableView } from '@poker/shared';
+import { useAppState, useCommands, useMe, useTable } from '../app/client';
+import { useMediaQuery } from '../app/hooks';
+import { RoomChat, useUnseenRoomMessages } from '../lobby/RoomPanel';
+import { seatBlockedReason, TakeSeatDialog } from '../lobby/TakeSeatDialog';
+import { Button, CloseIcon, Drawer, IconButton, cx } from '../ui';
+import { IdleMessage } from './CenterCluster';
+import { EditRulesDialog } from './EditRulesDialog';
+import { HeroDock } from './HeroDock';
+import { useCountdown, useRun } from './hooks';
 import { useTableSounds } from './sound/useTableSounds';
-import { showdownBanner } from './showdown';
-import { ConfettiLayer } from './ConfettiLayer';
+import { TableMenu } from './TableMenu';
+import { TableStage } from './TableStage';
+import { TopBar } from './TopBar';
+import { TopUpDialog } from './TopUpDialog';
+import './table.css';
 
-const BETTING_PHASES: GameState['phase'][] = ['pre-flop', 'flop', 'turn', 'river'];
-
-interface Props {
-  socket: ClientSocket;
-  identity: DiscordIdentity;
+/** Seated players who'd be dealt into the next hand. */
+export function readyPlayers(view: TableView): number {
+  return view.seats.filter((s) => s.player && !s.player.sittingOut && s.player.connected && s.player.stack > 0 && s.player.pending === null).length;
 }
 
-export function TableScreen({ socket, identity }: Props) {
-  const viewerId = identity.discordUserId;
-  const [view, setView] = useState<GameState | null>(null);
-  const [timer, setTimer] = useState<{ playerId: string; remainingMs: number } | null>(null);
-  const [userOpen, setUserOpen] = useState(false);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+type Dialog = { kind: 'seat'; seat?: number } | { kind: 'topup' } | { kind: 'rules' } | null;
 
-  const managerRef = useRef(createSoundManager());
-  const soundSettings = useSoundSettings();
-  useEffect(() => {
-    managerRef.current.setSettings({ muted: soundSettings.muted, volume: soundSettings.volume });
-  }, [soundSettings.muted, soundSettings.volume]);
-  useTableSounds(view, managerRef.current);
-
-  const { stats } = useStats(userOpen ? viewerId : null);
-
-  useEffect(() => {
-    const onState = (s: GameState) => setView(s);
-    const onTimer = (p: { playerId: string; remainingMs: number }) => setTimer(p);
-    const onResult = (p: { finalState: GameState }) => setView(p.finalState);
-    socket.on('game_state_update', onState);
-    socket.on('timer_tick', onTimer);
-    socket.on('hand_result', onResult);
-    socket.emit('request_game_state');
-    return () => {
-      socket.off('game_state_update', onState);
-      socket.off('timer_tick', onTimer);
-      socket.off('hand_result', onResult);
-    };
-  }, [socket]);
-
-  const act = (a: PlayerAction) => {
-    managerRef.current.unlock();
-    socket.emit('player_action', a);
-  };
-
-  const { hero, opponents, positions } = useMemo(() => {
-    if (!view) return { hero: null, opponents: [], positions: [] as ReturnType<typeof seatPositions> };
-    const seated = view.players.filter((p) => p.status !== 'sitting-out');
-    const { hero, opponents } = arrangeSeats(seated, viewerId);
-    return { hero, opponents, positions: seatPositions(opponents.length + 1) };
-  }, [view, viewerId]);
-
-  if (!view) {
-    return <div className="flex h-screen w-full items-center justify-center bg-felt-900 text-sage-light">Dealing…</div>;
-  }
-
-  const me = view.players.find((p) => p.discordUserId === viewerId) ?? null;
-  const isSpectating = me == null || me.status === 'sitting-out';
-  const isMyTurn =
-    BETTING_PHASES.includes(view.phase) &&
-    me?.status === 'active' &&
-    view.players[view.currentPlayerIndex]?.discordUserId === viewerId;
-
-  const activeId = view.players[view.currentPlayerIndex]?.discordUserId ?? null;
-  const timerPctFor = (id: string): number | null => {
-    if (id !== activeId || !timer || timer.playerId !== id) return null;
-    return Math.max(0, Math.min(100, (timer.remainingMs / (view.config.turnSeconds * 1000)) * 100));
-  };
-  const roleFor = (seatIndex: number): 'D' | 'SB' | 'BB' | null =>
-    seatIndex === view.dealerIndex ? 'D'
-      : seatIndex === view.smallBlindIndex ? 'SB'
-      : seatIndex === view.bigBlindIndex ? 'BB' : null;
-
-  const reveal = view.phase === 'showdown' || view.phase === 'hand-complete';
-  const banner = showdownBanner(view.showdown, view.players);
-  const winnerIds = view.showdown?.winnerIds ?? [];
-  const bank = view.viewerBankroll ?? identity.chipBalance;
-  const seatFull = view.players.length >= view.config.maxPlayers;
-  const underfunded = bank < view.config.buyIn;
-  const canJoin = !seatFull && !underfunded;
-  const joinReason = seatFull ? `The table is full (${view.config.maxPlayers} seats).`
-    : underfunded ? `Not enough chips for the ${view.config.buyIn.toLocaleString()} buy-in.` : '';
-
-  const seatActions: SeatActions = {
-    mode: isSpectating ? 'spectating' : 'playing',
-    buyIn: view.config.buyIn,
-    canJoin,
-    joinReason,
-    pending: view.viewerPending === 'leave' ? 'leave' : view.viewerPending === 'spectate' ? 'spectate' : null,
-    leaveHint: isSpectating ? 'Back to the lobby — any time' : 'After this hand finishes',
-    onSpectate: () => { setUserOpen(false); socket.emit('sit_out'); },
-    onJoin: () => { setUserOpen(false); socket.emit('sit_in'); },
-    onLeave: () => { setUserOpen(false); socket.emit('leave_table'); },
-    onCancelPending: () => socket.emit('cancel_pending'),
-  };
-
-  const selected = selectedId ? view.players.find((p) => p.discordUserId === selectedId) ?? null : null;
-
-  return (
-    <div className="felt-bg flex h-screen w-full flex-col overflow-hidden text-cream">
-      <TableHeader
-        identity={identity}
-        handNumber={view.handNumber}
-        config={view.config}
-        spectators={view.spectators ?? []}
-        heroStack={me?.chipStack ?? null}
-        onOpenUser={() => setUserOpen(true)}
-      />
-
-      <main className="relative flex min-h-0 flex-1 items-center justify-center">
-        <div className="relative" style={{ width: 'min(880px, calc(100vw - 240px))', height: 'min(440px, calc(100vh - 280px))' }}>
-          <div className="absolute inset-0 rounded-[50%] border-[3px] border-[#0c0a05] bg-gradient-to-b from-[#3a2a12] to-[#1c1407] shadow-tablecard" />
-          <div className="absolute inset-[14px] rounded-[50%] border-[3px] border-felt-900 bg-[radial-gradient(120%_120%_at_50%_38%,#1f7a55_0%,#156040_55%,#0c4730_100%)]" />
-          <div className="absolute inset-[13%] rounded-[50%] border-2 border-dashed border-white/10" />
-
-          {view.waitingForPlayers ? (
-            <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-pill border-[2.5px] border-gold-border bg-gold px-5 py-2 font-display text-sm font-semibold tracking-[0.16em] text-felt-900 shadow-hard-gold">
-              WAITING FOR PLAYERS…
-            </div>
-          ) : (
-            <CenterCluster phase={view.phase} community={view.communityCards} pots={view.pots} banner={banner} />
-          )}
-
-          {opponents.map((p, i) => (
-            <Seat
-              key={p.discordUserId}
-              player={p}
-              pos={positions[i + 1]}
-              role={roleFor(p.seatIndex)}
-              isActive={p.discordUserId === activeId && BETTING_PHASES.includes(view.phase)}
-              timerPct={timerPctFor(p.discordUserId)}
-              reveal={reveal}
-              handLabel={view.showdown?.hands[p.discordUserId]?.label ?? null}
-              isWinner={winnerIds.includes(p.discordUserId)}
-              onOpen={() => setSelectedId(p.discordUserId)}
-            />
-          ))}
-
-          {!view.waitingForPlayers && (
-            <HeroToken
-              player={isSpectating ? null : hero}
-              role={hero ? roleFor(hero.seatIndex) : null}
-              isActive={!!isMyTurn}
-              timerPct={isMyTurn ? timerPctFor(viewerId) : null}
-              isSpectating={isSpectating}
-              isWinner={winnerIds.includes(viewerId)}
-            />
-          )}
-        </div>
-      </main>
-
-      <HeroHud
-        me={isSpectating ? null : me}
-        community={view.communityCards}
-        bank={bank}
-        isSpectating={isSpectating}
-        isMyTurn={!!isMyTurn}
-        turnSecondsLeft={isMyTurn && timer ? timer.remainingMs / 1000 : null}
-      />
-
-      <TableActionBar state={view} myId={viewerId} onAction={act} />
-
-      {userOpen && (
-        <UserPopout identity={{ ...identity, chipBalance: bank }} stats={stats} onClose={() => setUserOpen(false)} seat={seatActions} />
-      )}
-
-      {selected && (
-        <PlayerProfileModal
-          player={gamePlayerToLobby(selected)}
-          tableRole="seated"
-          onClose={() => setSelectedId(null)}
+/** What the middle of the felt says between hands. */
+function Idle({ view, onStart, starting }: { view: TableView; onStart(): void; starting: boolean }) {
+  const ready = readyPlayers(view);
+  const isHost = view.hostId === view.you.id;
+  if (view.status === 'open') {
+    if (isHost) {
+      return (
+        <IdleMessage
+          title={ready >= 2 ? 'Ready when you are' : 'Waiting for players'}
+          body={ready >= 2 ? `${ready} players are seated.` : 'The game needs two seated players.'}
+          action={
+            <Button size="sm" onClick={onStart} loading={starting} disabled={ready < 2}>
+              Start the game
+            </Button>
+          }
         />
-      )}
+      );
+    }
+    const host = view.seats.find((s) => s.player?.id === view.hostId)?.player?.name
+      ?? view.spectators.find((p) => p.id === view.hostId)?.name;
+    return <IdleMessage title="Waiting for the host to start" body={host ? `${host} deals the first hand.` : undefined} />;
+  }
+  if (ready < 2) return <IdleMessage title="Waiting for players" body="Hands deal as soon as two players are in." />;
+  return <IdleMessage title="Shuffling up" />;
+}
 
-      <ConfettiLayer winnerIds={winnerIds} />
-    </div>
+/**
+ * While the menu, chat or a dialog covers the table on your turn: your clock,
+ * above everything, and one tap back to your actions.
+ */
+export function TurnPill({ endsAt, onBack }: { endsAt: number | null; onBack(): void }) {
+  const left = useCountdown(endsAt);
+  const seconds = left === null ? null : Math.ceil(left / 1000);
+  const late = seconds !== null && seconds <= 10;
+  return createPortal(
+    <div className="pointer-events-none fixed inset-x-0 top-2 z-[60] flex justify-center px-2">
+      <button
+        type="button"
+        onClick={onBack}
+        className={cx(
+          'pointer-events-auto flex items-center gap-2 rounded-full py-1.5 pr-1.5 pl-3.5 text-[14px] font-bold shadow-lift ring-2 motion-safe:animate-rise',
+          late ? 'bg-chip-dark text-stock ring-chip-light' : 'bg-brass text-ink ring-brass-dark',
+        )}
+      >
+        <span role="timer" aria-live="off" className="tabular">
+          Your turn{seconds !== null && <> · {seconds}s</>}
+        </span>
+        <span className={cx('rounded-full px-2.5 py-0.5 text-[13px]', late ? 'bg-stock/15' : 'bg-ink/10')}>Back to the table</span>
+      </button>
+    </div>,
+    document.body,
   );
 }
 
-/** Adapt a GamePlayer to the LobbyPlayer shape the reused modal expects. */
-function gamePlayerToLobby(p: GameState['players'][number]): LobbyPlayer {
-  return {
-    discordUserId: p.discordUserId,
-    displayName: p.displayName,
-    avatarUrl: p.avatarUrl,
-    chipBalance: p.chipStack,
-    isReady: false,
-    socketId: '',
-  };
+/**
+ * The table: the felt with everyone around it, your controls underneath, and
+ * the table menu, chat and dialogs on top.
+ */
+export function TableScreen() {
+  const table = useTable();
+  if (!table) return null;
+  return <Table view={table} />;
+}
+
+function Table({ view }: { view: TableView }) {
+  const commands = useCommands();
+  const me = useMe();
+  const connection = useAppState((s) => s.connection);
+  const portrait = useMediaQuery('(max-aspect-ratio: 4/5)');
+  const narrow = useMediaQuery('(max-width: 559px)');
+  const [dialog, setDialog] = useState<Dialog>(null);
+  const [menu, setMenu] = useState(false);
+  const [chat, setChat] = useState(false);
+  const unseen = useUnseenRoomMessages(chat);
+  const [run, busy] = useRun();
+  useTableSounds(view);
+
+  const { you, rules } = view;
+  const yourTurn = !!you.legal && !!view.hand && !view.hand.result;
+  const covered = menu || chat || dialog !== null;
+  const openSeats = view.seats.filter((s) => !s.player).map((s) => s.seat);
+  const seated = you.role === 'seated';
+  const blocked = seated ? null : seatBlockedReason({ openSeats: openSeats.length, minBuyIn: rules.minBuyIn, balance: you.bankroll, closing: view.closing });
+  const mine = seated ? view.seats.find((s) => s.player?.id === you.id)?.player ?? null : null;
+  const highestSeat = Math.max(-1, ...view.seats.filter((s) => s.player).map((s) => s.seat));
+
+  const banner = view.closing ? (
+    <p role="status" className="rounded-full bg-chip-dark/90 px-3 py-1 text-center text-[13px] font-semibold text-stock shadow-lift ring-1 ring-chip">
+      The host is closing the table after this hand.
+    </p>
+  ) : connection === 'offline' ? (
+    <p role="status" className="rounded-full bg-walnut-950/90 px-3 py-1 text-center text-[13px] font-semibold text-stock ring-1 ring-walnut-600">
+      Lost the connection. Reconnecting.
+    </p>
+  ) : null;
+
+  return (
+    <div className="flex h-dvh flex-col overflow-hidden bg-walnut-900 lamp-glow">
+      <TopBar view={view} unseenChat={unseen} onOpenChat={() => setChat(true)} onOpenMenu={() => setMenu(true)} />
+      <main className="relative flex min-h-0 flex-1 flex-col" id="main">
+        <TableStage
+          view={view}
+          canSit={!seated && !view.closing}
+          sitBlockedReason={blocked}
+          onSit={(seat) => setDialog({ kind: 'seat', seat })}
+          idle={<Idle view={view} onStart={() => void run('start', commands.startTable)} starting={busy === 'start'} />}
+          banner={banner}
+        />
+      </main>
+      <HeroDock view={view} narrow={narrow || portrait} onTakeSeat={() => setDialog({ kind: 'seat' })} sitBlockedReason={blocked} />
+
+      <TableMenu
+        open={menu}
+        onClose={() => setMenu(false)}
+        view={view}
+        readyCount={readyPlayers(view)}
+        onTakeSeat={() => {
+          setMenu(false);
+          setDialog({ kind: 'seat' });
+        }}
+        onTopUp={() => {
+          setMenu(false);
+          setDialog({ kind: 'topup' });
+        }}
+        onEditRules={() => {
+          setMenu(false);
+          setDialog({ kind: 'rules' });
+        }}
+      />
+
+      <Drawer open={chat} onClose={() => setChat(false)} label="Room chat">
+        <div className="flex items-center justify-between border-b border-walnut-700 px-4 py-2">
+          <h2 className="text-lg">Room chat</h2>
+          <IconButton label="Close" size="sm" onClick={() => setChat(false)}>
+            <CloseIcon size={18} />
+          </IconButton>
+        </div>
+        <RoomChat />
+      </Drawer>
+
+      {yourTurn && covered && (
+        <TurnPill
+          endsAt={view.hand?.actionEndsAt ?? null}
+          onBack={() => {
+            setMenu(false);
+            setChat(false);
+            setDialog(null);
+          }}
+        />
+      )}
+
+      {dialog?.kind === 'seat' && (
+        <TakeSeatDialog
+          open
+          onClose={() => setDialog(null)}
+          rules={rules}
+          openSeats={openSeats}
+          balance={you.bankroll}
+          initialSeat={dialog.seat}
+          onConfirm={(seat, buyIn) => commands.takeSeat(seat, buyIn)}
+        />
+      )}
+      {dialog?.kind === 'topup' && mine && (
+        <TopUpDialog
+          open
+          onClose={() => setDialog(null)}
+          rules={rules}
+          stack={mine.stack}
+          pendingTopUp={you.pendingTopUp}
+          bankroll={you.bankroll}
+          inHand={!!mine.inHand && !!view.hand && !view.hand.result}
+          onConfirm={(amount) => commands.topUp(amount)}
+        />
+      )}
+      {dialog?.kind === 'rules' && (
+        <EditRulesDialog
+          open
+          onClose={() => setDialog(null)}
+          rules={rules}
+          highestSeat={highestSeat}
+          me={me}
+          onSubmit={(r) => commands.updateRules(r)}
+        />
+      )}
+    </div>
+  );
 }

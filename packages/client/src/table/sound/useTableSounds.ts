@@ -1,87 +1,47 @@
 import { useEffect, useRef } from 'react';
-import type { GameState } from '@poker/shared';
-import type { SoundManager } from './SoundManager';
+import type { TableView } from '@poker/shared';
+import { INITIAL_CUE_STATE, soundCues, type CueState } from './cues';
+import { createSoundManager, type SoundManager } from './SoundManager';
+import { getSoundSettings, subscribeSoundSettings } from './soundStore';
 
-const STEP = 0.07;
-const MAX_RATE = 1.6;
-
-/** Playback rate for the Nth consecutive raise (step 1 = base pitch). */
-export function rateForRaiseStep(step: number): number {
-  if (step <= 1) return 1.0;
-  return Math.min(1.0 + (step - 1) * STEP, MAX_RATE);
+let shared: SoundManager | null = null;
+/** One sound manager (and AudioContext) for the app. */
+export function tableSoundManager(): SoundManager {
+  if (!shared) shared = createSoundManager();
+  return shared;
 }
 
 /**
- * Fire table sound effects by diffing successive game states. The server
- * broadcasts exactly one applied action per state update, and closes a betting
- * round by resetting every lastAction to null in the same frame that deals the
- * next street — so the street-closing call/check is never visible. We therefore
- * detect aggression by a rise in callAmount (robust to the same player
- * re-raising, whose lastAction stays 'raise'), reset the suspense streak at each
- * new street, and read passive/terminal actions from lastAction transitions.
- * @param manager must be a stable reference across renders (e.g. created via useRef/useMemo); it is in the effect dependency array.
+ * Plays table sounds for each new table view (see `soundCues`). Unlocks audio on
+ * the first pointer or key press, and follows the mute/volume settings.
  */
-export function useTableSounds(view: GameState | null, manager: SoundManager): void {
-  const prevRef = useRef<GameState | null>(null);
-  const raiseStep = useRef(0);
+export function useTableSounds(view: TableView | null, manager: SoundManager = tableSoundManager()): void {
+  const prev = useRef<TableView | null>(null);
+  const state = useRef<CueState>(INITIAL_CUE_STATE);
 
   useEffect(() => {
-    const prev = prevRef.current;
-    prevRef.current = view;
-    if (!view) return;
+    manager.setSettings(getSoundSettings());
+    const unsub = subscribeSoundSettings(() => manager.setSettings(getSoundSettings()));
+    const unlock = () => manager.unlock();
+    window.addEventListener('pointerdown', unlock, { capture: true });
+    window.addEventListener('keydown', unlock, { capture: true });
+    return () => {
+      unsub();
+      window.removeEventListener('pointerdown', unlock, { capture: true });
+      window.removeEventListener('keydown', unlock, { capture: true });
+    };
+  }, [manager]);
 
-    // First view or a brand-new hand: reset the streak, stay silent.
-    if (!prev || view.handNumber !== prev.handNumber) {
-      raiseStep.current = 0;
+  useEffect(() => {
+    if (view === prev.current) return;
+    // The first view after mounting only sets the baseline (no replayed sounds).
+    if (prev.current === null) {
+      prev.current = view;
       return;
     }
-
-    // Showdown just resolved: celebrate, and skip diffing so the cardless
-    // waiting→reveal rebroadcast can't replay deal/bet sounds.
-    if (view.showdown && !prev.showdown) {
-      manager.play('win');
-      return;
-    }
-
-    // New street: deal sound, and the betting streak resets. This frame carries
-    // no actionable lastAction (the engine nulls them when it advances).
-    if (view.communityCards.length > prev.communityCards.length) {
-      manager.play('deal');
-      raiseStep.current = 0;
-      return;
-    }
-
-    // A raise/bet (incl. a raising all-in) is the only thing that lifts
-    // callAmount within a street — and it catches the same player re-raising,
-    // whose lastAction never changes from 'raise'.
-    if (view.callAmount > prev.callAmount) {
-      manager.play('bet');
-      raiseStep.current += 1;
-      manager.play('suspense', { rate: rateForRaiseStep(raiseStep.current) });
-      return;
-    }
-
-    // Otherwise: a passive/terminal action (one per frame). Chips moving on a
-    // call (or a non-raising all-in) settle the streak; a check settles it too.
-    for (const p of view.players) {
-      const before = prev.players.find((q) => q.discordUserId === p.discordUserId)?.lastAction;
-      const now = p.lastAction;
-      if (!now || now === before) continue;
-      switch (now) {
-        case 'call':
-        case 'all-in':
-          manager.play('bet');
-          raiseStep.current = 0;
-          break;
-        case 'check':
-          manager.play('check');
-          raiseStep.current = 0;
-          break;
-        case 'fold':
-          manager.play('fold');
-          break;
-        // 'raise' without a callAmount rise shouldn't occur; ignore.
-      }
-    }
+    const { cues, state: nextState } = soundCues(prev.current, view, state.current);
+    state.current = nextState;
+    prev.current = view;
+    for (const cue of cues) manager.play(cue.name, { rate: cue.rate, gain: cue.gain });
   }, [view, manager]);
 }
