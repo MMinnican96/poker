@@ -1,0 +1,241 @@
+import { useState, type ReactNode } from 'react';
+import type { TableView } from '@poker/shared';
+import { useCommands } from '../app/client';
+import { useNav, type Section } from '../app/nav';
+import {
+  Button,
+  ChartIcon,
+  ChatIcon,
+  ChipAmount,
+  CloseIcon,
+  DoorIcon,
+  Drawer,
+  EyeIcon,
+  IconButton,
+  SeatIcon,
+  ShopIcon,
+  Slider,
+  TargetIcon,
+  TrophyIcon,
+  cx,
+  type IconProps,
+} from '../ui';
+import { useRun } from './hooks';
+import { PauseIcon, SoundOffIcon, SoundOnIcon } from './icons';
+import { useSoundSettings } from './sound/soundStore';
+import { topUpBounds } from './TopUpDialog';
+
+function Section({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="border-b border-walnut-700/70 px-4 py-3 last:border-0">
+      <h3 className="mb-2 font-ui text-[13px] font-semibold text-muted">{title}</h3>
+      <div className="flex flex-col gap-2">{children}</div>
+    </section>
+  );
+}
+
+/** A queued change with its undo. */
+export function PendingNote({ children, onCancel, busy }: { children: ReactNode; onCancel(): void; busy?: boolean }) {
+  return (
+    <div className="flex items-center gap-2 rounded-lg bg-brass/10 px-3 py-1.5 text-[14px] text-brass-light ring-1 ring-brass/40" role="status">
+      <span className="min-w-0 flex-1">{children}</span>
+      <Button size="sm" variant="quiet" onClick={onCancel} loading={busy}>Cancel</Button>
+    </div>
+  );
+}
+
+const GO: { id: Section; label: string; Icon: (p: IconProps) => ReactNode }[] = [
+  { id: 'leaderboard', label: 'Leaderboard', Icon: TrophyIcon },
+  { id: 'stats', label: 'Stats', Icon: ChartIcon },
+  { id: 'challenges', label: 'Challenges', Icon: TargetIcon },
+  { id: 'shop', label: 'Shop', Icon: ShopIcon },
+  { id: 'messages', label: 'Messages', Icon: ChatIcon },
+];
+
+export interface TableMenuProps {
+  open: boolean;
+  onClose(): void;
+  view: TableView;
+  onTakeSeat(): void;
+  onTopUp(): void;
+  onEditRules(): void;
+  /** Seated players who can be dealt in (for Start). */
+  readyCount: number;
+}
+
+/** Everything that isn't a poker action: your seat, host controls, sound, and the rest of the app. */
+export function TableMenu({ open, onClose, view, onTakeSeat, onTopUp, onEditRules, readyCount }: TableMenuProps) {
+  const commands = useCommands();
+  const nav = useNav();
+  const sound = useSoundSettings();
+  const [run, busy] = useRun();
+  const [confirmClose, setConfirmClose] = useState(false);
+  const { you, rules } = view;
+  const seated = you.role === 'seated';
+  const me = seated ? view.seats.find((s) => s.player?.id === you.id)?.player ?? null : null;
+  const isHost = view.hostId === you.id;
+  const inHand = !!me?.inHand && !!view.hand && !view.hand.result;
+  const top = me ? topUpBounds(rules, me.stack, you.pendingTopUp, you.bankroll) : null;
+
+  return (
+    <Drawer open={open} onClose={onClose} label="Table menu">
+      <div className="flex items-center justify-between border-b border-walnut-700 px-4 py-2">
+        <h2 className="text-lg">Table menu</h2>
+        <IconButton label="Close" size="sm" onClick={onClose}>
+          <CloseIcon size={18} />
+        </IconButton>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <Section title={seated ? `You're in seat ${(you.seat ?? 0) + 1}` : "You're watching"}>
+          <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[14px] text-stock-dim">
+            {me && (
+              <span className="inline-flex items-center gap-1">Stack <ChipAmount value={me.stack} size="sm" /></span>
+            )}
+            <span className="inline-flex items-center gap-1">Bankroll <ChipAmount value={you.bankroll} size="sm" /></span>
+          </p>
+          {you.pending === 'leave' && (
+            <PendingNote onCancel={() => void run('cancel', commands.cancelPending)} busy={busy === 'cancel'}>You'll leave after this hand.</PendingNote>
+          )}
+          {you.pending === 'stand' && (
+            <PendingNote onCancel={() => void run('cancel', commands.cancelPending)} busy={busy === 'cancel'}>You'll stand up after this hand.</PendingNote>
+          )}
+          {you.pendingTopUp > 0 && (
+            <PendingNote onCancel={() => void run('cancel', commands.cancelPending)} busy={busy === 'cancel'}>
+              <ChipAmount value={you.pendingTopUp} size="sm" /> will be added after this hand.
+            </PendingNote>
+          )}
+          {seated ? (
+            <div className="grid grid-cols-2 gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={<PauseIcon size={16} />}
+                loading={busy === 'sitout'}
+                onClick={() => void run('sitout', () => commands.sitOut(!you.sittingOut))}
+              >
+                {you.sittingOut ? "I'm back" : 'Sit out'}
+              </Button>
+              <Button variant="ghost" size="sm" disabled={!top?.canTopUp} onClick={onTopUp} title={top && !top.canTopUp ? 'You have the most chips allowed, or none to add.' : undefined}>
+                Top up
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={<EyeIcon size={16} />}
+                disabled={you.pending === 'stand'}
+                loading={busy === 'stand'}
+                onClick={() => void run('stand', commands.standUp)}
+              >
+                Stand up to watch
+              </Button>
+              <Button
+                variant="danger"
+                size="sm"
+                icon={<DoorIcon size={16} />}
+                disabled={you.pending === 'leave'}
+                loading={busy === 'leave'}
+                onClick={() => void run('leave', commands.leaveTable)}
+              >
+                Leave table
+              </Button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-2">
+              <Button variant="brass" size="sm" icon={<SeatIcon size={16} />} onClick={onTakeSeat} disabled={view.closing}>Take a seat</Button>
+              <Button variant="danger" size="sm" icon={<DoorIcon size={16} />} loading={busy === 'leave'} onClick={() => void run('leave', commands.leaveTable)}>
+                Leave table
+              </Button>
+            </div>
+          )}
+          {top && !top.canTopUp && (
+            <p className="text-[12px] text-muted">{top.room <= 0 ? "You can't top up: you're at the table maximum." : "You can't top up: your bankroll is empty."}</p>
+          )}
+          {inHand && (you.pending === null) && (
+            <p className="text-[12px] text-muted">Standing up or leaving waits for this hand to finish.</p>
+          )}
+        </Section>
+
+        {isHost && (
+          <Section title="You're the host">
+            {view.status === 'open' && (
+              <>
+                <Button size="sm" disabled={readyCount < 2} loading={busy === 'start'} onClick={() => void run('start', commands.startTable)}>
+                  {readyCount < 2 ? 'Start the game (needs two players)' : 'Start the game'}
+                </Button>
+                <Button size="sm" variant="ghost" onClick={onEditRules}>Edit rules</Button>
+              </>
+            )}
+            {view.closing ? (
+              <p className="text-[14px] text-brass-light" role="status">The table closes after this hand.</p>
+            ) : confirmClose ? (
+              <div className="flex flex-col gap-2 rounded-lg bg-chip-dark/25 p-3 ring-1 ring-chip/50">
+                <p className="text-[14px] text-stock">
+                  Close the table? {view.hand ? 'The current hand finishes first, then' : 'Everyone'} gets their chips back and returns to the lobby.
+                </p>
+                <div className="flex gap-2">
+                  <Button size="sm" variant="ghost" onClick={() => setConfirmClose(false)}>Keep playing</Button>
+                  <Button
+                    size="sm"
+                    variant="danger"
+                    loading={busy === 'close'}
+                    onClick={async () => {
+                      const ack = await run('close', commands.closeTable);
+                      if (ack.ok) setConfirmClose(false);
+                    }}
+                  >
+                    Close the table
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <Button size="sm" variant="danger" onClick={() => setConfirmClose(true)}>Close the table</Button>
+            )}
+          </Section>
+        )}
+
+        <Section title="Sound">
+          <div className="flex items-center gap-3">
+            <IconButton label={sound.muted ? 'Unmute' : 'Mute'} pressed={sound.muted} variant="ghost" size="sm" onClick={() => sound.setMuted(!sound.muted)}>
+              {sound.muted ? <SoundOffIcon size={18} /> : <SoundOnIcon size={18} />}
+            </IconButton>
+            <Slider
+              value={Math.round(sound.volume * 100)}
+              onChange={(v) => {
+                sound.setVolume(v / 100);
+                if (sound.muted && v > 0) sound.setMuted(false);
+              }}
+              min={0}
+              max={100}
+              step={5}
+              label="Volume"
+              valueText={(v) => `${v}%`}
+              disabled={sound.muted}
+              className="flex-1"
+            />
+          </div>
+        </Section>
+
+        <Section title="Elsewhere">
+          <p className="text-[12px] text-muted">You keep your seat, but your turn timer keeps running.</p>
+          <ul className="grid grid-cols-2 gap-1">
+            {GO.map(({ id, label, Icon }) => (
+              <li key={id}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    nav.go(id);
+                  }}
+                  className={cx('flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-[14px] font-semibold text-stock-dim hover:bg-stock/8 hover:text-stock')}
+                >
+                  <Icon size={18} />
+                  {label}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </Section>
+      </div>
+    </Drawer>
+  );
+}
