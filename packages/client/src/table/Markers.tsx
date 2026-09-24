@@ -3,7 +3,7 @@ import { ChipGlyph, cx } from '../ui';
 import type { Point } from './layout';
 
 /** Chips a player has put in on this street, sitting in front of their seat. */
-export function BetChips({ at, amount, name, size, blind }: { at: Point; amount: number; name: string; size: number; blind?: 'SB' | 'BB' | null }) {
+export function BetChips({ at, amount, name, size, blind, showBlind = true }: { at: Point; amount: number; name: string; size: number; blind?: 'SB' | 'BB' | null; showBlind?: boolean }) {
   const chips = amount >= 1000 ? 3 : amount >= 100 ? 2 : 1;
   const g = Math.max(13, Math.round(size * 0.34));
   return (
@@ -25,7 +25,7 @@ export function BetChips({ at, amount, name, size, blind }: { at: Point; amount:
         style={{ fontSize: Math.max(11, Math.min(14, size * 0.3)), lineHeight: 1.4 }}
         aria-hidden="true"
       >
-        {blind && <span className="mr-1 text-[0.85em] text-muted">{blind}</span>}
+        {blind && showBlind && <span className="mr-1 text-[0.85em] text-muted">{blind}</span>}
         {formatChipsShort(amount)}
       </span>
     </div>

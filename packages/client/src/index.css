@@ -8,7 +8,6 @@
  */
 
 @custom-variant short (@media (max-height: 520px));
-@custom-variant motion-ok (@media (prefers-reduced-motion: no-preference));
 
 @theme {
   /* Type */
@@ -30,8 +29,8 @@
   --color-baize-light: #2b7150;
   --color-baize-deep: #0f3526;
 
-  /* Chip red — primary action, danger */
-  --color-chip: #c8272d;
+  /* Chip red — primary action, danger. Deep enough for card-stock text (4.76:1). */
+  --color-chip: #c22328;
   --color-chip-light: #de4046;
   --color-chip-dark: #8a171c;
 
@@ -46,6 +45,9 @@
   --color-brass: #d9a441;
   --color-brass-light: #efc877;
   --color-brass-dark: #94691f;
+  /* Engraved text on brass (4.88:1 on brass) and the bronze 3rd-place plate (5:1 with card stock) */
+  --color-ink-brass: #4d3829;
+  --color-bronze: #805a1a;
 
   /* Semantic */
   --color-positive: #6fc48a;
@@ -72,7 +74,7 @@
 
   --breakpoint-xs: 30rem;
 
-  /* Motion (only used under motion-ok) */
+  /* Motion (only used under motion-safe) */
   --animate-rise: rise 0.18s cubic-bezier(0.2, 0.9, 0.3, 1) both;
   --animate-fade: fade 0.15s ease both;
   --animate-slide-in: slide-in 0.2s cubic-bezier(0.2, 0.9, 0.3, 1) both;

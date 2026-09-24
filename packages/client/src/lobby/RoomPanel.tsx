@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { CHAT_MAX_LENGTH, type ActivityEvent, type ChatMessage, type RoomMember } from '@poker/shared';
-import { useActivity, useCommands, useLobby, useMe, useRoomChat } from '../app/client';
+import { useActivity, useAppState, useCommands, useLobby, useMe, useRoomChat, useStore } from '../app/client';
 import { timeAgo, useNow } from '../app/hooks';
 import { useProfileCard } from '../app/nav';
 import { TitleTag } from '../cosmetics';
@@ -187,7 +187,7 @@ export function RoomChat() {
         </div>
         {(error || left < 40) && (
           <p className={cx('mt-1 px-1 text-[12px]', error ? 'font-medium text-negative' : 'text-muted')} role={error ? 'alert' : undefined}>
-            {error ?? `${left} characters left`}
+            {error ?? `${left} ${left === 1 ? 'character' : 'characters'} left`}
           </p>
         )}
       </form>
@@ -234,16 +234,20 @@ export function ActivityFeed() {
 
 /**
  * Room messages from others that arrived while the chat wasn't visible. The
- * first batch (history on join) counts as seen.
+ * history sent on join counts as seen; everything after it (including the
+ * first message in a room with no history) counts as new.
  */
 export function useUnseenRoomMessages(visible: boolean): number {
   const messages = useRoomChat();
   const me = useMe();
+  const store = useStore();
+  const loaded = useAppState((s) => !!s.chatLoaded[store.roomChannel]);
   const last = messages[messages.length - 1]?.createdAt ?? null;
-  const [seenAt, setSeenAt] = useState<string | null>(last);
+  // What you've seen: everything up to `at` (null: nothing yet). Unset until the history arrives.
+  const [seen, setSeen] = useState<{ at: string | null } | null>(() => (loaded ? { at: last } : null));
   useEffect(() => {
-    if (visible || seenAt === null) setSeenAt(last);
-  }, [visible, last, seenAt]);
-  if (visible || seenAt === null) return 0;
-  return messages.filter((m) => m.senderId !== me.id && m.createdAt > seenAt).length;
+    if ((visible || (!seen && loaded)) && (!seen || seen.at !== last)) setSeen({ at: last });
+  }, [visible, loaded, last, seen]);
+  if (visible || !seen) return 0;
+  return messages.filter((m) => m.senderId !== me.id && (seen.at === null || m.createdAt > seen.at)).length;
 }

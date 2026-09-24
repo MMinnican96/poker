@@ -1,7 +1,7 @@
 import { createContext, forwardRef, useContext, useId, type InputHTMLAttributes, type ReactNode } from 'react';
 import { cx } from './cx';
 
-interface FieldIds { inputId: string; hintId?: string; errorId?: string; invalid: boolean }
+interface FieldIds { inputId: string; labelId: string; hintId?: string; errorId?: string; invalid: boolean }
 const FieldContext = createContext<FieldIds | null>(null);
 
 /** Ids of the enclosing <Field>, for wiring custom controls. */
@@ -26,6 +26,7 @@ export function Field({ label, hint, error, aside, group, children, className }:
   const base = useId();
   const ids: FieldIds = {
     inputId: `${base}-input`,
+    labelId: `${base}-label`,
     hintId: hint ? `${base}-hint` : undefined,
     errorId: error ? `${base}-error` : undefined,
     invalid: !!error,
@@ -38,7 +39,7 @@ export function Field({ label, hint, error, aside, group, children, className }:
     </>
   ) : (
     <span className="mb-1.5 flex items-baseline justify-between gap-2">
-      <label htmlFor={ids.inputId} className="text-sm font-semibold text-stock-dim">{label}</label>
+      <label id={ids.labelId} htmlFor={ids.inputId} className="text-sm font-semibold text-stock-dim">{label}</label>
       {aside && <span className="text-sm text-stock">{aside}</span>}
     </span>
   );

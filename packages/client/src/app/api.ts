@@ -68,13 +68,22 @@ export interface Api {
   history(channel: ChannelId, before?: string): Promise<ChatMessage[]>;
 }
 
-const newNonce = () =>
+/** A random id for idempotent requests (falls back where `crypto.randomUUID` is missing, e.g. plain http). */
+export const newNonce = (): string =>
   typeof crypto !== 'undefined' && 'randomUUID' in crypto
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
-/** Build the REST client for a session token. `base` defaults to same-origin `/api`. */
-export function createApi(token: string, opts: { base?: string; fetch?: typeof fetch } = {}): Api {
+export interface ApiOptions {
+  /** Defaults to same-origin `/api`. */
+  base?: string;
+  fetch?: typeof fetch;
+  /** Called on any 401: the session token is no longer accepted. */
+  onUnauthorized?: () => void;
+}
+
+/** Build the REST client for a session token. */
+export function createApi(token: string, opts: ApiOptions = {}): Api {
   const base = opts.base ?? '/api';
   const f: typeof fetch = opts.fetch ?? ((input, init) => window.fetch(input, init));
 
@@ -93,6 +102,7 @@ export function createApi(token: string, opts: { base?: string; fetch?: typeof f
       throw new ApiError(0, "Couldn't reach the server.");
     }
     const data = (await res.json().catch(() => null)) as (T & { error?: string }) | null;
+    if (res.status === 401) opts.onUnauthorized?.();
     if (res.ok || (allow409 && res.status === 409 && data)) return data as T;
     throw new ApiError(res.status, data?.error ?? `Request failed (${res.status}).`);
   }

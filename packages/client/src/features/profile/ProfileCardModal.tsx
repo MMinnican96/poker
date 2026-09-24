@@ -150,8 +150,10 @@ function CardFace({ card, isMe, landscape, onClose }: { card: ProfileCard; isMe:
           </div>
 
           <dl className="mt-3 grid grid-cols-3 divide-x divide-ink/20 rounded-md bg-ink/5 py-2 text-center ring-1 ring-inset ring-ink/15">
-            <Vital label="Bankroll">
-              <span className="font-display text-[17px] leading-none tabular">{formatChips(card.bankroll)}</span>
+            <Vital label="Total chips">
+              {/* The server counts chips on the table too, so this can differ from the lobby bankroll. */}
+              <span className="font-display text-[17px] leading-none tabular" title="Bankroll plus chips at a table">{formatChips(card.bankroll)}</span>
+              <span className="sr-only"> (bankroll plus chips at a table)</span>
             </Vital>
             <Vital label={`Level ${card.level}`}>
               <XpBar into={lp.into} needed={lp.needed} />

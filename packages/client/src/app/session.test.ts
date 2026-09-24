@@ -86,6 +86,25 @@ describe('Discord sign-in', () => {
   });
 });
 
+describe('Discord sign-in failures', () => {
+  it('reports a refused authenticate() as an auth error', async () => {
+    class FakeSdk {
+      guildId = '123';
+      instanceId = 'inst-9';
+      commands = {
+        authorize: vi.fn(async () => ({ code: 'abc' })),
+        authenticate: vi.fn(async () => { throw new Error('Invalid token'); }),
+      };
+      constructor(readonly clientId: string) {}
+      ready = vi.fn(async () => {});
+    }
+    const fetch = vi.fn(async () => jsonResponse({ token: 'tok', accessToken: 'acc', me: makeMe() }));
+    const err = await createSession(env({ search: '?frame_id=f&instance_id=inst-9', fetch, loadSdk: async () => FakeSdk as never })).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(SessionError);
+    expect((err as SessionError).kind).toBe('auth');
+  });
+});
+
 describe('startSession', () => {
   it('shares one in-flight sign-in between callers (StrictMode double mount)', async () => {
     const fetch = vi.fn(async () => jsonResponse({ token: 't', me: makeMe() }));

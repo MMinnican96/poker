@@ -102,7 +102,13 @@ async function discordSession(env: SessionEnv): Promise<Session> {
   }
 
   const auth = await postJson<AuthResponse>(env.fetch, '/api/auth/token', { code, guildId: sdk.guildId });
-  if (auth.accessToken) await sdk.commands.authenticate({ access_token: auth.accessToken });
+  if (auth.accessToken) {
+    try {
+      await sdk.commands.authenticate({ access_token: auth.accessToken });
+    } catch {
+      throw new SessionError('auth', "Discord didn't accept the sign-in.");
+    }
+  }
   return { mode: 'discord', token: auth.token, me: auth.me, instanceId: sdk.instanceId, sdk };
 }
 

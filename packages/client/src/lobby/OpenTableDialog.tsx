@@ -97,7 +97,8 @@ export function validateTableForm(form: TableForm, me: { balance: number; owned:
   return { errors: {}, rules: shared.rules };
 }
 
-function FeltPicker({ felts, value, onChange }: { felts: ShopItem[]; value: string; onChange(id: string): void }) {
+/** Felt swatches as a radio group: one tab stop, arrow keys move (and select). Shared by the open and edit dialogs. */
+export function FeltPicker({ felts, value, onChange }: { felts: readonly Pick<ShopItem, 'id' | 'name'>[]; value: string; onChange(id: string): void }) {
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
   const onKeyDown = (e: KeyboardEvent) => {
     const i = felts.findIndex((f) => f.id === value);

@@ -158,7 +158,7 @@ export function LeaderboardScreen() {
 const PLACE = [
   { plate: 'bg-brass text-ink shadow-edge-brass', step: 'h-20 short:h-12', size: 76, order: 'col-start-2 row-start-1' },
   { plate: 'bg-stock-dim text-ink shadow-[0_3px_0_var(--color-stock-edge)]', step: 'h-14 short:h-9', size: 60, order: 'col-start-1 row-start-1' },
-  { plate: 'bg-brass-dark text-stock shadow-edge-walnut', step: 'h-10 short:h-7', size: 60, order: 'col-start-3 row-start-1' },
+  { plate: 'bg-bronze text-stock shadow-edge-walnut', step: 'h-10 short:h-7', size: 60, order: 'col-start-3 row-start-1' },
 ] as const;
 
 /** The top three on stepped walnut blocks: 2nd, 1st, 3rd. */

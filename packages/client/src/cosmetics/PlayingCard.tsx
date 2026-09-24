@@ -22,15 +22,6 @@ export function cardName(card: Card): string {
 export type CardSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
 export const CARD_WIDTH: Record<CardSize, number> = { xs: 28, sm: 40, md: 56, lg: 72, xl: 96 };
 
-/** A suit symbol as an inline SVG (never an emoji). */
-export function SuitIcon({ suit, size = 14, className }: { suit: Suit; size?: number; className?: string }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" className={cx(isRedSuit(suit) ? 'fill-suit-red' : 'fill-suit-black', className)}>
-      <path d={SUIT_PATH[suit]} />
-    </svg>
-  );
-}
-
 export interface PlayingCardProps {
   /** The card; null (or `faceDown`) draws the back. */
   card: Card | null;

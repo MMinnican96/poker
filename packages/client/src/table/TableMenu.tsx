@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react';
-import type { TableView } from '@poker/shared';
-import { useCommands } from '../app/client';
+import { formatChips, type TableView } from '@poker/shared';
+import { useCommands, useMe } from '../app/client';
 import { useNav, type Section } from '../app/nav';
 import {
   Button,
@@ -8,6 +8,7 @@ import {
   ChatIcon,
   ChipAmount,
   CloseIcon,
+  CountBadge,
   DoorIcon,
   Drawer,
   EyeIcon,
@@ -34,12 +35,38 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
-/** A queued change with its undo. */
-export function PendingNote({ children, onCancel, busy }: { children: ReactNode; onCancel(): void; busy?: boolean }) {
+/**
+ * What you've queued for the end of the hand, in words: "Leaving after this
+ * hand", "+1,000 top-up queued". Empty when nothing is queued.
+ */
+export function queuedChanges(you: Pick<TableView['you'], 'pending' | 'pendingTopUp'>): string[] {
+  const out: string[] = [];
+  if (you.pending === 'leave') out.push('Leaving after this hand');
+  else if (you.pending === 'stand') out.push('Standing up after this hand');
+  if (you.pendingTopUp > 0) out.push(`+${formatChips(you.pendingTopUp)} top-up queued`);
+  return out;
+}
+
+/**
+ * Everything you've queued, with one undo. The server's cancel clears all of
+ * it at once, so there is one button, and its name says so.
+ */
+export function PendingNote({ you, onCancel, busy }: { you: Pick<TableView['you'], 'pending' | 'pendingTopUp'>; onCancel(): void; busy?: boolean }) {
+  const parts = queuedChanges(you);
+  if (parts.length === 0) return null;
+  const many = parts.length > 1;
   return (
     <div className="flex items-center gap-2 rounded-lg bg-brass/10 px-3 py-1.5 text-[14px] text-brass-light ring-1 ring-brass/40" role="status">
-      <span className="min-w-0 flex-1">{children}</span>
-      <Button size="sm" variant="quiet" onClick={onCancel} loading={busy}>Cancel</Button>
+      <span className="min-w-0 flex-1">{parts.join(' · ')}</span>
+      <Button
+        size="sm"
+        variant="quiet"
+        onClick={onCancel}
+        loading={busy}
+        aria-label={many ? `Cancel all queued changes: ${parts.join(', ').toLowerCase()}` : `Cancel: ${parts[0].toLowerCase()}`}
+      >
+        {many ? 'Cancel all' : 'Cancel'}
+      </Button>
     </div>
   );
 }
@@ -70,6 +97,11 @@ export function TableMenu({ open, onClose, view, onTakeSeat, onTopUp, onEditRule
   const sound = useSoundSettings();
   const [run, busy] = useRun();
   const [confirmClose, setConfirmClose] = useState(false);
+  const self = useMe();
+  const badges: Partial<Record<Section, { count: number; label: readonly [string, string] }>> = {
+    messages: { count: self.unreadMessages, label: ['unread message', 'unread messages'] },
+    challenges: { count: self.unclaimedChallenges, label: ['challenge to claim', 'challenges to claim'] },
+  };
   const { you, rules } = view;
   const seated = you.role === 'seated';
   const me = seated ? view.seats.find((s) => s.player?.id === you.id)?.player ?? null : null;
@@ -93,17 +125,7 @@ export function TableMenu({ open, onClose, view, onTakeSeat, onTopUp, onEditRule
             )}
             <span className="inline-flex items-center gap-1">Bankroll <ChipAmount value={you.bankroll} size="sm" /></span>
           </p>
-          {you.pending === 'leave' && (
-            <PendingNote onCancel={() => void run('cancel', commands.cancelPending)} busy={busy === 'cancel'}>You'll leave after this hand.</PendingNote>
-          )}
-          {you.pending === 'stand' && (
-            <PendingNote onCancel={() => void run('cancel', commands.cancelPending)} busy={busy === 'cancel'}>You'll stand up after this hand.</PendingNote>
-          )}
-          {you.pendingTopUp > 0 && (
-            <PendingNote onCancel={() => void run('cancel', commands.cancelPending)} busy={busy === 'cancel'}>
-              <ChipAmount value={you.pendingTopUp} size="sm" /> will be added after this hand.
-            </PendingNote>
-          )}
+          <PendingNote you={you} onCancel={() => void run('cancel', commands.cancelPending)} busy={busy === 'cancel'} />
           {seated ? (
             <div className="grid grid-cols-2 gap-2">
               <Button
@@ -229,7 +251,8 @@ export function TableMenu({ open, onClose, view, onTakeSeat, onTopUp, onEditRule
                   className={cx('flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-[14px] font-semibold text-stock-dim hover:bg-stock/8 hover:text-stock')}
                 >
                   <Icon size={18} />
-                  {label}
+                  <span className="min-w-0 flex-1 truncate">{label}</span>
+                  {badges[id] && <CountBadge count={badges[id].count} label={badges[id].label} className="ring-walnut-800" />}
                 </button>
               </li>
             ))}

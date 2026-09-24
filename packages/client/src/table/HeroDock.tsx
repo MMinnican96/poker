@@ -85,10 +85,7 @@ export function HeroDock({ view, narrow, onTakeSeat, sitBlockedReason }: HeroDoc
     );
   }
 
-  const pending =
-    you.pending === 'leave' ? "You'll leave after this hand."
-    : you.pending === 'stand' ? "You'll stand up after this hand."
-    : null;
+  const pending = you.pending !== null || you.pendingTopUp > 0;
 
   return (
     <footer
@@ -108,14 +105,9 @@ export function HeroDock({ view, narrow, onTakeSeat, sitBlockedReason }: HeroDoc
           </p>
         )}
         {me && !label && !shownLabel && yourTurn && <p className="font-display text-[15px] text-brass-light">Your turn</p>}
-        {(pending || you.pendingTopUp > 0) && (
+        {pending && (
           <div className="ml-auto flex min-w-0 flex-wrap gap-1.5">
-            {pending && <PendingNote onCancel={cancel} busy={busy === 'cancel'}>{pending}</PendingNote>}
-            {!pending && you.pendingTopUp > 0 && (
-              <PendingNote onCancel={cancel} busy={busy === 'cancel'}>
-                <ChipAmount value={you.pendingTopUp} size="sm" /> added after this hand.
-              </PendingNote>
-            )}
+            <PendingNote you={you} onCancel={cancel} busy={busy === 'cancel'} />
           </div>
         )}
       </div>

@@ -4,11 +4,11 @@ import { useApi, useMe, useStore } from '../app/client';
 import { useProfileCard } from '../app/nav';
 import { Avatar, Button, ChipAmount, CountBadge, GiftIcon, IconButton, LevelBadge, UsersIcon } from '../ui';
 
-/** The round logo: the PNG's white corners are cropped away by the circle. */
+/** The round logo (a small WebP of the brand art): its white corners are cropped away by the circle. */
 export function BrandMark({ size = 36 }: { size?: number }) {
   return (
     <span className="relative inline-block shrink-0 overflow-hidden rounded-full bg-walnut-950 ring-1 ring-walnut-600" style={{ width: size, height: size }}>
-      <img src="/brand/logo.png" alt="" className="absolute inset-0 h-full w-full scale-[1.2] object-cover" draggable={false} />
+      <img src={size > 48 ? '/brand/logo-320.webp' : '/brand/logo-96.webp'} alt="" width={size} height={size} className="absolute inset-0 h-full w-full scale-[1.2] object-cover" draggable={false} />
     </span>
   );
 }
@@ -77,7 +77,7 @@ export function Header({ showRoomButton, onOpenRoom, unseenChat }: HeaderProps) 
           <IconButton label="Room: people, chat and activity" onClick={onOpenRoom} variant="ghost">
             <UsersIcon size={20} />
           </IconButton>
-          <CountBadge count={unseenChat} label="new chat messages" className="absolute -top-1 -right-1" />
+          <CountBadge count={unseenChat} label={['new chat message', 'new chat messages']} className="absolute -top-1 -right-1" />
         </span>
       )}
     </header>

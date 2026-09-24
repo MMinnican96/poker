@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { ActivityEvent, ChatMessage, Notice } from '@poker/shared';
-import { FakeSocket, makeLobby, makeMe, makeTableView } from '../test/harness';
-import { ACTIVITY_KEEP, AppStore, bindSocket, createCommands, initialState, reduce } from './store';
+import { FakeSocket, makeClient, makeLobby, makeMe, makeSummary, makeTableView } from '../test/harness';
+import { ACTIVITY_KEEP, AppStore, bindSocket, createCommands, HOST_CLOSED, initialState, reduce, YOU_CLOSED } from './store';
 
 const msg = (id: string, createdAt: string, channel = 'room:room-1', senderId = 'p2'): ChatMessage => ({
   id, channel, senderId, senderName: 'Bob', senderAvatar: '', body: `hi ${id}`, createdAt,
@@ -20,7 +20,7 @@ describe('reduce', () => {
   });
 
   it('sets the table and the server clock offset on table_state, clears it on table_left', () => {
-    const view = makeTableView({ serverNow: 10_500 });
+    const view = makeTableView({ serverNow: 10_500, hostId: 'p2' });
     const s1 = reduce(base, { type: 'table_state', view, receivedAt: 10_000 });
     expect(s1.table).toBe(view);
     expect(s1.clockOffset).toBe(500);
@@ -60,6 +60,56 @@ describe('reduce', () => {
     expect(s.notices.map((n) => n.id)).toEqual(['n1', 'n2']);
     s = reduce(s, { type: 'dismiss_notice', id: 'n1' });
     expect(s.notices.map((n) => n.id)).toEqual(['n2']);
+  });
+});
+
+describe('reduce: stale tables', () => {
+  const base = initialState(makeMe(), 'room-1');
+  const atTable = reduce(base, { type: 'table_state', view: makeTableView({ tableId: 't1' }), receivedAt: 0 });
+
+  it('drops the table when the lobby says there is none (closed while away)', () => {
+    const s = reduce(atTable, { type: 'lobby_state', lobby: makeLobby({ table: null }) });
+    expect(s.table).toBeNull();
+    expect(s.tableLeftReason).toBe('The table has closed.');
+    expect(s.lobby?.table).toBeNull();
+  });
+
+  it('drops the table when the lobby shows a different one', () => {
+    const s = reduce(atTable, { type: 'lobby_state', lobby: makeLobby({ table: makeSummary({ tableId: 't2' }) }) });
+    expect(s.table).toBeNull();
+    expect(s.tableLeftReason).toBe('The table you were at has closed.');
+  });
+
+  it('keeps the table while the lobby shows the same one', () => {
+    const s = reduce(atTable, { type: 'lobby_state', lobby: makeLobby({ table: makeSummary({ tableId: 't1' }) }) });
+    expect(s.table).toBe(atTable.table);
+    expect(s.tableLeftReason).toBeNull();
+  });
+
+  it('ignores a late table_state for a table the lobby showed closed, but accepts a new table', () => {
+    const closed = reduce(atTable, { type: 'lobby_state', lobby: makeLobby({ table: null }) });
+    expect(reduce(closed, { type: 'table_state', view: makeTableView({ tableId: 't1' }), receivedAt: 0 })).toBe(closed);
+    const next = reduce(closed, { type: 'table_state', view: makeTableView({ tableId: 't2' }), receivedAt: 0 });
+    expect(next.table?.tableId).toBe('t2');
+    expect(next.tableLeftReason).toBeNull();
+  });
+
+  it('replaces the view when a table_state arrives for a different, live table', () => {
+    const s = reduce(atTable, { type: 'table_state', view: makeTableView({ tableId: 't2' }), receivedAt: 0 });
+    expect(s.table?.tableId).toBe('t2');
+  });
+
+  it('tells the host who closed the table "You closed the table."', () => {
+    const host = reduce(base, { type: 'table_state', view: makeTableView({ hostId: 'p1' }), receivedAt: 0 });
+    expect(reduce(host, { type: 'table_left', reason: HOST_CLOSED }).tableLeftReason).toBe(YOU_CLOSED);
+    const guest = reduce(base, { type: 'table_state', view: makeTableView({ hostId: 'p2' }), receivedAt: 0 });
+    expect(reduce(guest, { type: 'table_left', reason: HOST_CLOSED }).tableLeftReason).toBe(HOST_CLOSED);
+  });
+
+  it('keeps an expired session expired', () => {
+    let s = reduce(base, { type: 'connection', status: 'unauthorized' });
+    s = reduce(s, { type: 'connection', status: 'online' });
+    expect(s.connection).toBe('unauthorized');
   });
 });
 
@@ -183,5 +233,35 @@ describe('bindSocket + commands', () => {
     unbind();
     socket.serverEmit('lobby_state', makeLobby());
     expect(store.getState().lobby).toBeNull();
+  });
+});
+
+describe('reconnecting to a table that is gone', () => {
+  it('clears the dead table when the rejoin brings a lobby without it', async () => {
+    const socket = new FakeSocket();
+    const { client } = makeClient({ socket });
+    socket.serverEmit('table_state', makeTableView({ tableId: 't1' }));
+    expect(client.store.getState().table?.tableId).toBe('t1');
+    socket.serverEmit('disconnect', 'transport close');
+    // Back online: we rejoin and ask for state; the server answers with only a lobby.
+    socket.serverEmit('connect');
+    await vi.waitFor(() => expect(socket.events('request_state')).toHaveLength(2));
+    socket.serverEmit('lobby_state', makeLobby({ table: null }));
+    expect(client.store.getState().table).toBeNull();
+    expect(client.store.getState().tableLeftReason).toBe('The table has closed.');
+  });
+});
+
+describe('REST 401', () => {
+  it('puts the app into the expired-session state', async () => {
+    const { client } = makeClient();
+    // makeClient swaps in a fake api; build a real one wired the same way createClient does.
+    const { createApi } = await import('./api');
+    const api = createApi('tok', {
+      fetch: vi.fn(async () => new Response('{"error":"expired"}', { status: 401 })),
+      onUnauthorized: () => client.store.dispatch({ type: 'connection', status: 'unauthorized' }),
+    });
+    await api.me().catch(() => {});
+    expect(client.store.getState().connection).toBe('unauthorized');
   });
 });

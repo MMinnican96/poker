@@ -26,9 +26,9 @@ export function NavBar({ orientation }: { orientation: 'rail' | 'bar' }) {
   const nav = useNav();
   const me = useMe();
   const atTable = useTable() !== null;
-  const badges: Partial<Record<Section, { count: number; label: string }>> = {
-    messages: { count: me.unreadMessages, label: 'unread messages' },
-    challenges: { count: me.unclaimedChallenges, label: 'challenges to claim' },
+  const badges: Partial<Record<Section, { count: number; label: readonly [string, string] }>> = {
+    messages: { count: me.unreadMessages, label: ['unread message', 'unread messages'] },
+    challenges: { count: me.unclaimedChallenges, label: ['challenge to claim', 'challenges to claim'] },
   };
   const rail = orientation === 'rail';
   return (

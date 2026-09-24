@@ -26,7 +26,11 @@ export function useDialogFocus(
     stack.push(token);
     const previous = document.activeElement as HTMLElement | null;
     const panel = panelRef.current;
-    const first = initialFocusRef?.current ?? panel?.querySelector<HTMLElement>(`[data-autofocus],${FOCUSABLE}`);
+    // A marked control wins over document order (the close button usually comes first).
+    const first =
+      initialFocusRef?.current ??
+      panel?.querySelector<HTMLElement>('[data-autofocus]:not([disabled])') ??
+      panel?.querySelector<HTMLElement>(FOCUSABLE);
     (first ?? panel)?.focus();
 
     const onKey = (e: KeyboardEvent) => {

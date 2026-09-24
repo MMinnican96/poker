@@ -66,3 +66,17 @@ describe('AmountInput', () => {
     expect(screen.getByRole('slider', { name: 'Buy-in slider' })).toHaveValue('4000');
   });
 });
+
+describe('AmountInput in a Field', () => {
+  it('names its slider after the field label', async () => {
+    const { Field } = await import('./Field');
+    render(
+      <Field label="Minimum buy-in">
+        <AmountInput value={500} onChange={() => {}} min={100} max={1000} step={50} />
+      </Field>,
+    );
+    expect(screen.getByRole('slider', { name: 'Minimum buy-in' })).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Minimum buy-in' })).toBeInTheDocument();
+    expect(screen.queryByRole('slider', { name: 'Amount slider' })).toBeNull();
+  });
+});

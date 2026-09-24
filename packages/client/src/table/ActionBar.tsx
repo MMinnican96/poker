@@ -36,22 +36,33 @@ function Kbd({ children }: { children: ReactNode }) {
   );
 }
 
+/** How long "Fold anyway?" waits for the second press. */
+export const FOLD_CONFIRM_MS = 4000;
+
 /**
  * Your options when it's your turn: fold, check/call, and bet/raise with an
  * amount picker. Shortcuts: F fold, C check/call, R raise (Enter confirms, Esc
- * cancels).
+ * cancels). Folding when you could check for free takes a second press.
  */
 export function ActionBar({ legal, potTotal, currentBet, committed, step, onAct, wide }: ActionBarProps) {
   const [raising, setRaising] = useState(false);
   const [amount, setAmount] = useState(legal.minRaiseTo);
   const [sent, setSent] = useState<string | null>(null);
+  // Folding when checking is free: the first press asks, the second folds.
+  const [confirmFold, setConfirmFold] = useState(false);
   const trayRef = useRef<HTMLFormElement>(null);
+  useEffect(() => {
+    if (!confirmFold) return;
+    const t = setTimeout(() => setConfirmFold(false), FOLD_CONFIRM_MS);
+    return () => clearTimeout(t);
+  }, [confirmFold]);
 
   // A new decision: start again from the minimum raise.
   useEffect(() => {
     setAmount(legal.minRaiseTo);
     setSent(null);
     setRaising(false);
+    setConfirmFold(false);
   }, [legal.minRaiseTo, legal.maxRaiseTo, legal.callAmount, legal.canCheck]);
 
   const act = async (key: string, action: PlayerAction) => {
@@ -62,7 +73,14 @@ export function ActionBar({ legal, potTotal, currentBet, committed, step, onAct,
     else setRaising(false);
   };
 
-  const fold = () => legal.canFold && act('fold', { type: 'fold' });
+  const fold = () => {
+    if (!legal.canFold) return;
+    if (legal.canCheck && !confirmFold) {
+      setConfirmFold(true);
+      return;
+    }
+    return act('fold', { type: 'fold' });
+  };
   const checkOrCall = () => {
     if (legal.canCheck) return act('check', { type: 'check' });
     if (legal.callAmount > 0) return act('call', { type: 'call' });
@@ -83,6 +101,7 @@ export function ActionBar({ legal, potTotal, currentBet, committed, step, onAct,
         setRaising(false);
         return;
       }
+      if (e.key === 'Escape') setConfirmFold(false);
       if (e.key === 'Enter' && k.raising) {
         // The amount field commits on Enter first; let it, then confirm.
         const inTray = trayRef.current?.contains(e.target as Node);
@@ -154,9 +173,23 @@ export function ActionBar({ legal, potTotal, currentBet, committed, step, onAct,
       )}
 
       {legal.canFold && (
-        <Button variant="danger" size="lg" onClick={() => void fold()} loading={sent === 'fold'} disabled={!!sent} className={cx(wide && 'flex-1 px-2')}>
-          Fold<Kbd>F</Kbd>
+        <Button
+          variant="danger"
+          size="lg"
+          onClick={() => void fold()}
+          loading={sent === 'fold'}
+          disabled={!!sent}
+          className={cx(wide && 'flex-1 px-2', confirmFold && 'bg-chip-dark! text-stock! ring-chip!')}
+          aria-label={confirmFold ? 'Fold anyway? You can check for free' : undefined}
+          title={legal.canCheck && !confirmFold ? 'You can check for free' : undefined}
+        >
+          {confirmFold ? (wide ? 'Fold?' : 'Fold anyway?') : 'Fold'}<Kbd>F</Kbd>
         </Button>
+      )}
+      {confirmFold && (
+        <span role="status" className="sr-only">
+          You can check for free. Press fold again to fold anyway.
+        </span>
       )}
       {(legal.canCheck || legal.callAmount > 0) && (
         <Button variant="brass" size="lg" onClick={() => void checkOrCall()} loading={sent === 'check' || sent === 'call'} disabled={!!sent} className={cx(wide && 'flex-1 px-2')}>

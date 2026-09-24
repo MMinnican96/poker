@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { BLIND_LEVELS, RULE_LIMITS, formatChips, type Ack, type TableRules } from '@poker/shared';
-import { Felt, ownedOfCategory } from '../cosmetics';
-import { validateTableForm, withBlinds, type TableForm } from '../lobby/OpenTableDialog';
-import { AmountInput, Button, ChipAmount, Field, Modal, Segmented, Slider, TextInput, cx } from '../ui';
+import { ownedOfCategory } from '../cosmetics';
+import { FeltPicker, validateTableForm, withBlinds, type TableForm } from '../lobby/OpenTableDialog';
+import { AmountInput, Button, ChipAmount, Field, Modal, Segmented, Slider, TextInput } from '../ui';
 
 /** The form state for the rules a table already has. */
 export function formFromRules(rules: TableRules): TableForm {
@@ -116,25 +116,11 @@ export function EditRulesDialog({ open, onClose, rules: current, highestSeat, me
           <Slider value={form.turnSeconds} onChange={(v) => set('turnSeconds', v)} min={RULE_LIMITS.turnMin} max={RULE_LIMITS.turnMax} step={RULE_LIMITS.turnStep} valueText={(v) => `${v} seconds`} />
         </Field>
         <Field label="Felt" group error={errors.feltId} className="sm:col-span-2">
-          <div role="radiogroup" className="grid grid-cols-2 gap-2 xs:grid-cols-3">
-            {feltIds.map((id) => {
-              const checked = id === form.feltId;
-              const name = felts.find((f) => f.id === id)?.name ?? 'Current felt';
-              return (
-                <button
-                  key={id}
-                  type="button"
-                  role="radio"
-                  aria-checked={checked}
-                  onClick={() => set('feltId', id)}
-                  className={cx('flex flex-col gap-1.5 rounded-lg p-1.5 text-left ring-2 transition-colors', checked ? 'bg-walnut-700 ring-brass' : 'ring-transparent hover:bg-walnut-700/60')}
-                >
-                  <Felt feltId={id} shape="rect" crestScale={0.34} className="aspect-[5/3] w-full" />
-                  <span className="px-0.5 text-[13px] font-semibold text-stock">{name}</span>
-                </button>
-              );
-            })}
-          </div>
+          <FeltPicker
+            felts={feltIds.map((id) => ({ id, name: felts.find((f) => f.id === id)?.name ?? 'Current felt' }))}
+            value={form.feltId}
+            onChange={(id) => set('feltId', id)}
+          />
         </Field>
         {(serverError || errors.form) && (
           <p role="alert" className="rounded-lg bg-chip-dark/40 px-3 py-2 text-sm font-medium text-stock ring-1 ring-chip/60 sm:col-span-2">

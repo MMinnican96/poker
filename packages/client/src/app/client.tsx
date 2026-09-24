@@ -3,7 +3,7 @@ import type { ActivityEvent, ChannelId, ChatMessage, LobbyState, Notice, PlayerS
 import { createApi, type Api } from './api';
 import type { Session } from './session';
 import { connectSocket } from './socket';
-import { AppStore, bindSocket, createCommands, type AppState, type Commands, type ConnectionStatus, type SocketLike } from './store';
+import { AppStore, bindSocket, createCommands, type AppState, type Commands, type SocketLike } from './store';
 
 /** Everything a signed-in screen needs: identity, REST, realtime commands and state. */
 export interface Client {
@@ -23,7 +23,8 @@ export function createClient(session: Session, socket: SocketLike = connectSocke
   return {
     session,
     store,
-    api: createApi(session.token),
+    // A 401 from REST means the session expired: show the same "reload" screen the socket does.
+    api: createApi(session.token, { onUnauthorized: () => store.dispatch({ type: 'connection', status: 'unauthorized' }) }),
     commands,
     dispose() {
       unbind();
@@ -60,7 +61,6 @@ export function useAppState<T>(selector: (s: AppState) => T): T {
 export const useMe = (): PlayerSelf => useAppState((s) => s.me);
 export const useLobby = (): LobbyState | null => useAppState((s) => s.lobby);
 export const useTable = (): TableView | null => useAppState((s) => s.table);
-export const useConnection = (): ConnectionStatus => useAppState((s) => s.connection);
 export const useActivity = (): ActivityEvent[] => useAppState((s) => s.activity);
 export const useNotices = (): Notice[] => useAppState((s) => s.notices);
 

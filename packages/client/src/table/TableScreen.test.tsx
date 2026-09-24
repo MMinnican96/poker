@@ -2,7 +2,7 @@ import { act, fireEvent, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_COSMETICS, parseCards, type Card, type HandView, type LegalActions, type SeatPlayer, type TableView } from '@poker/shared';
-import { makeTableView, renderWithClient, type FakeSocket } from '../test/harness';
+import { makeMe, makeTableView, renderWithClient, type FakeSocket } from '../test/harness';
 import { TableScreen } from './TableScreen';
 
 function seatPlayer(id: string, name: string, patch: Partial<SeatPlayer> = {}): SeatPlayer {
@@ -247,14 +247,27 @@ describe('showdown', () => {
 describe('your seat', () => {
   it('shows a pending leave with a cancel that undoes it', async () => {
     const { socket } = setup(running({ you: { pending: 'leave' }, players: { p1: { pending: 'leave' } } }));
-    const note = screen.getByText("You'll leave after this hand.").closest('[role="status"]') as HTMLElement;
-    await userEvent.click(within(note).getByRole('button', { name: 'Cancel' }));
+    const note = screen.getByText('Leaving after this hand').closest('[role="status"]') as HTMLElement;
+    await userEvent.click(within(note).getByRole('button', { name: /^Cancel/ }));
     expect(socket.events('cancel_pending')).toHaveLength(1);
   });
 
   it('shows a queued top-up', () => {
     setup(running({ you: { pendingTopUp: 1500 } }));
-    expect(screen.getByText(/added after this hand/)).toBeInTheDocument();
+    expect(screen.getByText('+1,500 top-up queued')).toBeInTheDocument();
+  });
+
+  it('shows a leave and a top-up as one note with one cancel that says it cancels both', async () => {
+    const { socket } = setup(running({ you: { pending: 'leave', pendingTopUp: 1000 } }));
+    const note = screen.getByText('Leaving after this hand · +1,000 top-up queued').closest('[role="status"]') as HTMLElement;
+    const cancel = within(note).getByRole('button', { name: /Cancel all queued changes/ });
+    expect(cancel).toHaveTextContent('Cancel all');
+    await userEvent.click(cancel);
+    expect(socket.events('cancel_pending')).toHaveLength(1);
+    // The table menu shows the same single note.
+    await userEvent.click(screen.getByRole('button', { name: /Table menu/ }));
+    const menu = screen.getByRole('dialog', { name: 'Table menu' });
+    expect(within(menu).getAllByRole('button', { name: /^Cancel/ })).toHaveLength(1);
   });
 
   it('lets a sat-out player come back', async () => {
@@ -270,6 +283,122 @@ describe('your seat', () => {
     socket.respond = (event) => (event === 'act' ? { ok: false, error: "It isn't your turn." } : { ok: true });
     await userEvent.click(screen.getByRole('button', { name: /Fold/ }));
     expect(store.getState().notices.map((n) => n.title)).toContain("It isn't your turn.");
+  });
+});
+
+describe('clicks and confirms', () => {
+  it('lets clicks through the full-stage seat list to the felt', () => {
+    const { container } = setup(running());
+    const list = screen.getByRole('list', { name: 'Seats' });
+    expect(list).toHaveClass('pointer-events-none');
+    for (const li of container.querySelectorAll('ol[aria-label="Seats"] > li')) expect(li).toHaveClass('pointer-events-auto');
+    // No other full-size layer over the felt takes clicks.
+    const stage = screen.getByTestId('table-stage');
+    for (const el of stage.querySelectorAll<HTMLElement>('.inset-0, .inset-x-0')) {
+      expect(el.closest('.pointer-events-none')).not.toBeNull();
+    }
+  });
+
+  it('keeps the idle "Start the game" button clickable above the seat list', () => {
+    const v = running();
+    setup({ ...v, status: 'open', hand: null, hostId: 'p1' });
+    const start = screen.getByRole('button', { name: 'Start the game' });
+    // Its own layer takes clicks even though the layers around it don't.
+    expect(start.closest('.pointer-events-auto')).not.toBeNull();
+    expect(screen.getByRole('list', { name: 'Seats' })).toHaveClass('pointer-events-none');
+  });
+
+  it('asks before folding when you could check, and folds on the second press', async () => {
+    const { socket } = setup(running({ hand: { street: 'flop', currentBet: 0 }, you: { legal: { ...LEGAL, canCheck: true, callAmount: 0 } } }));
+    await userEvent.click(screen.getByRole('button', { name: /^Fold/ }));
+    expect(acts(socket)).toEqual([]);
+    await userEvent.click(screen.getByRole('button', { name: /Fold anyway/ }));
+    await act(async () => {});
+    expect(acts(socket)).toEqual([{ type: 'fold' }]);
+  });
+
+  it('does not fold on F when checking is free until F is pressed again', async () => {
+    const { socket } = setup(running({ hand: { street: 'flop', currentBet: 0 }, you: { legal: { ...LEGAL, canCheck: true, callAmount: 0 } } }));
+    fireEvent.keyDown(window, { key: 'f' });
+    await act(async () => {});
+    expect(acts(socket)).toEqual([]);
+    expect(screen.getByRole('button', { name: /Fold anyway/ })).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: 'f' });
+    await act(async () => {});
+    expect(acts(socket)).toEqual([{ type: 'fold' }]);
+  });
+
+  it('folds straight away when facing a bet', async () => {
+    const { socket } = setup(running({ you: { legal: LEGAL } }));
+    await userEvent.click(screen.getByRole('button', { name: /^Fold/ }));
+    await act(async () => {});
+    expect(acts(socket)).toEqual([{ type: 'fold' }]);
+  });
+
+  it('confirms before the top-bar leave button cashes a seated player out', async () => {
+    const { socket } = setup(running());
+    await userEvent.click(screen.getByRole('button', { name: 'Leave table' }));
+    expect(socket.events('leave_table')).toHaveLength(0);
+    const ask = screen.getByRole('dialog', { name: 'Leave the table?' });
+    await userEvent.click(within(ask).getByRole('button', { name: 'Stay' }));
+    expect(socket.events('leave_table')).toHaveLength(0);
+    await userEvent.click(screen.getByRole('button', { name: 'Leave table' }));
+    await userEvent.click(within(screen.getByRole('dialog', { name: 'Leave the table?' })).getByRole('button', { name: /Leave after this hand/ }));
+    expect(socket.events('leave_table')).toHaveLength(1);
+  });
+
+  it('lets a watcher leave without a confirm', async () => {
+    const { socket } = setup(running({ you: { role: 'spectator', seat: null } }));
+    await userEvent.click(screen.getByRole('button', { name: 'Leave table' }));
+    expect(socket.events('leave_table')).toHaveLength(1);
+  });
+
+  it('keeps your clock on top of the table menu on your turn, with a way back', async () => {
+    setup(running({ hand: { actionEndsAt: Date.now() + 12_000 }, you: { legal: LEGAL } }));
+    await userEvent.click(screen.getByRole('button', { name: /Table menu/ }));
+    expect(screen.getByRole('dialog', { name: 'Table menu' })).toBeInTheDocument();
+    const clock = screen.getAllByRole('timer').find((t) => /Your turn/.test(t.textContent ?? ''));
+    expect(clock).toHaveTextContent(/Your turn · 1[12]s/);
+    await userEvent.click(screen.getByRole('button', { name: /Back to the table/ }));
+    expect(screen.queryByRole('dialog', { name: 'Table menu' })).toBeNull();
+    expect(screen.getByRole('group', { name: 'Your action' })).toBeInTheDocument();
+  });
+
+  it('toggles the seat menu shut when the same seat is clicked again', async () => {
+    setup(running());
+    const bob = screen.getByRole('button', { name: /Seat 3, Bob/ });
+    await userEvent.click(bob);
+    expect(screen.getByRole('menu', { name: 'Bob' })).toBeInTheDocument();
+    await userEvent.click(bob);
+    expect(screen.queryByRole('menu', { name: 'Bob' })).toBeNull();
+  });
+
+  it('moves through the seat menu with the arrow keys', async () => {
+    setup(running());
+    await userEvent.click(screen.getByRole('button', { name: /Seat 3, Bob/ }));
+    const menu = screen.getByRole('menu', { name: 'Bob' });
+    const items = within(menu).getAllByRole('menuitem');
+    expect(items[0]).toHaveFocus();
+    await userEvent.keyboard('{ArrowDown}');
+    expect(items[1] ?? items[0]).toHaveFocus();
+    await userEvent.keyboard('{End}');
+    expect(items[items.length - 1]).toHaveFocus();
+    await userEvent.keyboard('{Home}');
+    expect(items[0]).toHaveFocus();
+    await userEvent.keyboard('{Escape}');
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(screen.getByRole('button', { name: /Seat 3, Bob/ })).toHaveFocus();
+  });
+
+  it('badges the table menu with unread messages and challenges', async () => {
+    const r = renderWithClient(<TableScreen />, { me: makeMe({ unreadMessages: 1, unclaimedChallenges: 2 }) });
+    act(() => r.socket.serverEmit('table_state', running()));
+    const menuButton = screen.getByRole('button', { name: /Table menu/ }).parentElement!;
+    expect(menuButton).toHaveTextContent('1 unread message, 2 challenges to claim');
+    await userEvent.click(screen.getByRole('button', { name: /Table menu/ }));
+    const menu = screen.getByRole('dialog', { name: 'Table menu' });
+    expect(within(menu).getByRole('button', { name: /Messages/ })).toHaveTextContent('1 unread message');
+    expect(within(menu).getByRole('button', { name: /Challenges/ })).toHaveTextContent('2 challenges to claim');
   });
 });
 

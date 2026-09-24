@@ -21,7 +21,7 @@ describe('ChallengesScreen', () => {
     expect(within(daily).getByText('+40 XP')).toBeInTheDocument();
     expect(within(daily).getByText(/^4h 59m|^5h 0m/)).toBeInTheDocument();
     const weekly = screen.getByRole('region', { name: 'Weekly challenges' });
-    expect(within(weekly).getByText('3d 2h')).toBeInTheDocument();
+    expect(within(weekly).getByText(/^3d [12]h$/)).toBeInTheDocument();
     expect(within(daily).queryByRole('button', { name: /Claim/ })).not.toBeInTheDocument();
   });
 

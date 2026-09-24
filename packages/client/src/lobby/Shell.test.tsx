@@ -34,7 +34,7 @@ describe('Shell', () => {
     const { store } = renderWithClient(<><Main /><Toaster /></>, { me: makeMe({ unreadMessages: 3, unclaimedChallenges: 1 }) });
     const nav = screen.getByRole('navigation', { name: 'Main' });
     expect(within(nav).getByRole('button', { name: /Messages/ })).toHaveTextContent('3 unread messages');
-    expect(within(nav).getByRole('button', { name: /Challenges/ })).toHaveTextContent('1 challenges to claim');
+    expect(within(nav).getByRole('button', { name: /Challenges/ })).toHaveTextContent('1 challenge to claim');
     act(() => store.dispatch({ type: 'me', me: makeMe({ unreadMessages: 0, unclaimedChallenges: 0 }) }));
     expect(within(nav).getByRole('button', { name: /Messages/ })).not.toHaveTextContent('unread');
   });
@@ -79,7 +79,7 @@ describe('Shell', () => {
     const { store } = renderWithClient(<><Main /><Toaster /></>);
     act(() => store.dispatch({ type: 'lobby_state', lobby: makeLobby({ table: makeSummary() }) }));
     expect(screen.getByRole('navigation', { name: 'Main' })).toBeInTheDocument();
-    act(() => store.dispatch({ type: 'table_state', view: makeTableView(), receivedAt: Date.now() }));
+    act(() => store.dispatch({ type: 'table_state', view: makeTableView({ hostId: 'p2' }), receivedAt: Date.now() }));
     expect(screen.getByRole('button', { name: 'Leave table' })).toBeInTheDocument();
     expect(screen.queryByRole('navigation', { name: 'Main' })).not.toBeInTheDocument();
     act(() => store.dispatch({ type: 'table_left', reason: 'The host closed the table.' }));

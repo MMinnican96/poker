@@ -1,7 +1,7 @@
 import { useEffect, useState, type CSSProperties } from 'react';
 import { formatChips } from '@poker/shared';
 import { cx } from './cx';
-import { useFieldControlProps } from './Field';
+import { useField, useFieldControlProps } from './Field';
 import { ChipGlyph } from './ChipAmount';
 
 /** Clamp to [min, max] and snap to `step` measured from `min` (max always allowed). */
@@ -22,13 +22,15 @@ export interface SliderProps {
   disabled?: boolean;
   /** Accessible name when not inside a <Field>. */
   label?: string;
+  /** Id of an element that names the slider (instead of `label` or the enclosing <Field>'s wiring). */
+  labelledBy?: string;
   /** Spoken value, e.g. "30 seconds". */
   valueText?: (value: number) => string;
   className?: string;
 }
 
 /** A range slider with a brass fill and a clay-chip thumb. */
-export function Slider({ value, onChange, min, max, step = 1, disabled, label, valueText, className }: SliderProps) {
+export function Slider({ value, onChange, min, max, step = 1, disabled, label, labelledBy, valueText, className }: SliderProps) {
   const wired = useFieldControlProps();
   const fill = max > min ? ((value - min) / (max - min)) * 100 : 100;
   return (
@@ -41,10 +43,11 @@ export function Slider({ value, onChange, min, max, step = 1, disabled, label, v
       value={value}
       disabled={disabled}
       aria-label={label}
+      aria-labelledby={label ? undefined : labelledBy}
       aria-valuetext={valueText?.(value)}
       style={{ '--fill': `${fill}%` } as CSSProperties}
       onChange={(e) => onChange(Number(e.target.value))}
-      {...(label ? {} : wired)}
+      {...(label || labelledBy ? {} : wired)}
     />
   );
 }
@@ -69,6 +72,7 @@ export interface AmountInputProps {
  */
 export function AmountInput({ value, onChange, min, max, step = 1, disabled, label, presets, className }: AmountInputProps) {
   const wired = useFieldControlProps();
+  const field = useField();
   const [text, setText] = useState(formatChips(value));
   const [editing, setEditing] = useState(false);
   useEffect(() => {
@@ -85,7 +89,8 @@ export function AmountInput({ value, onChange, min, max, step = 1, disabled, lab
   return (
     <div className={cx('flex flex-col gap-2', className)}>
       <div className="flex items-center gap-3">
-        <Slider value={value} onChange={onChange} min={min} max={max} step={step} disabled={disabled} label={label ? `${label} slider` : 'Amount slider'} className="flex-1" />
+        <Slider value={value} onChange={onChange} min={min} max={max} step={step} disabled={disabled} label={label ? `${label} slider` : field ? undefined : 'Amount slider'}
+          labelledBy={label ? undefined : field?.labelId} className="flex-1" />
         <label className="relative w-32 shrink-0">
           <span className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2"><ChipGlyph size={14} /></span>
           <input

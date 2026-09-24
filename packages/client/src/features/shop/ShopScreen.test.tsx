@@ -33,6 +33,15 @@ describe('ShopScreen', () => {
     expect(second[1]).toBe(first[1]);
   });
 
+  it('moves focus to the new dialog main button after a purchase', async () => {
+    const purchase = vi.fn(async () => ({ ok: true as const, balance: 5_000, quantity: 1 }));
+    renderWithClient(<><ShopScreen /><Toaster /></>, { api: { purchase } });
+    await userEvent.click(within(card('Oxblood')).getByRole('button', { name: 'Buy' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Buy for 5,000' }));
+    const done = await screen.findByRole('dialog', { name: 'Oxblood is yours' });
+    expect(within(done).getByRole('button', { name: 'Equip now' })).toHaveFocus();
+  });
+
   it('uses a fresh nonce for the next purchase after a success', async () => {
     const purchase = vi.fn(async () => ({ ok: true as const, balance: 9_500, quantity: 5 }));
     renderWithClient(<ShopScreen />, { api: { purchase } });

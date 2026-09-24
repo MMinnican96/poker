@@ -39,8 +39,12 @@ type Partner = Conversation['partner'];
 
 const EMPTY_DMS: Record<string, ChatMessage[]> = {};
 
-/** Conversations from the server, updated with DMs that arrived live. */
-function useConversationList(base: Conversation[] | undefined, meId: string, extra: Partner | null): Conversation[] {
+/**
+ * Conversations from the server, updated with DMs that arrived live. A new
+ * conversation's partner comes from their own messages, else from `people`
+ * (the partner you opened, or a room member), so it isn't "Player" until they reply.
+ */
+function useConversationList(base: Conversation[] | undefined, meId: string, extra: Partner | null, people: readonly Partner[] = []): Conversation[] {
   const chat = useAppState((s) => s.chat) ?? EMPTY_DMS;
   return useMemo(() => {
     const byChannel = new Map<string, Conversation>((base ?? []).map((c) => [c.channel, c]));
@@ -53,9 +57,12 @@ function useConversationList(base: Conversation[] | undefined, meId: string, ext
         if (!known.last || latest.createdAt > known.last.createdAt) byChannel.set(channel, { ...known, last: latest });
       } else {
         const fromThem = msgs.find((m) => m.senderId === partnerId);
+        const who = extra?.id === partnerId ? extra : people.find((p) => p.id === partnerId);
         byChannel.set(channel, {
           channel,
-          partner: { id: partnerId, name: fromThem?.senderName ?? 'Player', avatarUrl: fromThem?.senderAvatar ?? '' },
+          partner: fromThem
+            ? { id: partnerId, name: fromThem.senderName, avatarUrl: fromThem.senderAvatar }
+            : { id: partnerId, name: who?.name ?? 'Player', avatarUrl: who?.avatarUrl ?? '' },
           last: latest,
           unread: 0,
         });
@@ -69,7 +76,7 @@ function useConversationList(base: Conversation[] | undefined, meId: string, ext
       if (!b.last) return 1;
       return a.last.createdAt < b.last.createdAt ? 1 : -1;
     });
-  }, [base, chat, meId, extra]);
+  }, [base, chat, meId, extra, people]);
 }
 
 export function MessagesScreen({ initialPartnerId }: MessagesScreenProps) {
@@ -113,7 +120,16 @@ export function MessagesScreen({ initialPartnerId }: MessagesScreenProps) {
   const partner: Partner | null = partnerId
     ? inList ?? (member ? { id: member.id, name: member.name, avatarUrl: member.avatarUrl } : draftPartner?.id === partnerId ? draftPartner : null)
     : null;
-  const list = useConversationList(convos.data, me.id, partner && !inList ? partner : null);
+  // Everyone we can name: people in the room, and partners opened here (who may have left since).
+  const [opened, setOpened] = useState<Partner[]>([]);
+  useEffect(() => {
+    if (partner && partner.name !== 'Player') setOpened((list) => (list.some((p) => p.id === partner.id) ? list : [...list, partner]));
+  }, [partner]);
+  const knownPeople = useMemo<Partner[]>(
+    () => [...(lobby?.members ?? []).map((m) => ({ id: m.id, name: m.name, avatarUrl: m.avatarUrl })), ...opened],
+    [lobby?.members, opened],
+  );
+  const list = useConversationList(convos.data, me.id, partner && !inList ? partner : null, knownPeople);
 
   const open = (id: string) => {
     setPartnerId(id);

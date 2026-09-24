@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from 'react';
 import type { Ack } from '@poker/shared';
 import { useStore } from '../app/client';
 
@@ -96,4 +96,38 @@ export function useDismiss(open: boolean, ref: RefObject<HTMLElement | null>, on
       document.removeEventListener('keydown', key, true);
     };
   }, [open, ref, ignore]);
+}
+
+/**
+ * Arrow-key focus for a `role="menu"`: Up/Down (and Left/Right) move between
+ * its enabled `menuitem`s, wrapping; Home/End jump to the ends. With
+ * `columns` > 1 the items are a grid: Left/Right step by one, Up/Down by a row.
+ */
+export function useMenuKeys(ref: RefObject<HTMLElement | null>, columns = 1): (e: ReactKeyboardEvent) => void {
+  return useCallback(
+    (e: ReactKeyboardEvent) => {
+      const items = [...(ref.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])].filter(
+        (el) => !(el as HTMLButtonElement).disabled,
+      );
+      if (items.length === 0) return;
+      const at = items.indexOf(document.activeElement as HTMLElement);
+      const n = items.length;
+      const step: Record<string, number> = columns > 1
+        ? { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -columns, ArrowDown: columns }
+        : { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -1, ArrowDown: 1 };
+      let next: number | null = null;
+      if (e.key === 'Home') next = 0;
+      else if (e.key === 'End') next = n - 1;
+      else if (e.key in step) {
+        const d = step[e.key];
+        if (at < 0) next = d > 0 ? 0 : n - 1;
+        else if (Math.abs(d) === 1) next = (at + d + n) % n;
+        else next = Math.max(0, Math.min(n - 1, at + d));
+      }
+      if (next === null) return;
+      e.preventDefault();
+      items[next].focus();
+    },
+    [ref, columns],
+  );
 }

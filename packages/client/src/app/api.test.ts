@@ -33,6 +33,16 @@ describe('createApi', () => {
     await expect(api.me()).rejects.toEqual(new ApiError(401, 'Sign in again.'));
   });
 
+  it('reports a 401 through onUnauthorized (and still throws)', async () => {
+    const onUnauthorized = vi.fn();
+    const api = createApi('tok', { fetch: vi.fn(async () => json({ error: 'Sign in again.' }, 401)), onUnauthorized });
+    await expect(api.challenges()).rejects.toBeInstanceOf(ApiError);
+    expect(onUnauthorized).toHaveBeenCalledTimes(1);
+    const other = vi.fn();
+    await expect(createApi('tok', { fetch: vi.fn(async () => json({ error: 'nope' }, 500)), onUnauthorized: other }).me()).rejects.toBeInstanceOf(ApiError);
+    expect(other).not.toHaveBeenCalled();
+  });
+
   it('encodes channel ids for history', async () => {
     const fetch = vi.fn(async () => json([]));
     await createApi('tok', { fetch }).history('dm:a:b', '2026-01-01T00:00:00.000Z');

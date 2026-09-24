@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { betPoint, buttonPoint, displayIndex, ellipseSlotAngles, stageLayout } from './layout';
+import { betPoint, buttonPoint, displayIndex, ellipseSlotAngles, layoutConflicts, stageLayout } from './layout';
 
 describe('displayIndex', () => {
   it('puts the anchor seat at slot 0 and keeps clockwise order', () => {
@@ -76,5 +76,52 @@ describe('stageLayout', () => {
       expect(inside(b)).toBe(true);
       expect(inside(d)).toBe(true);
     }
+  });
+});
+
+describe('no overlaps', () => {
+  // Stage sizes (the space between the top bar and your controls) for the
+  // supported screens: 1280×800 desktop, 640×360 landscape phone / small
+  // Discord window, 390×844 portrait phone, plus a few in between.
+  const stages: [string, number, number][] = [
+    ['1280×800', 1280, 692],
+    ['640×360', 640, 262],
+    ['390×844', 390, 690],
+    ['1000×640', 1000, 540],
+    ['800×450', 800, 350],
+    ['360×640', 360, 500],
+    ['1920×1080', 1920, 970],
+  ];
+  for (const [name, w, h] of stages) {
+    it(`keeps plates, cards, bets and the button clear of the middle and each other at ${name}`, () => {
+      for (let n = 2; n <= 9; n++) {
+        const l = stageLayout(w, h, n);
+        expect({ seats: n, conflicts: layoutConflicts(l).map((c) => c.what) }).toEqual({ seats: n, conflicts: [] });
+      }
+    });
+  }
+
+  it('puts shown cards beside or above the avatar, never on it', () => {
+    for (const [w, h] of [[1280, 692], [640, 262], [390, 690]]) {
+      for (let n = 2; n <= 9; n++) {
+        const l = stageLayout(w, h, n);
+        l.slots.forEach((s, i) => {
+          if (i === 0) return; // your own cards fan out to the right of your avatar
+          const a = s.avatar;
+          const c = s.cards;
+          const ow = Math.max(0, Math.min(a.right, c.right) - Math.max(a.left, c.left));
+          const oh = Math.max(0, Math.min(a.bottom, c.bottom) - Math.max(a.top, c.top));
+          // At most a sliver of the avatar is covered.
+          expect(ow * oh).toBeLessThanOrEqual(l.avatar * l.avatar * 0.15);
+          // And never the name plate.
+          expect(c.bottom).toBeLessThanOrEqual(s.plate.top + 1);
+        });
+      }
+    }
+  });
+
+  it('switches to the compact form on short screens only', () => {
+    expect(stageLayout(1280, 692, 9).compact).toBe(false);
+    expect(stageLayout(640, 262, 6).compact).toBe(true);
   });
 });

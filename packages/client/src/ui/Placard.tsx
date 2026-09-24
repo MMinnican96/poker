@@ -33,7 +33,7 @@ export function Placard({ title, subtitle, children, className }: PlacardProps) 
       <Screw className="right-1.5 bottom-1.5" />
       <div className="relative">
         {title && <h3 className="text-center text-lg leading-tight text-ink short:text-base">{title}</h3>}
-        {subtitle && <p className="mt-0.5 text-center text-[13px] font-semibold text-ink-soft">{subtitle}</p>}
+        {subtitle && <p className="mt-0.5 text-center text-[13px] font-semibold text-ink-brass">{subtitle}</p>}
         {(title || subtitle) && children && <div className="mx-auto my-2.5 h-px short:my-1.5 w-full bg-ink/25" aria-hidden="true" />}
         {children && <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 short:gap-y-0">{children}</dl>}
       </div>
@@ -45,7 +45,7 @@ export function Placard({ title, subtitle, children, className }: PlacardProps) 
 export function PlacardRow({ label, children }: { label: ReactNode; children: ReactNode }) {
   return (
     <>
-      <dt className="font-condensed text-[15px] font-semibold text-ink-soft short:text-[14px]">{label}</dt>
+      <dt className="font-condensed text-[15px] font-semibold text-ink-brass short:text-[14px]">{label}</dt>
       <dd className="tabular text-right font-condensed text-[15px] font-bold text-ink short:text-[14px]">{children}</dd>
     </>
   );

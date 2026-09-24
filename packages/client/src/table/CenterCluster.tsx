@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { formatChips, type HandResultView, type HandView, type PotView } from '@poker/shared';
 import { PlayingCard, feltVisual } from '../cosmetics';
 import { ChipAmount, ChipGlyph, cx } from '../ui';
-import type { StageLayout } from './layout';
+import type { Rect, StageLayout } from './layout';
 import { cardKey } from './Seat';
 
 /** Joins names: "Alice", "Alice and Bob", "Alice, Bob and Cara". */
@@ -42,11 +42,11 @@ export function resultLines(result: HandResultView, nameOf: (id: string) => stri
   });
 }
 
-/** Pot chips shown under the board while there are several pots. */
-function PotBreakdown({ pots }: { pots: PotView[] }) {
+/** Pot chips shown while there are several pots. */
+function PotBreakdown({ pots, className }: { pots: PotView[]; className?: string }) {
   if (pots.length < 2) return null;
   return (
-    <ul className="flex flex-wrap justify-center gap-1" aria-label="Pots">
+    <ul className={cx('flex flex-wrap justify-center gap-1', className)} aria-label="Pots">
       {pots.map((p, i) => (
         <li key={i} className="tabular inline-flex items-center gap-1 rounded-full bg-walnut-950/60 px-2 font-condensed text-[12px] leading-5 font-bold text-stock-dim">
           <ChipGlyph size={11} />
@@ -70,72 +70,84 @@ export interface CenterClusterProps {
   idle?: ReactNode;
 }
 
-/** The middle of the felt: pot, board, side pots, and the result. */
+const box = (r: Rect) => ({ left: r.left, top: r.top, width: r.right - r.left, height: r.bottom - r.top });
+
+/**
+ * The middle of the felt: pot, board, side pots, and the result. Each part sits
+ * in the box the layout reserved for it; the pot/result lines are anchored to
+ * the board and grow upward.
+ */
 export function CenterCluster({ layout, feltId, hand, highlight, nameOf, youId, idle }: CenterClusterProps) {
   const w = layout.boardCard;
   const line = feltVisual(feltId).line;
   const result = hand?.result ?? null;
   const lines = result ? resultLines(result, nameOf, youId) : [];
-  const gap = Math.max(3, Math.round(w * 0.08));
-  const boardWidth = w * 5 + gap * 4;
+  // Hand labels get their own line while there's room for them.
+  const withLabels = layout.compact ? lines.length === 1 : lines.length <= 2;
+  const compactPots = layout.compact && !!hand && hand.pots.length > 1;
+
+  if (!hand) {
+    return (
+      <div
+        className="pointer-events-none absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center"
+        style={{ left: layout.cx, top: layout.cy, width: Math.max(layout.boardRow.right - layout.boardRow.left, 230) }}
+      >
+        <div style={{ fontSize: Math.max(12, Math.min(16, w * 0.28)) }}>{idle}</div>
+      </div>
+    );
+  }
 
   return (
-    <div
-      className="pointer-events-none absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center"
-      style={{ left: layout.cx, top: layout.cy + w * 0.12, width: Math.max(boardWidth, hand ? 160 : 230), gap: Math.max(4, w * 0.12) }}
-    >
-      {!hand && <div style={{ fontSize: Math.max(12, Math.min(16, w * 0.28)) }}>{idle}</div>}
-      {hand && (
-        <>
-          {/* Pot, or the result once the hand is over */}
-          <div className="flex min-h-[1.6em] flex-col items-center" style={{ fontSize: Math.max(12, Math.min(18, w * 0.3)) }} aria-live="polite">
-            {result ? (
-              <div key={`result-${hand.handNumber}`} className="tbl-pop flex flex-col items-center gap-0.5" role="status">
-                {lines.map((l) => (
-                  <p key={l.key} className="text-center leading-tight">
-                    {l.pot && <span className="mr-1.5 font-condensed text-[0.8em] font-bold text-stock-dim">{l.pot}</span>}
-                    <span className="font-display text-brass-light drop-shadow-[0_2px_0_rgb(0_0_0/0.45)]">{l.text}</span>
-                    {l.label && <span className="block font-condensed text-[0.85em] font-bold text-stock">{l.label}</span>}
-                  </p>
-                ))}
-              </div>
-            ) : hand.potTotal > 0 ? (
-              <p className="flex items-center gap-1.5 rounded-full bg-walnut-950/55 px-3 py-0.5">
-                <span className="font-condensed text-[0.8em] font-bold text-stock-dim">Pot</span>
-                <ChipAmount value={hand.potTotal} size="lg" className="text-[1.15em]!" />
+    <div className="pointer-events-none absolute inset-0" data-testid="center-cluster">
+      {/* Pot, or the result once the hand is over */}
+      <div className="absolute flex flex-col items-center justify-end" style={{ ...box(layout.potZone), fontSize: layout.potFont }} aria-live="polite">
+        {result ? (
+          <div key={`result-${hand.handNumber}`} className="tbl-pop flex flex-col items-center gap-0.5" role="status">
+            {lines.map((l) => (
+              <p key={l.key} className="text-center leading-tight">
+                {l.pot && <span className="mr-1.5 font-condensed text-[0.8em] font-bold text-stock-dim">{l.pot}</span>}
+                <span className="font-display text-brass-light drop-shadow-[0_2px_0_rgb(0_0_0/0.45)]">{l.text}</span>
+                {l.label && withLabels && <span className="block font-condensed text-[0.85em] font-bold text-stock">{l.label}</span>}
               </p>
-            ) : null}
+            ))}
           </div>
+        ) : compactPots ? (
+          <PotBreakdown pots={hand.pots} />
+        ) : hand.potTotal > 0 ? (
+          <p className="flex items-center gap-1.5 rounded-full bg-walnut-950/55 px-3 py-0.5">
+            <span className="font-condensed text-[0.8em] font-bold text-stock-dim">Pot</span>
+            <ChipAmount value={hand.potTotal} size="lg" className="text-[1.15em]!" />
+          </p>
+        ) : null}
+      </div>
 
-          <ol className="flex" style={{ gap }} aria-label="Board">
-            {Array.from({ length: 5 }, (_, i) => {
-              const c = hand.board[i];
-              if (!c) {
-                return (
-                  <li
-                    key={`slot-${i}`}
-                    aria-hidden="true"
-                    className="rounded-[8%/5.7%]"
-                    style={{ width: w, height: Math.round(w * 1.4), border: `1.5px dashed ${line}`, opacity: 0.16 }}
-                  />
-                );
-              }
-              const k = cardKey(c);
-              const lit = highlight.size > 0 && highlight.has(k);
-              return (
-                <li
-                  key={`${hand.handNumber}-${i}`}
-                  className="tbl-board [perspective:600px]"
-                  style={{ animationDelay: i < 3 ? `${i * 110}ms` : '0ms' }}
-                >
-                  <PlayingCard card={c} width={w} highlight={lit} dim={result !== null && result.wentToShowdown && highlight.size > 0 && !lit} />
-                </li>
-              );
-            })}
-          </ol>
+      <ol className="absolute flex" style={{ ...box(layout.boardRow), gap: layout.boardGap }} aria-label="Board">
+        {Array.from({ length: 5 }, (_, i) => {
+          const c = hand.board[i];
+          if (!c) {
+            return (
+              <li
+                key={`slot-${i}`}
+                aria-hidden="true"
+                className="rounded-[8%/5.7%]"
+                style={{ width: w, height: Math.round(w * 1.4), border: `1.5px dashed ${line}`, opacity: 0.16 }}
+              />
+            );
+          }
+          const k = cardKey(c);
+          const lit = highlight.size > 0 && highlight.has(k);
+          return (
+            <li key={`${hand.handNumber}-${i}`} className="tbl-board [perspective:600px]" style={{ animationDelay: i < 3 ? `${i * 110}ms` : '0ms' }}>
+              <PlayingCard card={c} width={w} highlight={lit} dim={result !== null && result.wentToShowdown && highlight.size > 0 && !lit} />
+            </li>
+          );
+        })}
+      </ol>
 
-          {!result && <PotBreakdown pots={hand.pots} />}
-        </>
+      {!result && !layout.compact && (
+        <div className="absolute" style={box(layout.breakdown)}>
+          <PotBreakdown pots={hand.pots} />
+        </div>
       )}
     </div>
   );

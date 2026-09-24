@@ -11,6 +11,7 @@ import {
   type Rarity,
   type ShopItem,
 } from '@poker/shared';
+import { newNonce } from '../../app/api';
 import { useApi, useMe, useStore } from '../../app/client';
 import { ItemPreview, owns } from '../../cosmetics';
 import { Button, ChipAmount, Modal, Tabs, cx, tabPanelProps } from '../../ui';
@@ -88,7 +89,7 @@ export function ShopScreen() {
   const purchase = async (item: ShopItem) => {
     let nonce = nonces.current.get(item.id);
     if (!nonce) {
-      nonce = crypto.randomUUID();
+      nonce = newNonce();
       nonces.current.set(item.id, nonce);
     }
     const r = await api.purchase(item.id, nonce);
@@ -281,8 +282,10 @@ function BuyDialog({ item, balance, owned, onBuy, onEquip, onClose }: {
   };
 
   if (done) {
+    // A fresh dialog (new key) so focus moves to its main button instead of falling to the page.
     return (
       <Modal
+        key="done"
         open
         onClose={onClose}
         size="sm"

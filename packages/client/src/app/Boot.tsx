@@ -7,7 +7,7 @@ function BootFrame({ children }: { children: ReactNode }) {
     <div className="grid h-dvh place-items-center overflow-y-auto bg-walnut-900 tex-wood p-4">
       <div className="flex max-w-md flex-col items-center gap-4 text-center short:gap-2">
         <span className="relative size-32 overflow-hidden rounded-full bg-walnut-950 ring-2 ring-walnut-600 short:size-20">
-          <img src="/brand/logo.png" alt="Ratbag Poker Night" className="absolute inset-0 h-full w-full scale-[1.2] object-cover" />
+          <img src="/brand/logo-320.webp" alt="Ratbag Poker Night" width={128} height={128} className="absolute inset-0 h-full w-full scale-[1.2] object-cover" />
         </span>
         {children}
       </div>

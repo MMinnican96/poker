@@ -92,6 +92,29 @@ describe('MessagesScreen', () => {
     expect(history).toHaveBeenCalledWith('dm:p1:p3');
   });
 
+  it('names a new conversation after its partner before they reply', async () => {
+    const { store } = renderWithClient(<MessagesScreen initialPartnerId="p2" />, {
+      api: { conversations: async () => [], history: async () => [], profile: async () => makeProfile() },
+    });
+    await screen.findByRole('textbox', { name: 'Message Bob' });
+    // Our own message comes back from the server; Bob hasn't said anything yet.
+    act(() => store.dispatch({ type: 'chat_message', message: makeMessage(CH, 'p1', 'hi Bob', new Date().toISOString()) }));
+    await userEvent.click(screen.getByRole('button', { name: 'Back to conversations' }));
+    const list = screen.getByRole('navigation', { name: 'Conversations' });
+    const row = within(list).getByRole('button', { name: /hi Bob/ });
+    expect(row).toHaveTextContent('Bob');
+    expect(row).not.toHaveTextContent('Player');
+  });
+
+  it('names a live conversation with a room member from the room', async () => {
+    const { store } = renderWithClient(<MessagesScreen />, { api: { conversations: async () => [] } });
+    act(() => store.dispatch({ type: 'lobby_state', lobby: makeLobby({ members: [makeMember('p1', 'Alice'), makeMember('p3', 'Carol')] }) }));
+    await screen.findByRole('heading', { name: 'No messages yet' });
+    act(() => store.dispatch({ type: 'chat_message', message: makeMessage('dm:p1:p3', 'p1', 'you there?', new Date().toISOString()) }));
+    const list = screen.getByRole('navigation', { name: 'Conversations' });
+    expect(within(list).getByRole('button', { name: /you there/ })).toHaveTextContent('Carol');
+  });
+
   it('adds a conversation when a DM arrives live', async () => {
     const { store } = renderWithClient(<MessagesScreen />, { api: { conversations: async () => [] } });
     await screen.findByRole('heading', { name: 'No messages yet' });

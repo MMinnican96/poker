@@ -34,8 +34,15 @@ export interface AppState {
   table: TableView | null;
   /** Why you last left the table; cleared when you rejoin one. */
   tableLeftReason: string | null;
+  /**
+   * Tables the lobby has shown to be gone. A late `table_state` for one of
+   * them is stale and ignored.
+   */
+  closedTables: string[];
   /** Messages per channel, oldest first (room: `room:<instanceId>`, DMs: `dm:<a>:<b>`). */
   chat: Record<ChannelId, ChatMessage[]>;
+  /** Channels whose history has arrived at least once (so later messages are new). */
+  chatLoaded: Record<ChannelId, true>;
   /** Room activity feed, newest first. */
   activity: ActivityEvent[];
   /** Pending toasts (server `notice` events and local `notify()` calls), oldest first. */
@@ -47,6 +54,12 @@ export interface AppState {
 export const CHAT_KEEP = 200;
 export const ACTIVITY_KEEP = 50;
 export const NOTICES_KEEP = 4;
+const CLOSED_KEEP = 10;
+
+/** The server's `table_left` reason when the host closes the table. */
+export const HOST_CLOSED = 'The host closed the table.';
+/** What the host who closed it is told instead. */
+export const YOU_CLOSED = 'You closed the table.';
 
 export function initialState(me: PlayerSelf, instanceId: string): AppState {
   return {
@@ -57,7 +70,9 @@ export function initialState(me: PlayerSelf, instanceId: string): AppState {
     lobby: null,
     table: null,
     tableLeftReason: null,
+    closedTables: [],
     chat: {},
+    chatLoaded: {},
     activity: [],
     notices: [],
     clockOffset: 0,
@@ -90,17 +105,35 @@ export function reduce(state: AppState, e: StoreEvent): AppState {
   switch (e.type) {
     case 'me':
       return { ...state, me: e.me };
-    case 'lobby_state':
+    case 'lobby_state': {
+      // The lobby is the source of truth for which table exists. If ours is
+      // gone (it closed while we were away, e.g. across a reconnect, and the
+      // server had no `table_left` to send), drop the dead view.
+      const ours = state.table;
+      if (ours && e.lobby.table?.tableId !== ours.tableId) {
+        return {
+          ...state,
+          lobby: e.lobby,
+          table: null,
+          tableLeftReason: e.lobby.table ? 'The table you were at has closed.' : 'The table has closed.',
+          closedTables: [...state.closedTables, ours.tableId].slice(-CLOSED_KEEP),
+        };
+      }
       return { ...state, lobby: e.lobby };
+    }
     case 'table_state':
+      if (state.closedTables.includes(e.view.tableId)) return state;
       return {
         ...state,
         table: e.view,
         tableLeftReason: null,
         clockOffset: e.view.serverNow - e.receivedAt,
       };
-    case 'table_left':
-      return { ...state, table: null, tableLeftReason: e.reason };
+    case 'table_left': {
+      // The host who closed the table doesn't need telling who closed it.
+      const closedByYou = e.reason === HOST_CLOSED && state.table?.hostId === state.me.id;
+      return { ...state, table: null, tableLeftReason: closedByYou ? YOU_CLOSED : e.reason };
+    }
     case 'chat_message': {
       const list = state.chat[e.message.channel] ?? [];
       return { ...state, chat: { ...state.chat, [e.message.channel]: mergeMessages(list, [e.message]) } };
@@ -109,7 +142,11 @@ export function reduce(state: AppState, e: StoreEvent): AppState {
       // History replaces the channel, but keeps live messages that arrived after it.
       const last = e.messages[e.messages.length - 1];
       const newer = (state.chat[e.channel] ?? []).filter((m) => !last || m.createdAt > last.createdAt);
-      return { ...state, chat: { ...state.chat, [e.channel]: mergeMessages(e.messages.slice(-CHAT_KEEP), newer) } };
+      return {
+        ...state,
+        chat: { ...state.chat, [e.channel]: mergeMessages(e.messages.slice(-CHAT_KEEP), newer) },
+        chatLoaded: state.chatLoaded[e.channel] ? state.chatLoaded : { ...state.chatLoaded, [e.channel]: true },
+      };
     }
     case 'activity':
       if (state.activity.some((a) => a.id === e.event.id)) return state;
@@ -122,6 +159,8 @@ export function reduce(state: AppState, e: StoreEvent): AppState {
     case 'dismiss_notice':
       return { ...state, notices: state.notices.filter((n) => n.id !== e.id) };
     case 'connection':
+      // An expired session stays expired until the page reloads, whatever the socket does next.
+      if (state.connection === 'unauthorized' || state.connection === e.status) return state;
       return { ...state, connection: e.status };
     case 'room_error':
       return { ...state, roomError: e.error };

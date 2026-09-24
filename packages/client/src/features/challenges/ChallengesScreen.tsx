@@ -29,15 +29,16 @@ const PERIOD_TITLE: Record<ChallengePeriod, string> = { daily: 'Daily challenges
 export function ChallengesScreen() {
   const api = useApi();
   const list = useAsync(() => api.challenges(), [api]);
-  const now = useNow(1000);
 
-  // When a period rolls over, fetch the new challenges.
+  // When a period rolls over, fetch the new challenges (one timer, not a re-render every second).
   const nextEnd = Math.min(...(list.data ?? []).map((c) => Date.parse(c.endsAt)).filter((t) => !Number.isNaN(t)));
-  const expired = Number.isFinite(nextEnd) && now >= nextEnd;
   const { reload } = list;
   useEffect(() => {
-    if (expired) reload();
-  }, [expired, reload]);
+    if (!Number.isFinite(nextEnd)) return;
+    // setTimeout can't wait longer than ~24 days; periods are at most a week.
+    const t = setTimeout(reload, Math.min(2 ** 31 - 1, Math.max(0, nextEnd - Date.now()) + 500));
+    return () => clearTimeout(t);
+  }, [nextEnd, reload]);
 
   const markClaimed = (c: ChallengeStatus) =>
     list.setData((prev) => prev?.map((x) => (x.id === c.id && x.periodKey === c.periodKey ? { ...x, claimed: true } : x)));
@@ -58,14 +59,20 @@ export function ChallengesScreen() {
         (['daily', 'weekly'] as const).map((period) => {
           const items = list.data!.filter((c) => c.period === period);
           if (items.length === 0) return null;
-          return <PeriodGroup key={period} period={period} items={items} now={now} onClaimed={markClaimed} />;
+          return <PeriodGroup key={period} period={period} items={items} onClaimed={markClaimed} />;
         })
       )}
     </Screen>
   );
 }
 
-function PeriodGroup({ period, items, now, onClaimed }: { period: ChallengePeriod; items: ChallengeStatus[]; now: number; onClaimed(c: ChallengeStatus): void }) {
+/** Time left until `ends`, ticking every second on its own (so the screen does not re-render). */
+function Countdown({ ends, dateTime }: { ends: number; dateTime: string }) {
+  const now = useNow(1000);
+  return <time dateTime={dateTime} className="tabular font-semibold text-stock-dim">{timeLeft(ends - now)}</time>;
+}
+
+function PeriodGroup({ period, items, onClaimed }: { period: ChallengePeriod; items: ChallengeStatus[]; onClaimed(c: ChallengeStatus): void }) {
   const ends = Date.parse(items[0].endsAt);
   const id = `challenges-${period}`;
   return (
@@ -75,7 +82,7 @@ function PeriodGroup({ period, items, now, onClaimed }: { period: ChallengePerio
         {!Number.isNaN(ends) && (
           <p className="text-sm text-muted">
             New {period === 'daily' ? 'challenges' : 'week'} in{' '}
-            <time dateTime={items[0].endsAt} className="tabular font-semibold text-stock-dim">{timeLeft(ends - now)}</time>
+            <Countdown ends={ends} dateTime={items[0].endsAt} />
           </p>
         )}
       </header>

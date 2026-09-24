@@ -1,14 +1,15 @@
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { TableView } from '@poker/shared';
 import { useAppState, useCommands, useMe, useTable } from '../app/client';
 import { useMediaQuery } from '../app/hooks';
 import { RoomChat, useUnseenRoomMessages } from '../lobby/RoomPanel';
 import { seatBlockedReason, TakeSeatDialog } from '../lobby/TakeSeatDialog';
-import { Button, CloseIcon, Drawer, IconButton } from '../ui';
+import { Button, CloseIcon, Drawer, IconButton, cx } from '../ui';
 import { IdleMessage } from './CenterCluster';
 import { EditRulesDialog } from './EditRulesDialog';
 import { HeroDock } from './HeroDock';
-import { useRun } from './hooks';
+import { useCountdown, useRun } from './hooks';
 import { useTableSounds } from './sound/useTableSounds';
 import { TableMenu } from './TableMenu';
 import { TableStage } from './TableStage';
@@ -50,6 +51,34 @@ function Idle({ view, onStart, starting }: { view: TableView; onStart(): void; s
 }
 
 /**
+ * While the menu, chat or a dialog covers the table on your turn: your clock,
+ * above everything, and one tap back to your actions.
+ */
+export function TurnPill({ endsAt, onBack }: { endsAt: number | null; onBack(): void }) {
+  const left = useCountdown(endsAt);
+  const seconds = left === null ? null : Math.ceil(left / 1000);
+  const late = seconds !== null && seconds <= 10;
+  return createPortal(
+    <div className="pointer-events-none fixed inset-x-0 top-2 z-[60] flex justify-center px-2">
+      <button
+        type="button"
+        onClick={onBack}
+        className={cx(
+          'pointer-events-auto flex items-center gap-2 rounded-full py-1.5 pr-1.5 pl-3.5 text-[14px] font-bold shadow-lift ring-2 motion-safe:animate-rise',
+          late ? 'bg-chip-dark text-stock ring-chip-light' : 'bg-brass text-ink ring-brass-dark',
+        )}
+      >
+        <span role="timer" aria-live="off" className="tabular">
+          Your turn{seconds !== null && <> · {seconds}s</>}
+        </span>
+        <span className={cx('rounded-full px-2.5 py-0.5 text-[13px]', late ? 'bg-stock/15' : 'bg-ink/10')}>Back to the table</span>
+      </button>
+    </div>,
+    document.body,
+  );
+}
+
+/**
  * The table: the felt with everyone around it, your controls underneath, and
  * the table menu, chat and dialogs on top.
  */
@@ -73,6 +102,8 @@ function Table({ view }: { view: TableView }) {
   useTableSounds(view);
 
   const { you, rules } = view;
+  const yourTurn = !!you.legal && !!view.hand && !view.hand.result;
+  const covered = menu || chat || dialog !== null;
   const openSeats = view.seats.filter((s) => !s.player).map((s) => s.seat);
   const seated = you.role === 'seated';
   const blocked = seated ? null : seatBlockedReason({ openSeats: openSeats.length, minBuyIn: rules.minBuyIn, balance: you.bankroll, closing: view.closing });
@@ -132,6 +163,17 @@ function Table({ view }: { view: TableView }) {
         </div>
         <RoomChat />
       </Drawer>
+
+      {yourTurn && covered && (
+        <TurnPill
+          endsAt={view.hand?.actionEndsAt ?? null}
+          onBack={() => {
+            setMenu(false);
+            setChat(false);
+            setDialog(null);
+          }}
+        />
+      )}
 
       {dialog?.kind === 'seat' && (
         <TakeSeatDialog

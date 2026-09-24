@@ -1,10 +1,10 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type RefObject } from 'react';
 import type { SeatPlayer } from '@poker/shared';
 import { useCommands, useMe } from '../app/client';
 import { useNav, useProfileCard } from '../app/nav';
 import { TitleTag, ownedOfCategory } from '../cosmetics';
 import { Button, ShopIcon, cx } from '../ui';
-import { useDismiss, useRun } from './hooks';
+import { useDismiss, useMenuKeys, useRun } from './hooks';
 import type { Point } from './layout';
 
 export interface SeatMenuProps {
@@ -15,19 +15,22 @@ export interface SeatMenuProps {
   /** Throwables can only target seated players other than you. */
   canThrow: boolean;
   onClose(): void;
+  /** The seat button that opened the menu: clicking it again closes the menu (instead of close-then-reopen). */
+  anchor?: RefObject<HTMLElement | null>;
 }
 
 const MENU_W = 232;
 
 /** A small card over another player's seat: their profile, and things to throw at them. */
-export function SeatMenu({ player, at, stage, avatar, canThrow, onClose }: SeatMenuProps) {
+export function SeatMenu({ player, at, stage, avatar, canThrow, onClose, anchor }: SeatMenuProps) {
   const me = useMe();
   const commands = useCommands();
   const profile = useProfileCard();
   const nav = useNav();
   const [run, busy] = useRun();
   const ref = useRef<HTMLDivElement>(null);
-  useDismiss(true, ref, onClose);
+  useDismiss(true, ref, onClose, anchor);
+  const onKeyDown = useMenuKeys(ref);
   useEffect(() => {
     ref.current?.querySelector<HTMLElement>('button')?.focus();
   }, []);
@@ -42,6 +45,7 @@ export function SeatMenu({ player, at, stage, avatar, canThrow, onClose }: SeatM
       ref={ref}
       role="menu"
       aria-label={`${player.name}`}
+      onKeyDown={onKeyDown}
       className="absolute z-40 flex max-h-[80%] flex-col overflow-y-auto rounded-xl bg-stock p-3 text-ink shadow-lift ring-1 ring-stock-edge tex-grain motion-safe:animate-rise"
       style={{ width: MENU_W, ...style }}
     >

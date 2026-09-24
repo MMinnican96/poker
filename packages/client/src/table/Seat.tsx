@@ -1,6 +1,6 @@
 import type { CSSProperties } from 'react';
 import { formatChips, formatChipsShort, type Card, type SeatPlayer, type ShownHand } from '@poker/shared';
-import { PlayingCard, TitleTag, cardName, titleText } from '../cosmetics';
+import { PlayingCard, TitleTag, titleText } from '../cosmetics';
 import { Avatar, cx } from '../ui';
 import { actionText } from './actions';
 import type { Slot, StageLayout } from './layout';
@@ -33,7 +33,8 @@ export interface SeatProps {
   resultShowing: boolean;
   /** Cards to highlight (the winning five). */
   highlight: ReadonlySet<string>;
-  onSelect(): void;
+  /** The seat was clicked; `el` is its button. */
+  onSelect(el: HTMLElement): void;
   selected?: boolean;
 }
 
@@ -89,11 +90,18 @@ export function Seat({ seat, player: p, slot, layout, hero, toAct, actionEndsAt,
   // Deal animation starts from the middle of the table.
   const deal = { '--dx': `${layout.cx - slot.x}px`, '--dy': `${layout.cy - slot.y}px` } as CSSProperties;
   const cards = p.holeCards;
-  const showPlateTitle = !!title && s >= 40;
+  const m = layout.seat;
+  const compact = layout.compact;
+  const showPlateTitle = !!title && s >= 40 && !compact;
+  // Layout rects are in stage px; the seat draws relative to its avatar box.
+  const ox = slot.x - s / 2;
+  const oy = slot.y - s / 2;
+  const shownW = layout.shownCard;
+  const winFont = m.winFont;
 
   return (
     <li
-      className="absolute"
+      className="pointer-events-auto absolute"
       style={{ left: slot.x, top: slot.y, width: 0, height: 0, zIndex: hero ? 6 : toAct ? 5 : 4 }}
       data-seat={seat}
       data-player={p.id}
@@ -120,10 +128,17 @@ export function Seat({ seat, player: p, slot, layout, hero, toAct, actionEndsAt,
           </div>
         )}
         {cards && !hero && (
-          <div key={`shown-${handNumber}`} className="tbl-reveal absolute left-1/2 z-10 flex -translate-x-1/2" style={{ top: -s * 0.32 }} role="group" aria-label={`${p.name}'s cards`}>
+          <div
+            key={`shown-${handNumber}`}
+            className="tbl-reveal absolute z-10 flex"
+            style={{ left: slot.cards.left - ox, top: slot.cards.bottom - oy - shownW * 1.4 - 1 }}
+            data-cards-above={slot.cardsAbove || undefined}
+            role="group"
+            aria-label={`${p.name}'s cards`}
+          >
             {cards.map((c, i) => (
-              <span key={cardKey(c)} className="inline-block" style={{ marginLeft: i === 1 ? -layout.shownCard * 0.18 : 0 }}>
-                <PlayingCard card={c} width={layout.shownCard} highlight={highlight.has(cardKey(c))} />
+              <span key={cardKey(c)} className="inline-block" style={{ marginLeft: i === 1 ? -shownW * 0.18 : 0 }}>
+                <PlayingCard card={c} width={shownW} highlight={highlight.has(cardKey(c))} />
               </span>
             ))}
           </div>
@@ -144,7 +159,7 @@ export function Seat({ seat, player: p, slot, layout, hero, toAct, actionEndsAt,
 
         <button
           type="button"
-          onClick={onSelect}
+          onClick={(e) => onSelect(e.currentTarget)}
           aria-label={seatLabel(seat, p, { hero, toAct, outcome })}
           aria-haspopup={hero ? undefined : 'menu'}
           aria-expanded={hero ? undefined : !!selected}
@@ -165,8 +180,8 @@ export function Seat({ seat, player: p, slot, layout, hero, toAct, actionEndsAt,
         {winner && (
           <span
             key={`won-${handNumber}`}
-            className="tbl-pop tabular absolute left-1/2 z-20 -translate-x-1/2 rounded-full bg-brass px-2 font-display text-ink shadow-edge-brass"
-            style={{ top: cards && !hero ? -s * 0.32 - Math.max(12, s * 0.3) * 1.35 - 4 : -s * 0.55, fontSize: Math.max(12, s * 0.3), lineHeight: 1.35, animationDelay: '0.45s' }}
+            className="tbl-pop tabular absolute z-20 -translate-x-1/2 rounded-full bg-brass px-2 font-display whitespace-nowrap text-ink shadow-edge-brass"
+            style={{ left: slot.winPill.x - ox, top: slot.winPill.y - oy - (winFont * 1.35) / 2, fontSize: winFont, lineHeight: 1.35, animationDelay: '0.45s' }}
             aria-hidden="true"
           >
             +{formatChipsShort(outcome!.won)}
@@ -180,7 +195,7 @@ export function Seat({ seat, player: p, slot, layout, hero, toAct, actionEndsAt,
               'tbl-pop absolute left-1/2 z-20 -translate-x-1/2 rounded-full px-1.5 font-condensed font-bold whitespace-nowrap ring-1',
               PILL[status.tone],
             )}
-            style={{ top: s - Math.max(8, s * 0.2), fontSize: Math.max(10, Math.min(13, s * 0.27)), lineHeight: 1.45 }}
+            style={{ top: s / 2 + m.pillTop, fontSize: m.statusFont, lineHeight: 1.45 }}
             aria-hidden="true"
           >
             {status.text}
@@ -194,23 +209,33 @@ export function Seat({ seat, player: p, slot, layout, hero, toAct, actionEndsAt,
             winner ? 'ring-brass' : toAct ? 'ring-brass/70' : 'ring-walnut-600/80',
             faded && 'opacity-70',
           )}
-          style={{ top: s + (status ? Math.max(6, s * 0.16) : 2), width: Math.max(64, s * 2.25), paddingTop: status ? Math.max(4, s * 0.1) : 2 }}
+          style={{ top: status ? s / 2 + m.plateTop : s + 2, width: m.plateW, paddingTop: status ? m.plateTopPad : 2 }}
+          data-compact={compact || undefined}
           aria-hidden="true"
         >
-          <span className="w-full truncate text-center font-semibold text-stock" style={{ fontSize: Math.max(11, Math.min(14, s * 0.29)), lineHeight: 1.25 }}>
-            {p.name}
-          </span>
-          <span className="tabular font-display text-brass-light" style={{ fontSize: Math.max(11, Math.min(16, s * 0.32)), lineHeight: 1.2 }}>
-            {formatChipsShort(p.stack)}
-          </span>
+          {compact ? (
+            <span className="flex w-full items-baseline justify-center gap-1.5" style={{ lineHeight: 1.3 }}>
+              <span className="min-w-0 truncate font-semibold text-stock" style={{ fontSize: m.nameFont }}>{p.name}</span>
+              <span className="tabular shrink-0 font-display text-brass-light" style={{ fontSize: m.stackFont }}>{formatChipsShort(p.stack)}</span>
+            </span>
+          ) : (
+            <>
+              <span className="w-full truncate text-center font-semibold text-stock" style={{ fontSize: m.nameFont, lineHeight: 1.25 }}>
+                {p.name}
+              </span>
+              <span className="tabular font-display text-brass-light" style={{ fontSize: m.stackFont, lineHeight: 1.2 }}>
+                {formatChipsShort(p.stack)}
+              </span>
+            </>
+          )}
           {showPlateTitle && !outcome?.shown && <TitleTag title={title} className="mt-0.5 mb-0.5 max-w-full truncate" />}
-          {outcome?.shown && !hero && (
+          {outcome?.shown && !hero && !compact && (
             <span
               className={cx(
                 'tbl-pop mt-0.5 mb-0.5 max-w-full truncate rounded px-1 text-center font-condensed font-bold',
                 winner ? 'bg-brass text-ink' : 'bg-walnut-800 text-stock-dim',
               )}
-              style={{ fontSize: Math.max(10, Math.min(13, s * 0.26)), lineHeight: 1.35 }}
+              style={{ fontSize: m.tagFont, lineHeight: 1.35 }}
             >
               {outcome.shown.label}
             </span>
@@ -237,7 +262,7 @@ export function EmptySeat({ seat, slot, layout, canSit, blockedReason, onSit }: 
   const s = layout.avatar;
   if (!canSit) {
     return (
-      <li className="absolute" style={{ left: slot.x, top: slot.y }} aria-label={`Seat ${seat + 1}, empty`}>
+      <li className="pointer-events-auto absolute" style={{ left: slot.x, top: slot.y }} aria-label={`Seat ${seat + 1}, empty`}>
         <span
           className="absolute rounded-full border-2 border-dashed border-stock/15 bg-walnut-950/25"
           style={{ width: s * 0.8, height: s * 0.8, left: -s * 0.4, top: -s * 0.4 }}
@@ -246,7 +271,7 @@ export function EmptySeat({ seat, slot, layout, canSit, blockedReason, onSit }: 
     );
   }
   return (
-    <li className="absolute" style={{ left: slot.x, top: slot.y, zIndex: 3 }}>
+    <li className="pointer-events-auto absolute" style={{ left: slot.x, top: slot.y, zIndex: 3 }}>
       <button
         type="button"
         onClick={onSit}
@@ -266,6 +291,3 @@ export function EmptySeat({ seat, slot, layout, canSit, blockedReason, onSit }: 
     </li>
   );
 }
-
-/** Spoken list of cards, e.g. "Ace of spades, King of hearts". */
-export const cardsLabel = (cards: Card[]) => cards.map(cardName).join(', ');

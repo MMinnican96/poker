@@ -1,7 +1,7 @@
 /** Cosmetic renderers driven by the shared shop catalog. All sized by props. */
 export { Felt, type FeltProps } from './Felt';
 export { CardBack, CardBackPattern, CARD_RATIO, type CardBackProps } from './CardBack';
-export { PlayingCard, SuitIcon, cardName, isRedSuit, CARD_WIDTH, SUIT_PATH, type CardSize, type PlayingCardProps } from './PlayingCard';
+export { PlayingCard, cardName, isRedSuit, CARD_WIDTH, SUIT_PATH, type CardSize, type PlayingCardProps } from './PlayingCard';
 export { AvatarFrame, type AvatarFrameProps } from './AvatarFrame';
 export { TitleTag, titleText, type TitleTagProps } from './TitleTag';
 export { CelebrationPreview, celebrationOptions, fireCelebration, prefersReducedMotion, type CelebrationOrigin } from './celebration';

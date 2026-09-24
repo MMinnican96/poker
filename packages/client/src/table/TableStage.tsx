@@ -33,6 +33,14 @@ export function TableStage({ view, canSit, sitBlockedReason, onSit, idle, banner
   const anchor = you.role === 'seated' && you.seat !== null ? you.seat : 0;
   const profile = useProfileCard();
   const [menuFor, setMenuFor] = useState<string | null>(null);
+  // The seat button whose menu is open (clicking it again toggles the menu shut).
+  const menuAnchor = useRef<HTMLElement | null>(null);
+  const closeMenu = () => {
+    const anchorEl = menuAnchor.current;
+    const focusInMenu = !!document.activeElement?.closest('[role="menu"]');
+    setMenuFor(null);
+    if (focusInMenu) anchorEl?.focus();
+  };
 
   const slotOf = (seat: number) => layout.slots[displayIndex(seat, anchor, rules.maxSeats)];
   const seatById = useMemo(() => {
@@ -93,7 +101,7 @@ export function TableStage({ view, canSit, sitBlockedReason, onSit, idle, banner
   };
   const betOf = (id: string): Point | null => {
     const seat = seatById.get(id);
-    return seat === undefined ? null : betPoint(layout, slotOf(seat), id === you.id);
+    return seat === undefined ? null : betPoint(layout, slotOf(seat));
   };
   const menuPlayer = menuFor ? view.seats[seatById.get(menuFor) ?? -1]?.player ?? null : null;
 
@@ -108,7 +116,7 @@ export function TableStage({ view, canSit, sitBlockedReason, onSit, idle, banner
       />
 
       {banner && (
-        <div className="absolute inset-x-0 z-20 flex justify-center px-3" style={{ top: Math.max(4, layout.felt.y + layout.felt.h * 0.1) }}>
+        <div className="pointer-events-none absolute inset-x-0 z-20 flex justify-center px-3" style={{ top: Math.max(4, layout.felt.y + layout.felt.h * 0.1) }}>
           {banner}
         </div>
       )}
@@ -123,13 +131,14 @@ export function TableStage({ view, canSit, sitBlockedReason, onSit, idle, banner
           const blind = hand.street === 'pre-flop' && !result && !player.lastAction ? (hand.bigBlindSeat === seat ? 'BB' : hand.smallBlindSeat === seat ? 'SB' : null) : null;
           return (
             <div key={`m-${seat}`}>
-              {player.committed > 0 && <BetChips at={betPoint(layout, slot, player.id === you.id)} amount={player.committed} name={player.name} size={layout.avatar} blind={blind} />}
-              {hand.buttonSeat === seat && <SeatMarker at={buttonPoint(layout, slot, player.id === you.id)} kind="D" size={layout.avatar} />}
+              {player.committed > 0 && <BetChips at={betPoint(layout, slot)} amount={player.committed} name={player.name} size={layout.avatar} blind={blind} showBlind={!layout.compact} />}
+              {hand.buttonSeat === seat && <SeatMarker at={buttonPoint(layout, slot)} kind="D" size={layout.avatar} />}
             </div>
           );
         })}
 
-      <ol aria-label="Seats" className="absolute inset-0">
+      {/* Full-stage list: clicks must pass through it to the felt (e.g. "Start the game"); each seat takes its own. */}
+      <ol aria-label="Seats" className="pointer-events-none absolute inset-0">
         {view.seats.map(({ seat, player }) => {
           const slot = slotOf(seat);
           if (!player) {
@@ -165,7 +174,11 @@ export function TableStage({ view, canSit, sitBlockedReason, onSit, idle, banner
               resultShowing={!!result}
               highlight={highlight}
               selected={menuFor === player.id}
-              onSelect={() => (hero ? profile.open(player.id) : setMenuFor((m) => (m === player.id ? null : player.id)))}
+              onSelect={(el) => {
+                if (hero) return profile.open(player.id);
+                menuAnchor.current = el;
+                setMenuFor((m) => (m === player.id ? null : player.id));
+              }}
             />
           );
         })}
@@ -175,7 +188,7 @@ export function TableStage({ view, canSit, sitBlockedReason, onSit, idle, banner
         view={view}
         seatPoint={pointOf}
         betPoint={betOf}
-        potPoint={{ x: layout.cx, y: layout.cy - layout.boardCard * 0.9 }}
+        potPoint={{ x: layout.cx, y: layout.potZone.bottom - layout.potFont }}
         gallery={{ x: layout.width - 56, y: Math.max(40, layout.avatar) }}
         avatar={layout.avatar}
       />
@@ -188,7 +201,8 @@ export function TableStage({ view, canSit, sitBlockedReason, onSit, idle, banner
           stage={layout}
           avatar={layout.avatar}
           canThrow={menuPlayer.id !== you.id}
-          onClose={() => setMenuFor(null)}
+          onClose={closeMenu}
+          anchor={menuAnchor}
         />
       )}
     </div>
