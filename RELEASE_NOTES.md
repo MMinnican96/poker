@@ -44,6 +44,9 @@
 
 ### Changed
 
+- Recent hands on the Stats screen line up: your cards, the board and each
+  opponent's cards stay in the same place on every row, however long the hand
+  name is.
 - **More daily and weekly challenges.** The pool grows to 20 daily and 12
   weekly challenges, with 4 daily and 3 weekly at a time, and no two from the
   same family on the same day.
