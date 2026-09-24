@@ -50,6 +50,25 @@ describe('HandRecorder', () => {
     expect(row.xp).toBe(8);
   });
 
+  it("doesn't lose a new player's first hands finishing at several tables at once", async () => {
+    const s = svc();
+    for (let round = 0; round < 5; round++) {
+      const a = await makePlayer(t.db);
+      const b = await makePlayer(t.db);
+      const tables = [randomUUID(), randomUUID(), randomUUID()];
+      await Promise.all([
+        ...tables.map((tid) => s.recorder.recordHand(
+          [fact(tid, a, 1, { result: 'won', chipsWon: 100, netResult: 50 }), fact(tid, b, 1)],
+          history(tid, 1, [a, b]),
+        )),
+        s.recorder.recordSession(a, 1000),
+        s.recorder.recordSession(b, 1000),
+      ]);
+      expect(await s.stats.summary(a)).toMatchObject({ handsPlayed: 3, handsWon: 3, netProfit: 150 });
+      expect(await s.stats.summary(b)).toMatchObject({ handsPlayed: 3 });
+    }
+  });
+
   it('credits a chip reward on level-up', async () => {
     const s = svc();
     const a = await makePlayer(t.db);

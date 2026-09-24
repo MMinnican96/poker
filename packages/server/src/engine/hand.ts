@@ -187,10 +187,12 @@ export function legalActions(state: HandState): LegalActions | null {
   const allInTo = p.committed + p.stack;
   const responders = state.players.filter((o) => o !== p && canAct(o));
   const raiseRightsOpen = !p.acted || state.currentBet - p.actedAtBet >= state.lastRaiseSize;
-  const canRaise = responders.length > 0 && raiseRightsOpen && allInTo > state.currentBet;
-  const minRaiseTo = Math.min(state.currentBet + state.lastRaiseSize, allInTo);
   // Beyond what any opponent can match, extra chips would only be returned.
   const cover = Math.max(0, ...responders.map((o) => o.committed + o.stack));
+  // A raise needs someone who can put in more than the current bet; otherwise it
+  // is only a call with chips that would come straight back.
+  const canRaise = responders.length > 0 && raiseRightsOpen && allInTo > state.currentBet && cover > state.currentBet;
+  const minRaiseTo = Math.min(state.currentBet + state.lastRaiseSize, allInTo);
   const maxRaiseTo = Math.min(allInTo, Math.max(cover, minRaiseTo));
   return {
     canFold: true,

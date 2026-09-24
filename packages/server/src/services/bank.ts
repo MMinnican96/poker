@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, ne, sql, type SQL } from 'drizzle-orm';
 import type { Db, DbOrTx } from '../db/client.js';
-import { chipTransactions, players, tableSeats } from '../db/schema.js';
+import { chipTransactions, players, serverLeases, tableSeats } from '../db/schema.js';
 
 export const STARTING_CHIPS = 10_000;
 
@@ -11,14 +11,23 @@ export type LedgerType =
 
 export type BankResult<T = object> = ({ ok: true } & T) | { ok: false; error: string };
 
+/** A seat whose lease hasn't heartbeat for this long belongs to a dead process. */
+export const LEASE_STALE_MS = 60_000;
+
 /**
  * The chip bank. Chips live in exactly one place at a time: a player's bankroll
  * (`players.chip_balance`) or a table seat in escrow (`table_seats.stack`). Every
  * movement is a single transaction that also writes a ledger row, so the two can
  * never disagree, and nothing here can drive a balance negative.
+ *
+ * Lock order is always player row first, then seat row, so concurrent
+ * movements for one player can never deadlock.
+ *
+ * `leaseId` is this process's server lease: seats it opens carry it, and
+ * recovery never touches them.
  */
 export class Bank {
-  constructor(private readonly db: Db) {}
+  constructor(private readonly db: Db, readonly leaseId: string | null = null) {}
 
   /** Create the player on first sight (with starting chips); refresh name/avatar after. */
   async ensurePlayer(input: { id: string; name: string; avatarUrl: string | null }) {
@@ -51,6 +60,7 @@ export class Bank {
       const seatId = randomUUID();
       await tx.insert(tableSeats).values({
         id: seatId, tableId: input.tableId, playerId: input.playerId, stack: input.amount, boughtIn: input.amount,
+        leaseId: this.leaseId,
       });
       const next = await move(tx, input.playerId, -input.amount, 'buy-in', `buyin:${seatId}`);
       return { ok: true, balance: next, seatId };
@@ -58,15 +68,13 @@ export class Bank {
   }
 
   /** Add chips from the bankroll to an open seat. */
-  async topUp(input: { tableId: string; playerId: string; amount: number }): Promise<BankResult<{ balance: number; stack: number }>> {
+  async topUp(input: { seatId: string; playerId: string; amount: number }): Promise<BankResult<{ balance: number; stack: number }>> {
     if (!Number.isInteger(input.amount) || input.amount <= 0) return { ok: false, error: 'Top-up must be a positive whole number.' };
     return this.db.transaction(async (tx) => {
       const balance = await lockBalance(tx, input.playerId);
       if (balance === null) return { ok: false, error: 'Unknown player.' };
       if (balance < input.amount) return { ok: false, error: "You don't have enough chips to add that many." };
-      const [seat] = await tx.select().from(tableSeats)
-        .where(and(eq(tableSeats.tableId, input.tableId), eq(tableSeats.playerId, input.playerId), eq(tableSeats.status, 'open')))
-        .for('update');
+      const seat = await lockOpenSeat(tx, input.seatId, input.playerId);
       if (!seat) return { ok: false, error: 'You have no seat at this table.' };
       const [updated] = await tx.update(tableSeats)
         .set({ stack: seat.stack + input.amount, boughtIn: seat.boughtIn + input.amount })
@@ -78,31 +86,31 @@ export class Bank {
   }
 
   /**
-   * Record every open seat's stack after a hand. Absolute values, so a failed
-   * checkpoint is repaired by the next one.
+   * Record open seats' stacks after a hand. Absolute values, so a failed
+   * checkpoint is repaired by the next one. Closed seats are left alone.
    */
-  async checkpoint(tableId: string, handNumber: number, stacks: { playerId: string; stack: number }[]): Promise<void> {
+  async checkpoint(handNumber: number, stacks: { seatId: string; stack: number }[]): Promise<void> {
     if (stacks.length === 0) return;
+    const ordered = [...stacks].sort((a, b) => (a.seatId < b.seatId ? -1 : a.seatId > b.seatId ? 1 : 0));
     await this.db.transaction(async (tx) => {
-      for (const s of stacks) {
+      for (const s of ordered) {
         await tx.update(tableSeats)
           .set({ stack: s.stack, lastHand: handNumber })
-          .where(and(eq(tableSeats.tableId, tableId), eq(tableSeats.playerId, s.playerId), eq(tableSeats.status, 'open')));
+          .where(and(eq(tableSeats.id, s.seatId), eq(tableSeats.status, 'open')));
       }
     });
   }
 
   /**
-   * Close the player's open seat and credit `stack` to their bankroll. Safe to
-   * call twice: the second call finds no open seat and changes nothing.
+   * Close the seat and credit `stack` to its player's bankroll. Safe to call
+   * twice (or to retry after an error whose commit did land): the second call
+   * finds the seat closed and changes nothing — it can never touch a newer seat.
    */
-  async cashOut(input: { tableId: string; playerId: string; stack: number }): Promise<BankResult<{ balance: number; amount: number }>> {
+  async cashOut(input: { seatId: string; playerId: string; stack: number }): Promise<BankResult<{ balance: number; amount: number }>> {
     return this.db.transaction(async (tx) => {
-      const [seat] = await tx.select().from(tableSeats)
-        .where(and(eq(tableSeats.tableId, input.tableId), eq(tableSeats.playerId, input.playerId), eq(tableSeats.status, 'open')))
-        .for('update');
-      if (!seat) return { ok: false, error: 'No open seat.' };
       await lockBalance(tx, input.playerId);
+      const seat = await lockOpenSeat(tx, input.seatId, input.playerId);
+      if (!seat) return { ok: false, error: 'No open seat.' };
       const amount = Math.max(0, input.stack);
       await tx.update(tableSeats)
         .set({ status: 'closed', stack: amount, closedAt: new Date() })
@@ -115,24 +123,48 @@ export class Bank {
   }
 
   /**
-   * Refund every seat still open — called at boot, when no table is live, so any
-   * open seat belongs to a process that died. Refunds the last checkpoint (the
-   * interrupted hand is voided).
+   * Refund every open seat whose server process is gone: its lease is missing,
+   * hasn't heartbeat for `staleMs`, or the seat predates leases. Refunds the
+   * last checkpoint (the interrupted hand is voided). Seats of this process and
+   * of any process still heartbeating are never touched, so this is safe to run
+   * at boot and periodically while other instances are live.
    */
-  async recoverOpenSeats(): Promise<{ seats: number; chips: number }> {
-    const open = await this.db.select().from(tableSeats).where(eq(tableSeats.status, 'open'));
+  async recoverOpenSeats(opts: { staleMs?: number } = {}): Promise<{ seats: number; chips: number }> {
+    const staleMs = opts.staleMs ?? LEASE_STALE_MS;
+    const orphaned = this.orphanedSeat(staleMs);
+    const open = await this.db.select({ id: tableSeats.id, playerId: tableSeats.playerId }).from(tableSeats)
+      .where(and(eq(tableSeats.status, 'open'), orphaned));
+    let seats = 0;
     let chips = 0;
     for (const seat of open) {
       await this.db.transaction(async (tx) => {
-        const [locked] = await tx.select().from(tableSeats).where(eq(tableSeats.id, seat.id)).for('update');
-        if (!locked || locked.status !== 'open') return;
         await lockBalance(tx, seat.playerId);
+        // Re-check under the row lock: the seat may have been cashed out, or its
+        // process may have heartbeat, since the scan.
+        const [locked] = await tx.select().from(tableSeats)
+          .where(and(eq(tableSeats.id, seat.id), eq(tableSeats.status, 'open'), this.orphanedSeat(staleMs)))
+          .for('update');
+        if (!locked) return;
         await tx.update(tableSeats).set({ status: 'closed', closedAt: new Date() }).where(eq(tableSeats.id, seat.id));
         if (locked.stack > 0) await move(tx, seat.playerId, locked.stack, 'recovery', `recovery:${seat.id}`);
+        seats += 1;
         chips += locked.stack;
       });
     }
-    return { seats: open.length, chips };
+    // Forget dead processes that no longer own any open seat.
+    await this.db.delete(serverLeases).where(and(
+      sql`${serverLeases.heartbeatAt} < now() - make_interval(secs => ${staleMs / 1000}::double precision)`,
+      sql`not exists (select 1 from ${tableSeats} where ${tableSeats.leaseId} = ${serverLeases.id} and ${tableSeats.status} = 'open')`,
+      this.leaseId ? ne(serverLeases.id, this.leaseId) : undefined,
+    ));
+    return { seats, chips };
+  }
+
+  /** SQL condition: the `table_seats` row belongs to no live process (and never to this one). */
+  private orphanedSeat(staleMs: number): SQL {
+    const live = sql`exists (select 1 from ${serverLeases} where ${serverLeases.id} = ${tableSeats.leaseId} and ${serverLeases.heartbeatAt} > now() - make_interval(secs => ${staleMs / 1000}::double precision))`;
+    const notMine = this.leaseId ? sql` and ${tableSeats.leaseId} is distinct from ${this.leaseId}::uuid` : sql``;
+    return sql`((${tableSeats.leaseId} is null or not ${live})${notMine})`;
   }
 
   /** Credit chips once per idempotency key (rewards, grants). */
@@ -159,6 +191,14 @@ export async function lockBalance(tx: DbOrTx, playerId: string): Promise<number 
   const [row] = await tx.select({ b: players.chipBalance }).from(players)
     .where(eq(players.discordUserId, playerId)).for('update');
   return row ? row.b : null;
+}
+
+/** Lock an open seat by id (after the player row); null if closed or not theirs. */
+async function lockOpenSeat(tx: DbOrTx, seatId: string, playerId: string) {
+  const [seat] = await tx.select().from(tableSeats)
+    .where(and(eq(tableSeats.id, seatId), eq(tableSeats.playerId, playerId), eq(tableSeats.status, 'open')))
+    .for('update');
+  return seat ?? null;
 }
 
 async function currentBalance(tx: DbOrTx, playerId: string): Promise<number> {

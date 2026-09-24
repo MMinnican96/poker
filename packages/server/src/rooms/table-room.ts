@@ -100,6 +100,8 @@ interface Member {
   player: PublicPlayer;
   role: 'seated' | 'spectator';
   seat: number | null;
+  /** The escrow row (`table_seats.id`) holding this member's chips while seated. */
+  seatId: string | null;
   /** Chips at the table (between hands; during a hand the engine is authoritative). */
   stack: number;
   sittingOut: boolean;
@@ -143,7 +145,7 @@ export class TableRoom {
   private dealTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly sweepTimer: ReturnType<typeof setInterval>;
   /** Cash-outs that failed (e.g. DB unavailable) and are retried each boundary. */
-  private readonly retryCashouts: { playerId: string; stack: number }[] = [];
+  private readonly retryCashouts: { seatId: string; playerId: string; stack: number }[] = [];
 
   constructor(
     readonly instanceId: string,
@@ -199,13 +201,25 @@ export class TableRoom {
       this.sendTo(player.id);
       return OK;
     }
-    this.members.set(player.id, {
-      player, role: 'spectator', seat: null, stack: 0, sittingOut: false, pending: null, pendingTopUp: 0,
+    // Insert before any await: a second concurrent watch/take-seat must find this
+    // member rather than create (and later overwrite it with) another one.
+    const m: Member = {
+      player, role: 'spectator', seat: null, seatId: null, stack: 0, sittingOut: false, pending: null, pendingTopUp: 0,
       connected: true, disconnectedAt: null, seatedAt: 0, timeouts: 0,
-      emotes: emotesFor(await this.deps.shop.owned(player.id)),
-    });
+      emotes: emotesFor({}),
+    };
+    this.members.set(player.id, m);
     this.broadcast();
     this.deps.hooks.changed();
+    try {
+      const owned = await this.deps.shop.owned(player.id);
+      if (this.members.get(player.id) === m) {
+        m.emotes = emotesFor(owned);
+        this.sendTo(player.id);
+      }
+    } catch (err) {
+      this.log('loading emotes failed', err);
+    }
     return OK;
   }
 
@@ -234,8 +248,24 @@ export class TableRoom {
       try {
         const r = await this.deps.bank.buyIn({ tableId: this.tableId, playerId, amount: buyIn });
         if (!r.ok) return fail(r.error);
+        // The chips are in escrow now, so this member must stay on the books even
+        // if they disconnected (or re-joined) while the buy-in was in flight.
+        const current = this.members.get(playerId);
+        if (current !== m) {
+          if (current) {
+            m.player = current.player;
+            m.connected = current.connected;
+            m.disconnectedAt = current.disconnectedAt;
+            m.emotes = current.emotes;
+          } else {
+            m.connected = false;
+            m.disconnectedAt = this.clock();
+          }
+          this.members.set(playerId, m);
+        }
         m.role = 'seated';
         m.seat = seat;
+        m.seatId = r.seatId;
         m.stack = buyIn;
         m.sittingOut = false;
         m.pending = null;
@@ -258,24 +288,29 @@ export class TableRoom {
 
   /** Add chips before the next hand (up to the maximum buy-in). */
   async topUp(playerId: string, amount: number): Promise<Result> {
-    const m = this.members.get(playerId);
-    if (!m || m.role !== 'seated') return fail('Take a seat first.');
     if (!Number.isInteger(amount) || amount <= 0) return fail('Add a whole number of chips.');
-    const stack = this.liveStack(m);
-    if (stack + m.pendingTopUp + amount > this.rules.maxBuyIn) {
-      return fail(`You can have at most ${formatChips(this.rules.maxBuyIn)} chips at this table.`);
-    }
-    if (this.inHand(playerId) || this.boundary) {
-      m.pendingTopUp += amount;
-      this.broadcast();
-      return OK;
-    }
-    return this.serial.run(() => this.applyTopUp(m, amount));
+    // Checked and applied in the queue, so concurrent top-ups see each other and
+    // a hand can't be dealt while the chips are moving.
+    return this.serial.run(async () => {
+      const m = this.members.get(playerId);
+      if (!m || m.role !== 'seated') return fail('Take a seat first.');
+      if (this.liveStack(m) + m.pendingTopUp + amount > this.rules.maxBuyIn) {
+        return fail(`You can have at most ${formatChips(this.rules.maxBuyIn)} chips at this table.`);
+      }
+      if (this.inHand(playerId) || this.boundary) {
+        m.pendingTopUp += amount;
+        this.broadcast();
+        return OK;
+      }
+      return this.applyTopUp(m, amount);
+    });
   }
 
+  /** Move chips onto a seat. Runs inside the serial queue. */
   private async applyTopUp(m: Member, amount: number): Promise<Result> {
+    if (!m.seatId) return fail('Take a seat first.');
     try {
-      const r = await this.deps.bank.topUp({ tableId: this.tableId, playerId: m.player.id, amount });
+      const r = await this.deps.bank.topUp({ seatId: m.seatId, playerId: m.player.id, amount });
       if (!r.ok) {
         this.deps.hooks.notice(m.player.id, { tone: 'bad', title: 'Chips not added', body: r.error });
         return fail(r.error);
@@ -293,30 +328,36 @@ export class TableRoom {
 
   /** Stand up to watch. Waits for the hand to end if you're in it. */
   async standUp(playerId: string): Promise<Result> {
-    const m = this.members.get(playerId);
-    if (!m || m.role !== 'seated') return fail("You're not seated.");
-    if (this.inHand(playerId) || this.boundary) {
-      m.pending = 'stand';
-      this.broadcast();
+    // Decided inside the queue: a deal queued ahead of us may have put them in a
+    // hand, and a deal queued behind us must not see them half cashed out.
+    return this.serial.run(async () => {
+      const m = this.members.get(playerId);
+      if (!m || m.role !== 'seated') return fail("You're not seated.");
+      if (this.inHand(playerId) || this.boundary) {
+        m.pending = 'stand';
+        this.broadcast();
+        return OK;
+      }
+      await this.release(m, 'stand');
+      this.afterMembershipChange();
       return OK;
-    }
-    await this.serial.run(() => this.release(m, 'stand'));
-    this.afterMembershipChange();
-    return OK;
+    });
   }
 
   /** Leave for the lobby. Seated players in a hand leave when it ends. */
   async leave(playerId: string): Promise<Result> {
-    const m = this.members.get(playerId);
-    if (!m) return fail("You're not at the table.");
-    if (m.role === 'seated' && (this.inHand(playerId) || this.boundary)) {
-      m.pending = 'leave';
-      this.broadcast();
+    return this.serial.run(async () => {
+      const m = this.members.get(playerId);
+      if (!m) return fail("You're not at the table.");
+      if (m.role === 'seated' && (this.inHand(playerId) || this.boundary)) {
+        m.pending = 'leave';
+        this.broadcast();
+        return OK;
+      }
+      await this.release(m, 'leave');
+      this.afterMembershipChange();
       return OK;
-    }
-    await this.serial.run(() => this.release(m, 'leave'));
-    this.afterMembershipChange();
-    return OK;
+    });
   }
 
   setSittingOut(playerId: string, sittingOut: boolean): Result {
@@ -343,9 +384,24 @@ export class TableRoom {
   // Host controls
   // -------------------------------------------------------------------------
 
-  updateRules(playerId: string, patch: Partial<TableRules>): Result {
-    if (playerId !== this.hostId) return fail('Only the host can change the rules.');
-    if (this.status !== 'open') return fail('Rules are locked once the game starts.');
+  async updateRules(playerId: string, patch: Partial<TableRules>): Promise<Result> {
+    const check = (): Result | null => {
+      if (this.closed) return fail('This table has closed.');
+      if (playerId !== this.hostId) return fail('Only the host can change the rules.');
+      if (this.status !== 'open') return fail('Rules are locked once the game starts.');
+      return null;
+    };
+    const blocked = check();
+    if (blocked) return blocked;
+    const early = validateRules(patch, this.rules);
+    if (!early.ok) return early;
+    // A new felt must be one the host owns (as when opening the table).
+    if (early.rules.feltId !== this.rules.feltId && !(await this.deps.shop.owns(playerId, early.rules.feltId))) {
+      return fail("You don't own that felt.");
+    }
+    // Re-check after the await: host, status or rules may have changed meanwhile.
+    const late = check();
+    if (late) return late;
     const r = validateRules(patch, this.rules);
     if (!r.ok) return r;
     const highest = Math.max(-1, ...[...this.members.values()].map((m) => m.seat ?? -1));
@@ -469,10 +525,13 @@ export class TableRoom {
     }
     this.dealTimer = setTimeout(() => {
       this.dealTimer = null;
-      this.deal();
+      // Through the queue: a hand is never dealt while chips are moving for
+      // anyone at the table (buy-ins, top-ups, cash-outs, checkpoints).
+      void this.serial.run(() => this.deal()).catch((err) => this.log('dealing failed', err));
     }, immediate ? 0 : this.timing.handGapMs);
   }
 
+  /** Deal the next hand. Runs inside the serial queue; eligibility is re-checked here. */
   private deal(): void {
     if (this.hand || this.boundary || this.closed || this.closing) return;
     const players = this.eligible();
@@ -566,12 +625,15 @@ export class TableRoom {
     const now = this.clock();
     const facts = buildHandFacts({ state, tableId: this.tableId, startedAt: this.handStartedAt, now });
     const history = buildHistory(state, this.tableId);
-    const stacks = state.players.map((p) => ({ playerId: p.id, stack: p.stack }));
+    const stacks = state.players.flatMap((p) => {
+      const seatId = this.members.get(p.id)?.seatId;
+      return seatId ? [{ seatId, stack: p.stack }] : [];
+    });
     const hold = result.wentToShowdown ? this.timing.showdownMs : this.timing.foldWinMs;
 
     const persisted = this.serial.run(async () => {
       try {
-        await this.deps.bank.checkpoint(this.tableId, state.handNumber, stacks);
+        await this.deps.bank.checkpoint(state.handNumber, stacks);
       } catch (err) {
         this.log('checkpoint failed', err);
       }
@@ -593,9 +655,15 @@ export class TableRoom {
     this.announce(hand);
 
     await Promise.all([persisted, sleep(hold)]);
-    await this.serial.run(() => this.resolveBoundary());
-    if (this.hand === hand) this.hand = null;
-    this.boundary = false;
+    // Leave the boundary in the same queued step that resolves it, so a request
+    // queued behind it sees "between hands" and applies at once rather than
+    // being deferred to a boundary that has already passed.
+    await this.serial.run(async () => {
+      await this.resolveBoundary();
+      if (this.hand === hand) this.hand = null;
+      this.boundary = false;
+    });
+    if (this.closed) return;
     if (this.closing) {
       await this.closeNow('The host closed the table.');
       return;
@@ -637,9 +705,25 @@ export class TableRoom {
       if (m.pending === 'leave') { await this.release(m, 'leave'); continue; }
       if (m.pending === 'stand') { await this.release(m, 'stand'); continue; }
       if (m.pendingTopUp > 0) {
-        const amount = m.pendingTopUp;
+        const requested = m.pendingTopUp;
         m.pendingTopUp = 0;
-        await this.applyTopUp(m, amount);
+        // Queued against the stack behind mid-hand; a pot won since may leave less room.
+        const room = Math.max(0, this.rules.maxBuyIn - m.stack);
+        const amount = Math.min(requested, room);
+        if (amount <= 0) {
+          this.deps.hooks.notice(m.player.id, {
+            tone: 'info', title: 'Chips not added',
+            body: `You already have the table maximum of ${formatChips(this.rules.maxBuyIn)} chips.`,
+          });
+        } else {
+          if (amount < requested) {
+            this.deps.hooks.notice(m.player.id, {
+              tone: 'info', title: 'Top-up reduced',
+              body: `Added ${formatChips(amount)} instead of ${formatChips(requested)} to stay within the ${formatChips(this.rules.maxBuyIn)} table maximum.`,
+            });
+          }
+          await this.applyTopUp(m, amount);
+        }
       }
       if (m.stack <= 0) { await this.release(m, 'bust'); continue; }
       if (!m.connected) {
@@ -653,17 +737,22 @@ export class TableRoom {
 
   /** Idle tables still need to clear out players who disconnected. */
   private async sweep(): Promise<void> {
-    if (this.closed || this.hand || this.boundary) return;
-    const now = this.clock();
-    const gone = [...this.members.values()].filter(
-      (m) => m.role === 'seated' && !m.connected && m.disconnectedAt !== null && now - m.disconnectedAt >= this.timing.disconnectStandMs,
-    );
-    if (gone.length === 0 && this.retryCashouts.length === 0) return;
-    await this.serial.run(async () => {
+    const idle = () => !this.closed && !this.hand && !this.boundary;
+    const gone = () => {
+      const now = this.clock();
+      return [...this.members.values()].filter(
+        (m) => m.role === 'seated' && !m.connected && m.disconnectedAt !== null && now - m.disconnectedAt >= this.timing.disconnectStandMs,
+      );
+    };
+    if (!idle() || (gone().length === 0 && this.retryCashouts.length === 0)) return;
+    const changed = await this.serial.run(async () => {
+      // Re-check in the queue: a hand may have been dealt since.
+      if (!idle()) return false;
       await this.retryFailedCashouts();
-      for (const m of gone) if (this.members.get(m.player.id) === m) await this.release(m, 'leave');
+      for (const m of gone()) if (this.members.get(m.player.id) === m) await this.release(m, 'leave');
+      return true;
     });
-    this.afterMembershipChange();
+    if (changed) this.afterMembershipChange();
   }
 
   /**
@@ -674,16 +763,20 @@ export class TableRoom {
     const id = m.player.id;
     if (m.role === 'seated') {
       const stack = m.stack;
-      try {
-        const r = await this.deps.bank.cashOut({ tableId: this.tableId, playerId: id, stack });
-        if (!r.ok) this.log(`cash-out for ${id}: ${r.error}`);
-      } catch (err) {
-        this.log('cash-out failed; will retry', err);
-        this.retryCashouts.push({ playerId: id, stack });
+      const seatId = m.seatId;
+      if (seatId) {
+        try {
+          const r = await this.deps.bank.cashOut({ seatId, playerId: id, stack });
+          if (!r.ok) this.log(`cash-out for ${id}: ${r.error}`);
+        } catch (err) {
+          this.log('cash-out failed; will retry', err);
+          this.retryCashouts.push({ seatId, playerId: id, stack });
+        }
       }
       void this.deps.recorder.recordSession(id, this.clock() - m.seatedAt).catch((err) => this.log('session record failed', err));
       m.role = 'spectator';
       m.seat = null;
+      m.seatId = null;
       m.stack = 0;
       m.sittingOut = false;
       m.pendingTopUp = 0;
@@ -702,7 +795,7 @@ export class TableRoom {
     const pending = this.retryCashouts.splice(0);
     for (const c of pending) {
       try {
-        await this.deps.bank.cashOut({ tableId: this.tableId, ...c });
+        await this.deps.bank.cashOut(c);
         this.deps.hooks.balanceChanged(c.playerId);
       } catch (err) {
         this.log('cash-out retry failed', err);
@@ -745,7 +838,21 @@ export class TableRoom {
     this.deps.hooks.closed();
   }
 
-  /** Stop timers (tests / shutdown). Does not cash anyone out. */
+  /**
+   * Server shutdown: cash everyone out now and close. A hand in progress is
+   * voided — until it completes, each member's `stack` is still their pre-hand
+   * stack (the last checkpoint), which is what they get back.
+   */
+  async shutdown(reason = 'The server is restarting. Your chips are back in your bankroll.'): Promise<void> {
+    if (this.closed) {
+      await this.serial.idle();
+      return;
+    }
+    if (this.hand && this.hand.state.phase !== 'complete') this.hand = null;
+    await this.closeNow(reason);
+  }
+
+  /** Stop timers (tests). Does not cash anyone out. */
   dispose(): void {
     this.closed = true;
     this.clearTimers();

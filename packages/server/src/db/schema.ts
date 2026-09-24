@@ -63,10 +63,22 @@ export const chipTransactions = pgTable(
 );
 
 /**
+ * server_leases — one row per running server process (id = its boot id), kept
+ * alive by a heartbeat. Seats opened by a process carry its lease, so recovery
+ * only refunds seats whose process has stopped heartbeating — never those of a
+ * process still serving them (e.g. the old instance during a rolling deploy).
+ */
+export const serverLeases = pgTable('server_leases', {
+  id: uuid('id').primaryKey(),
+  startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+  heartbeatAt: timestamp('heartbeat_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
  * table_seats — chips in escrow at a table. A buy-in moves chips from the
  * bankroll into an open seat row; every hand checkpoints the stack; cashing out
- * closes the row and credits the bankroll. Open rows left behind by a crashed
- * process are refunded at boot.
+ * closes the row and credits the bankroll. Open rows whose process lease has
+ * gone stale (or that predate leases) are refunded by recovery.
  */
 export const tableSeats = pgTable(
   'table_seats',
@@ -80,6 +92,8 @@ export const tableSeats = pgTable(
     lastHand: integer('last_hand').notNull().default(0),
     openedAt: timestamp('opened_at', { withTimezone: true }).notNull().defaultNow(),
     closedAt: timestamp('closed_at', { withTimezone: true }),
+    /** The server process (lease) that opened the seat; null for legacy rows. */
+    leaseId: uuid('lease_id'),
   },
   (t) => [
     uniqueIndex('table_seats_open_unique').on(t.tableId, t.playerId).where(sql`status = 'open'`),

@@ -119,6 +119,18 @@ describe('betting rules', () => {
     expect(b.lastAction).toEqual({ type: 'call', amount: 300 });
   });
 
+  it('offers no raise when no opponent can put in more than the current bet', () => {
+    // X button, P small blind, Q big blind with 60 in total, A shoves 500 from UTG.
+    const h = setupHand({ players: [['X', 1, 5000], ['P', 2, 5000], ['Q', 3, 60], ['A', 4, 500]], buttonSeat: 1 });
+    play(h, ['A', 'all-in'], ['X', 'fold']);
+    expect(toAct(h)).toBe('P');
+    expect(legalActions(h.state)).toMatchObject({ canRaise: false, callAmount: 475 });
+    expect(applyAction(h, 'P', { type: 'all-in' })).toEqual({ ok: true });
+    const p = h.state.players.find((x) => x.id === 'P')!;
+    expect(p.lastAction).toEqual({ type: 'call', amount: 500 });
+    expect(p.allIn).toBe(false);
+  });
+
   it('caps a raise at what the deepest opponent can call', () => {
     const h = setupHand({ players: [['a', 0, 5000], ['b', 1, 800], ['c', 2, 600]], buttonSeat: 0 });
     const legal = legalActions(h.state)!;

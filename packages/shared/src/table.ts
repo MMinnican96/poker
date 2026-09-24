@@ -53,11 +53,23 @@ export type RulesResult = { ok: true; rules: TableRules } | { ok: false; error: 
 const isInt = (n: unknown): n is number => typeof n === 'number' && Number.isInteger(n);
 
 /**
- * Merge a patch onto base rules and validate the result as a whole. Unknown or
- * mistyped fields are rejected rather than silently ignored.
+ * Merge a patch onto base rules and validate the result as a whole. Mistyped
+ * fields are rejected rather than silently ignored, and the result holds only
+ * the known rule fields (anything else in the patch is dropped).
  */
 export function validateRules(patch: Partial<TableRules>, base: TableRules = DEFAULT_RULES): RulesResult {
-  const r: TableRules = { ...base, ...patch };
+  const m = { ...base, ...patch };
+  const r: TableRules = {
+    name: m.name,
+    smallBlind: m.smallBlind,
+    bigBlind: m.bigBlind,
+    ante: m.ante,
+    minBuyIn: m.minBuyIn,
+    maxBuyIn: m.maxBuyIn,
+    maxSeats: m.maxSeats,
+    turnSeconds: m.turnSeconds,
+    feltId: m.feltId,
+  };
   const L = RULE_LIMITS;
   if (typeof r.name !== 'string') return { ok: false, error: 'Table name must be text.' };
   r.name = r.name.replace(/\s+/g, ' ').trim();

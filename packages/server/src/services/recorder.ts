@@ -81,7 +81,10 @@ export class HandRecorder {
   }
 
   private async updateAggregates(tx: DbOrTx, fresh: PlayerHandStat[]): Promise<void> {
-    const ids = [...new Set(fresh.map((f) => f.playerId))];
+    const ids = [...new Set(fresh.map((f) => f.playerId))].sort();
+    // Make sure every row exists before locking: a missing row can't be locked,
+    // so two tables finishing a new player's first hands at once would race.
+    await ensureStatsRows(tx, ids);
     const rows = await tx.select().from(playerStats).where(inArray(playerStats.playerId, ids)).for('update');
     const byId = new Map(rows.map((r) => [r.playerId, rowToAggregate(r)]));
     for (const f of fresh) byId.set(f.playerId, addFact(byId.get(f.playerId) ?? emptyAggregate(), f));
@@ -149,7 +152,14 @@ export async function grantXp(tx: DbOrTx, playerId: string, xp: number): Promise
   return row ? applyLevelUps(tx, playerId, row.xp - xp, row.xp) : [];
 }
 
+/** Insert empty aggregate rows for players who have none yet (no-op otherwise). */
+async function ensureStatsRows(tx: DbOrTx, ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  await tx.insert(playerStats).values(ids.map((playerId) => ({ playerId }))).onConflictDoNothing({ target: playerStats.playerId });
+}
+
 async function loadAggregate(tx: DbOrTx, playerId: string): Promise<AggregateState> {
+  await ensureStatsRows(tx, [playerId]);
   const [row] = await tx.select().from(playerStats).where(eq(playerStats.playerId, playerId)).for('update');
   return row ? rowToAggregate(row) : emptyAggregate();
 }

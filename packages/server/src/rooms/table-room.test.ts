@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { DEFAULT_RULES, type TableRules } from '@poker/shared';
+import { getPlayerRow, toPublic } from '../services/players.js';
 import { useTestDb } from '../test/db.js';
 import { Harness, waitFor } from '../test/table-harness.js';
 
@@ -232,14 +234,26 @@ describe('top-ups and host controls', () => {
 
   it('locks rules once running and validates changes', async () => {
     const h = await setup(2);
-    expect(h.table.updateRules(h.ids[0], { turnSeconds: 45 })).toEqual({ ok: true });
-    expect(h.table.updateRules(h.ids[0], { turnSeconds: 7 })).toMatchObject({ ok: false });
-    expect(h.table.updateRules(h.ids[1], { turnSeconds: 45 })).toMatchObject({ ok: false });
+    expect(await h.table.updateRules(h.ids[0], { turnSeconds: 45 })).toEqual({ ok: true });
+    expect(await h.table.updateRules(h.ids[0], { turnSeconds: 7 })).toMatchObject({ ok: false });
+    expect(await h.table.updateRules(h.ids[1], { turnSeconds: 45 })).toMatchObject({ ok: false });
     await h.seat(0, 5);
-    expect(h.table.updateRules(h.ids[0], { maxSeats: 4 })).toMatchObject({ ok: false });
+    expect(await h.table.updateRules(h.ids[0], { maxSeats: 4 })).toMatchObject({ ok: false });
     await h.seat(1, 1);
     h.table.start(h.ids[0]);
-    expect(h.table.updateRules(h.ids[0], { turnSeconds: 60 })).toMatchObject({ ok: false });
+    expect(await h.table.updateRules(h.ids[0], { turnSeconds: 60 })).toMatchObject({ ok: false });
+  });
+
+  it("only lets the host switch to a felt they own, and keeps only known rule fields", async () => {
+    const h = await setup(1);
+    expect(await h.table.updateRules(h.ids[0], { feltId: 'felt-oxblood' })).toEqual({ ok: false, error: "You don't own that felt." });
+    expect(h.view(0).rules.feltId).toBe('felt-classic');
+    await h.services.bank.credit({ playerId: h.ids[0], amount: 10_000, type: 'grant', key: `felt:${h.ids[0]}` });
+    expect(await h.services.shop.purchase(h.ids[0], 'felt-oxblood', 'nonce-felt0001')).toMatchObject({ ok: true });
+    const patch = { feltId: 'felt-oxblood', evil: '<script>' } as unknown as Partial<TableRules>;
+    expect(await h.table.updateRules(h.ids[0], patch)).toEqual({ ok: true });
+    expect(h.view(0).rules.feltId).toBe('felt-oxblood');
+    expect(Object.keys(h.view(0).rules).sort()).toEqual(Object.keys(DEFAULT_RULES).sort());
   });
 
   it('closes after the current hand and cashes everyone out', async () => {
@@ -269,5 +283,190 @@ describe('emotes and throwables', () => {
     expect(await h.table.throwItem(h.ids[0], 'throw-tomato', h.ids[1])).toEqual({ ok: true });
     expect((await h.services.shop.owned(h.ids[0]))['throw-tomato']).toBe(4);
     expect(h.fx).toHaveLength(2);
+  });
+});
+
+/** Make a bank method take `ms` longer, to widen race windows. */
+function slow<K extends 'buyIn' | 'topUp' | 'cashOut'>(h: Harness, method: K, ms = 30): void {
+  const bank = h.services.bank as unknown as Record<K, (input: unknown) => Promise<unknown>>;
+  const original = bank[method].bind(h.services.bank);
+  bank[method] = async (input: unknown) => {
+    await new Promise((r) => setTimeout(r, ms));
+    return original(input);
+  };
+}
+
+/** The dealt-in engine players of the current hand (id -> stack + committed). */
+function dealt(h: Harness): Map<string, number> {
+  const hand = (h.table as unknown as { hand: { state: { players: { id: string; stack: number; total: number }[] } } | null }).hand;
+  return new Map((hand?.state.players ?? []).map((p) => [p.id, p.stack + p.total]));
+}
+
+describe('bank operations racing the deal', () => {
+  it('deals a player whose top-up is in flight with the topped-up stack, losing no chips', async () => {
+    const h = await setup(2);
+    await h.seat(0, 0, 2000);
+    await h.seat(1, 1, 2000);
+    const before = await h.chipsInPlay();
+    slow(h, 'topUp');
+    const topUp = h.table.topUp(h.ids[0], 1000);
+    h.table.start(h.ids[0]); // the deal timer fires while the top-up is still in the bank
+    expect(await topUp).toEqual({ ok: true });
+    await waitFor(() => h.toAct() !== null);
+    expect(dealt(h).get(h.ids[0])).toBe(3000);
+    h.table.act(h.toAct()!, { type: 'fold' });
+    await waitFor(() => h.view(0).handsDealt >= 2 && h.toAct() !== null, 3000, 'second hand');
+    await h.table.settled();
+    expect(await h.chipsInPlay()).toBe(before);
+    expect((await h.services.bank.escrowed(h.ids[0])) + (await h.services.bank.escrowed(h.ids[1]))).toBe(5000);
+  });
+
+  for (const how of ['standUp', 'leave'] as const) {
+    it(`never deals in a player whose ${how} cash-out is in flight`, async () => {
+      const h = await setup(3);
+      await h.seat(0, 0, 2000);
+      await h.seat(1, 1, 2000);
+      await h.seat(2, 2, 2000);
+      const before = await h.chipsInPlay();
+      slow(h, 'cashOut');
+      const going = h.table[how](h.ids[2]);
+      h.table.start(h.ids[0]);
+      expect(await going).toEqual({ ok: true });
+      await waitFor(() => h.toAct() !== null);
+      expect(dealt(h).has(h.ids[2])).toBe(false);
+      expect(await h.balance(2)).toBe(10_000);
+      expect(await h.services.bank.escrowed(h.ids[2])).toBe(0);
+      while (h.toAct()) h.table.act(h.toAct()!, { type: 'fold' });
+      await waitFor(() => h.view(0).handsDealt >= 2, 3000, 'second hand');
+      await h.table.settled();
+      expect(await h.chipsInPlay()).toBe(before);
+    });
+  }
+
+  it('a stand-up requested while a deal is queued waits for that hand', async () => {
+    const h = await setup(2);
+    await h.seat(0, 0, 2000);
+    await h.seat(1, 1, 2000);
+    slow(h, 'topUp', 40);
+    const topUp = h.table.topUp(h.ids[0], 100); // holds the queue
+    h.table.start(h.ids[0]);
+    await new Promise((r) => setTimeout(r, 10)); // the deal is now queued behind the top-up
+    const stand = h.table.standUp(h.ids[1]);
+    await topUp;
+    expect(await stand).toEqual({ ok: true });
+    // The deal ran first, so the stand-up waits for the hand instead of cashing out mid-hand.
+    expect(dealt(h).has(h.ids[1])).toBe(true);
+    expect(h.table.viewFor(h.ids[1]).you.pending).toBe('stand');
+    expect(await h.services.bank.escrowed(h.ids[1])).toBe(2000);
+  });
+});
+
+describe('membership races', () => {
+  it('a double take-seat from a non-member seats them once and strands nothing', async () => {
+    const h = await setup(2);
+    const id = h.ids[1];
+    const me = toPublic((await getPlayerRow(t.db, id))!);
+    // Each emote lookup is slower than the last, so the second join straddles the first buy-in.
+    const shop = h.services.shop as unknown as { owned: (id: string) => Promise<Record<string, number>> };
+    const owned = shop.owned.bind(h.services.shop);
+    let calls = 0;
+    shop.owned = async (pid: string) => {
+      calls += 1;
+      await new Promise((r) => setTimeout(r, calls * 40));
+      return owned(pid);
+    };
+    // What the socket handler does, twice at once (e.g. a double tap on two sockets).
+    const go = async () => {
+      if (!h.table.isMember(id)) await h.table.watch(me);
+      return h.table.takeSeat(id, 1, 2000);
+    };
+    const results = await Promise.all([go(), go()]);
+    expect(results.filter((r) => r.ok)).toHaveLength(1);
+    expect(h.table.roleOf(id)).toBe('seated');
+    expect(h.view(1).seats[1].player?.id).toBe(id);
+    expect(await h.balance(1)).toBe(8000);
+    expect(await h.services.bank.escrowed(id)).toBe(2000);
+    expect(await h.table.standUp(id)).toEqual({ ok: true });
+    expect(await h.balance(1)).toBe(10_000);
+  });
+
+  it('keeps a buy-in on the books when the player disconnects while it is in flight', async () => {
+    const h = await setup(2);
+    await h.join(1);
+    slow(h, 'buyIn');
+    const seating = h.table.takeSeat(h.ids[1], 1, 2000);
+    await new Promise((r) => setTimeout(r, 5));
+    h.table.disconnect(h.ids[1]); // a spectator is dropped at once
+    expect(await seating).toEqual({ ok: true });
+    expect(h.table.roleOf(h.ids[1])).toBe('seated');
+    // …and is stood up (cashed out) by the disconnect sweep like any seated player.
+    await waitFor(() => h.left.some((l) => l.playerId === h.ids[1]), 3000, 'stand-up after disconnect');
+    await h.table.settled();
+    expect(await h.services.bank.escrowed(h.ids[1])).toBe(0);
+    expect(await h.balance(1)).toBe(10_000);
+  });
+});
+
+describe('top-up limits', () => {
+  it('concurrent top-ups cannot take a stack past the maximum buy-in', async () => {
+    const h = await setup(1);
+    await h.seat(0, 0, 1000);
+    slow(h, 'topUp');
+    const results = await Promise.all([h.table.topUp(h.ids[0], 3000), h.table.topUp(h.ids[0], 3000)]);
+    expect(results.filter((r) => r.ok)).toHaveLength(1);
+    expect(await h.services.bank.escrowed(h.ids[0])).toBe(4000);
+    expect(h.view(0).seats[0].player!.stack).toBe(4000);
+  });
+
+  it('trims a queued top-up that a won pot would push past the maximum, and says so', async () => {
+    const h = await setup(2);
+    await h.seat(0, 0, 1000);
+    await h.seat(1, 1, 1000);
+    h.table.start(h.ids[0]);
+    await waitFor(() => h.toAct() !== null);
+    expect(h.toAct()).toBe(h.ids[0]); // heads-up: the button acts first
+    expect(await h.table.topUp(h.ids[0], 4025)).toEqual({ ok: true }); // 975 behind + 4025 = 5000
+    h.table.act(h.ids[0], { type: 'raise', amount: 100 });
+    h.table.act(h.ids[1], { type: 'fold' }); // p0 wins the blinds: 1050
+    await waitFor(() => h.view(0).handsDealt >= 2 && h.table.viewFor(h.ids[0]).you.pendingTopUp === 0, 3000, 'boundary');
+    await h.table.settled();
+    expect(await h.services.bank.escrowed(h.ids[0])).toBe(5000);
+    expect(await h.balance(0)).toBe(10_000 - 1000 - 3950);
+    expect(h.notices.some((n) => n.playerId === h.ids[0] && n.notice.title === 'Top-up reduced')).toBe(true);
+  });
+});
+
+describe('server shutdown', () => {
+  it('voids a hand in progress and cashes everyone out at their pre-hand stacks', async () => {
+    const h = await setup(3);
+    await h.seat(0, 0, 2000);
+    await h.seat(1, 1, 3000);
+    await h.join(2);
+    const before = await h.chipsInPlay();
+    h.table.start(h.ids[0]);
+    await waitFor(() => h.toAct() !== null);
+    h.table.act(h.toAct()!, { type: 'raise', amount: 500 });
+    await h.table.shutdown();
+    expect(h.closed).toBe(true);
+    expect(h.table.isClosed).toBe(true);
+    for (const id of h.ids) expect(await h.services.bank.escrowed(id)).toBe(0);
+    expect(await h.balance(0)).toBe(10_000);
+    expect(await h.balance(1)).toBe(10_000);
+    expect(await h.chipsInPlay()).toBe(before);
+    expect(new Set(h.left.map((l) => l.playerId))).toEqual(new Set(h.ids));
+    expect(h.table.act(h.ids[1], { type: 'fold' })).toMatchObject({ ok: false });
+  });
+
+  it('keeps the result of a finished hand when shutting down between hands', async () => {
+    const h = await setup(2, { timing: { foldWinMs: 200 } });
+    await h.seat(0, 0, 2000);
+    await h.seat(1, 1, 2000);
+    h.table.start(h.ids[0]);
+    await waitFor(() => h.toAct() !== null);
+    h.table.act(h.toAct()!, { type: 'fold' }); // the button folds its small blind
+    await waitFor(() => !!h.view(0).hand?.result, 3000, 'result');
+    await h.table.shutdown();
+    expect(await h.balance(0)).toBe(10_000 - 25);
+    expect(await h.balance(1)).toBe(10_000 + 25);
   });
 });

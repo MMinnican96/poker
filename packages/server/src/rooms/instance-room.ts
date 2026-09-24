@@ -52,7 +52,11 @@ export class InstanceRoom {
   private table: TableRoom | null = null;
   private readonly clock: () => number;
 
-  constructor(readonly instanceId: string, private readonly deps: RoomDeps) {
+  /**
+   * @param onIdle called when the room may have become empty without a socket
+   * event (its table closed) so the manager can prune it.
+   */
+  constructor(readonly instanceId: string, private readonly deps: RoomDeps, private readonly onIdle: () => void = () => undefined) {
     this.clock = deps.clock ?? Date.now;
   }
 
@@ -145,6 +149,7 @@ export class InstanceRoom {
         closed: () => {
           if (this.table === table) this.table = null;
           this.broadcastLobby();
+          this.onIdle();
         },
       },
     });
@@ -178,6 +183,11 @@ export class InstanceRoom {
     this.deps.outbox.lobby(this.instanceId, this.state());
   }
 
+  /** Server shutdown: cash everyone at the table out (voiding a hand in progress). */
+  async shutdown(): Promise<void> {
+    await this.table?.shutdown();
+  }
+
   dispose(): void {
     this.table?.dispose();
   }
@@ -196,7 +206,7 @@ export class RoomManager {
   getOrCreate(instanceId: string): InstanceRoom {
     let room = this.rooms.get(instanceId);
     if (!room) {
-      room = new InstanceRoom(instanceId, this.deps);
+      room = new InstanceRoom(instanceId, this.deps, () => this.prune(instanceId));
       this.rooms.set(instanceId, room);
     }
     return room;
@@ -208,9 +218,23 @@ export class RoomManager {
     if (room?.isEmpty) this.rooms.delete(instanceId);
   }
 
+  /** Number of live rooms (tests, diagnostics). */
+  get size(): number {
+    return this.rooms.size;
+  }
+
   /** Every room a player is present in (for pushing profile updates). */
   roomsWith(playerId: string): InstanceRoom[] {
     return [...this.rooms.values()].filter((r) => r.isPresent(playerId) || r.currentTable?.isMember(playerId));
+  }
+
+  /**
+   * Graceful shutdown: close every table, cashing everyone out at their
+   * between-hands stack (a hand in progress is voided). Call before `dispose()`.
+   */
+  async shutdown(): Promise<void> {
+    const results = await Promise.allSettled([...this.rooms.values()].map((r) => r.shutdown()));
+    for (const r of results) if (r.status === 'rejected') console.error('[rooms] shutdown failed', r.reason);
   }
 
   dispose(): void {
