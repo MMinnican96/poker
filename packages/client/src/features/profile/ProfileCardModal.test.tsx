@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { ApiError } from '../../app/api';
 import { useNav, useProfileCard } from '../../app/nav';
 import { renderWithClient } from '../../test/harness';
-import { makeProfile } from '../fixtures';
+import { makeProfile, makeTrophies } from '../fixtures';
 import { formSummary } from './FormTally';
 
 /** Opens a profile card on mount and shows where navigation went. */
@@ -20,7 +20,7 @@ function Opener({ id }: { id: string }) {
 }
 
 describe('ProfileCardModal', () => {
-  it('renders the card: identity, stats, best hand, form and badges', async () => {
+  it('renders the card: identity, stats, best hand, form and trophies', async () => {
     const profile = vi.fn(async () => makeProfile());
     renderWithClient(<Opener id="p2" />, { api: { profile } });
     await userEvent.click(screen.getByRole('button', { name: 'open' }));
@@ -34,9 +34,44 @@ describe('ProfileCardModal', () => {
     expect(within(dialog).getByText('+5,250')).toBeInTheDocument();
     expect(within(dialog).getByText('31%')).toBeInTheDocument();
     expect(within(dialog).getByText('3h 20m')).toBeInTheDocument();
-    expect(within(dialog).getByText('Regular')).toBeInTheDocument();
+    expect(within(dialog).getByRole('heading', { name: 'Trophy cabinet' })).toBeInTheDocument();
     expect(within(dialog).getByRole('img', { name: /Last 7 hands: 3 won, 3 lost, 1 even/ })).toBeInTheDocument();
     expect(within(dialog).getByRole('img', { name: /Level 7, 120 of 460 XP/ })).toBeInTheDocument();
+  });
+
+  it('shows the showcase shelf, the emblem count, and every unlocked emblem on See all', async () => {
+    renderWithClient(<Opener id="p2" />, { api: { profile: async () => makeProfile() } });
+    await userEvent.click(screen.getByRole('button', { name: 'open' }));
+    const dialog = await screen.findByRole('dialog');
+    const shelf = await within(dialog).findByRole('list', { name: 'Showcase' });
+    const places = within(shelf).getAllByRole('listitem');
+    expect(places).toHaveLength(5);
+    expect(places[0]).toHaveTextContent('Royalty, legendary feat');
+    expect(places[1]).toHaveTextContent('Grinder III, gold');
+    expect(places[2]).toHaveTextContent('Empty place');
+    expect(within(dialog).getByText('3 of 45 emblems')).toBeInTheDocument();
+
+    const seeAll = within(dialog).getByRole('button', { name: 'See all' });
+    expect(seeAll).toHaveAttribute('aria-expanded', 'false');
+    await userEvent.click(seeAll);
+    expect(within(dialog).getByRole('button', { name: 'Show fewer' })).toHaveAttribute('aria-expanded', 'true');
+    const all = within(dialog).getByRole('list', { name: 'Every unlocked emblem' });
+    const rows = within(all).getAllByRole('listitem');
+    expect(within(rows[0]).getByText('Royalty')).toBeInTheDocument();
+    expect(within(rows[1]).getByText('Grinder III')).toBeInTheDocument();
+    expect(within(rows[2]).getByText('Fresh cheese')).toBeInTheDocument();
+    expect(rows[1]).toHaveTextContent('Gold · tier III');
+    expect(rows[0]).toHaveTextContent('Legendary feat');
+    expect(rows[0]).toHaveAttribute('title', 'Unlocked Sep 20, 2026');
+  });
+
+  it('says where emblems come from when there are none', async () => {
+    renderWithClient(<Opener id="p2" />, { api: { profile: async () => makeProfile({ trophies: makeTrophies({ showcase: [], auto: true, unlocked: [], emblems: 0 }) }) } });
+    await userEvent.click(screen.getByRole('button', { name: 'open' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(await within(dialog).findByText('No emblems yet. They come from career challenges and feats.')).toBeInTheDocument();
+    expect(within(dialog).queryByRole('list', { name: 'Showcase' })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole('button', { name: 'See all' })).not.toBeInTheDocument();
   });
 
   it('Message opens a DM with the player and closes the card', async () => {

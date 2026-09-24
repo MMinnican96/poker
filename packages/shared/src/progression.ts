@@ -1,4 +1,4 @@
-import type { HandCategory } from './hand-eval.js';
+import type { MetricId } from './metrics.js';
 
 // ---------------------------------------------------------------------------
 // Levels
@@ -93,99 +93,70 @@ export function periodEndsAt(period: ChallengePeriod, now: Date): Date {
 
 export type ChallengePeriod = 'daily' | 'weekly';
 
-/** The subset of a hand fact challenges look at. */
-export interface ChallengeFact {
-  result: 'won' | 'lost' | 'folded';
-  wentToShowdown: boolean;
-  finalStreet: string;
-  handCategory: HandCategory | null;
-  potTotal: number;
-  netResult: number;
-  bigBlind: number;
-  pfr: boolean;
-  wasAllIn: boolean;
-}
-
-export type ChallengeMetric =
-  | { kind: 'hands-played' }
-  | { kind: 'hands-won' }
-  | { kind: 'showdowns-won' }
-  | { kind: 'flops-seen' }
-  | { kind: 'preflop-raises' }
-  | { kind: 'all-in-wins' }
-  | { kind: 'win-with'; atLeast: HandCategory }
-  | { kind: 'pot-won'; bigBlinds: number }
-  | { kind: 'net-big-blinds' };
+/**
+ * What a challenge is about. A period never shows two challenges from the same
+ * family, so a day doesn't get both "Win 8 hands" and "Win 3 at showdown".
+ */
+export type ChallengeFamily =
+  | 'volume' | 'wins' | 'aggression' | 'made-hand' | 'hole-cards' | 'big-game' | 'streak' | 'profit';
 
 export interface ChallengeDef {
   id: string;
   period: ChallengePeriod;
   title: string;
   description: string;
-  metric: ChallengeMetric;
+  /** Progress comes from this metric (see metrics.ts); streak metrics restart each period. */
+  metric: MetricId;
   goal: number;
   reward: { chips: number; xp: number };
+  family: ChallengeFamily;
 }
 
-const CATEGORY_RANK: Record<HandCategory, number> = {
-  'high-card': 0, pair: 1, 'two-pair': 2, 'three-of-a-kind': 3, straight: 4, flush: 5,
-  'full-house': 6, 'four-of-a-kind': 7, 'straight-flush': 8, 'royal-flush': 9,
-};
-
-/** How much one hand moves a challenge's progress. */
-export function challengeIncrement(metric: ChallengeMetric, f: ChallengeFact): number {
-  const won = f.result === 'won';
-  switch (metric.kind) {
-    case 'hands-played': return 1;
-    case 'hands-won': return won ? 1 : 0;
-    case 'showdowns-won': return won && f.wentToShowdown ? 1 : 0;
-    case 'flops-seen': return f.finalStreet !== 'pre-flop' ? 1 : 0;
-    case 'preflop-raises': return f.pfr ? 1 : 0;
-    case 'all-in-wins': return won && f.wasAllIn ? 1 : 0;
-    case 'win-with':
-      return won && f.handCategory && CATEGORY_RANK[f.handCategory] >= CATEGORY_RANK[metric.atLeast] ? 1 : 0;
-    case 'pot-won':
-      return won && f.bigBlind > 0 && f.potTotal >= metric.bigBlinds * f.bigBlind ? 1 : 0;
-    case 'net-big-blinds':
-      return f.bigBlind > 0 ? f.netResult / f.bigBlind : 0;
-  }
-}
+const ch = (
+  id: string, period: ChallengePeriod, title: string, description: string, metric: MetricId,
+  goal: number, chips: number, xp: number, family: ChallengeFamily,
+): ChallengeDef => ({ id, period, title, description, metric, goal, reward: { chips, xp }, family });
 
 export const CHALLENGES: readonly ChallengeDef[] = [
   // Daily
-  { id: 'd-play-25', period: 'daily', title: 'Pull up a chair', description: 'Play 25 hands.',
-    metric: { kind: 'hands-played' }, goal: 25, reward: { chips: 500, xp: 40 } },
-  { id: 'd-win-8', period: 'daily', title: 'Rake it in', description: 'Win 8 hands.',
-    metric: { kind: 'hands-won' }, goal: 8, reward: { chips: 750, xp: 50 } },
-  { id: 'd-showdown-3', period: 'daily', title: 'Show me', description: 'Win 3 hands at showdown.',
-    metric: { kind: 'showdowns-won' }, goal: 3, reward: { chips: 750, xp: 50 } },
-  { id: 'd-flops-12', period: 'daily', title: 'See the flop', description: 'See 12 flops.',
-    metric: { kind: 'flops-seen' }, goal: 12, reward: { chips: 500, xp: 40 } },
-  { id: 'd-pfr-5', period: 'daily', title: 'Take the lead', description: 'Raise before the flop in 5 hands.',
-    metric: { kind: 'preflop-raises' }, goal: 5, reward: { chips: 600, xp: 40 } },
-  { id: 'd-trips', period: 'daily', title: "Three's company", description: 'Win a hand with three of a kind or better.',
-    metric: { kind: 'win-with', atLeast: 'three-of-a-kind' }, goal: 1, reward: { chips: 800, xp: 60 } },
-  { id: 'd-big-pot', period: 'daily', title: 'Big fish', description: 'Win a pot of 30 big blinds or more.',
-    metric: { kind: 'pot-won', bigBlinds: 30 }, goal: 1, reward: { chips: 800, xp: 60 } },
-  { id: 'd-all-in', period: 'daily', title: 'Shove it', description: 'Win a hand where you went all-in.',
-    metric: { kind: 'all-in-wins' }, goal: 1, reward: { chips: 1000, xp: 60 } },
+  ch('d-play-25', 'daily', 'Pull up a chair', 'Play 25 hands.', 'hands-played', 25, 500, 40, 'volume'),
+  ch('d-play-50', 'daily', 'Settle in', 'Play 50 hands.', 'hands-played', 50, 800, 60, 'volume'),
+  ch('d-win-8', 'daily', 'Rake it in', 'Win 8 hands.', 'hands-won', 8, 750, 50, 'wins'),
+  ch('d-showdown-3', 'daily', 'Show me', 'Win 3 hands at showdown.', 'showdowns-won', 3, 750, 50, 'wins'),
+  ch('d-steal-5', 'daily', 'Pickpocket', 'Win 5 hands without a showdown.', 'steals', 5, 600, 40, 'wins'),
+  ch('d-flops-12', 'daily', 'See the flop', 'See 12 flops.', 'flops-seen', 12, 500, 40, 'volume'),
+  ch('d-pfr-5', 'daily', 'Take the lead', 'Raise before the flop in 5 hands.', 'preflop-raises', 5, 600, 40, 'aggression'),
+  ch('d-3bet-3', 'daily', 'Push back', 'Three-bet 3 times.', 'three-bets', 3, 700, 50, 'aggression'),
+  ch('d-check-raise', 'daily', 'Gotcha', 'Check-raise once.', 'check-raises', 1, 800, 60, 'aggression'),
+  ch('d-trips', 'daily', "Three's company", 'Win a hand with three of a kind or better.', 'wins-trips-plus', 1, 800, 60, 'made-hand'),
+  ch('d-two-pair-3', 'daily', 'Double vision', 'Win 3 showdowns with two pair or better.', 'wins-two-pair-plus', 3, 700, 50, 'made-hand'),
+  ch('d-straight', 'daily', 'Straight up', 'Win a showdown with a straight or better.', 'wins-straight-plus', 1, 800, 60, 'made-hand'),
+  ch('d-flush', 'daily', 'Flush it', 'Win a showdown with a flush or better.', 'wins-flush-plus', 1, 900, 60, 'made-hand'),
+  ch('d-pocket-pair-2', 'daily', 'Pocket change', 'Win 2 showdowns with a pocket pair.', 'pocket-pair-wins', 2, 700, 50, 'hole-cards'),
+  ch('d-suited-3', 'daily', 'Suits you', 'Win 3 showdowns with suited hole cards.', 'suited-wins', 3, 600, 40, 'hole-cards'),
+  ch('d-big-pot', 'daily', 'Big fish', 'Win a pot of 30 big blinds or more.', 'pots-30bb', 1, 800, 60, 'big-game'),
+  ch('d-all-in', 'daily', 'Shove it', 'Win a hand where you went all-in.', 'all-in-wins', 1, 1000, 60, 'big-game'),
+  ch('d-knockout', 'daily', 'Bouncer', 'Bust a player.', 'knockouts', 1, 1000, 70, 'big-game'),
+  ch('d-streak-3', 'daily', 'Hot hand', 'Win 3 hands in a row.', 'win-streak', 3, 900, 60, 'streak'),
+  ch('d-profit-20', 'daily', 'Up on the day', 'Finish the day 20 big blinds up.', 'net-bb', 20, 900, 60, 'profit'),
 
   // Weekly
-  { id: 'w-play-200', period: 'weekly', title: 'Regular', description: 'Play 200 hands this week.',
-    metric: { kind: 'hands-played' }, goal: 200, reward: { chips: 4000, xp: 300 } },
-  { id: 'w-win-50', period: 'weekly', title: 'Pot collector', description: 'Win 50 hands this week.',
-    metric: { kind: 'hands-won' }, goal: 50, reward: { chips: 5000, xp: 350 } },
-  { id: 'w-showdown-15', period: 'weekly', title: 'Showdown specialist', description: 'Win 15 hands at showdown.',
-    metric: { kind: 'showdowns-won' }, goal: 15, reward: { chips: 5000, xp: 350 } },
-  { id: 'w-boat', period: 'weekly', title: 'Full house party', description: 'Win 2 hands with a full house or better.',
-    metric: { kind: 'win-with', atLeast: 'full-house' }, goal: 2, reward: { chips: 6000, xp: 400 } },
-  { id: 'w-profit', period: 'weekly', title: 'In the black', description: 'Finish the week 150 big blinds up.',
-    metric: { kind: 'net-big-blinds' }, goal: 150, reward: { chips: 7500, xp: 450 } },
-  { id: 'w-whale', period: 'weekly', title: 'Whale watching', description: 'Win a pot of 100 big blinds or more.',
-    metric: { kind: 'pot-won', bigBlinds: 100 }, goal: 1, reward: { chips: 6000, xp: 400 } },
+  ch('w-play-200', 'weekly', 'Regular', 'Play 200 hands this week.', 'hands-played', 200, 4000, 300, 'volume'),
+  ch('w-flops-80', 'weekly', 'Flop tourist', 'See 80 flops this week.', 'flops-seen', 80, 4000, 300, 'volume'),
+  ch('w-win-50', 'weekly', 'Pot collector', 'Win 50 hands this week.', 'hands-won', 50, 5000, 350, 'wins'),
+  ch('w-showdown-15', 'weekly', 'Showdown specialist', 'Win 15 hands at showdown.', 'showdowns-won', 15, 5000, 350, 'wins'),
+  ch('w-steal-40', 'weekly', 'Heist week', 'Win 40 hands without a showdown.', 'steals', 40, 5000, 350, 'wins'),
+  ch('w-3bet-25', 'weekly', 'Pressure cooker', 'Three-bet 25 times.', 'three-bets', 25, 5000, 350, 'aggression'),
+  ch('w-boat', 'weekly', 'Full house party', 'Win 2 hands with a full house or better.', 'wins-full-house-plus', 2, 6000, 400, 'made-hand'),
+  ch('w-suckout-3', 'weekly', 'Never say die', 'Win 3 showdowns you were behind in after the turn.', 'suckouts', 3, 6000, 400, 'made-hand'),
+  ch('w-whale', 'weekly', 'Whale watching', 'Win a pot of 100 big blinds or more.', 'pots-100bb', 1, 6000, 400, 'big-game'),
+  ch('w-knockouts-10', 'weekly', 'Closing time', 'Bust 10 players this week.', 'knockouts', 10, 6000, 400, 'big-game'),
+  ch('w-streak-5', 'weekly', 'Red hot', 'Win 5 hands in a row.', 'win-streak', 5, 7000, 450, 'streak'),
+  ch('w-profit', 'weekly', 'In the black', 'Finish the week 150 big blinds up.', 'net-bb', 150, 7500, 450, 'profit'),
 ];
 
-export const CHALLENGES_PER_PERIOD = 3;
+/** How many challenges are active at once in each period. */
+export const CHALLENGES_PER_PERIOD: Readonly<Record<ChallengePeriod, number>> = { daily: 4, weekly: 3 };
 
 const CHALLENGE_BY_ID = new Map(CHALLENGES.map((c) => [c.id, c]));
 export function getChallenge(id: string): ChallengeDef | undefined {
@@ -222,7 +193,16 @@ export function activeChallenges(period: ChallengePeriod, periodKey: string): Ch
     const j = Math.floor(rand() * (i + 1));
     [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
   }
-  return shuffled.slice(0, CHALLENGES_PER_PERIOD);
+  // Walk the shuffle, skipping a challenge whose family is already picked.
+  const picked: ChallengeDef[] = [];
+  const families = new Set<ChallengeFamily>();
+  for (const c of shuffled) {
+    if (picked.length >= CHALLENGES_PER_PERIOD[period]) break;
+    if (families.has(c.family)) continue;
+    families.add(c.family);
+    picked.push(c);
+  }
+  return picked;
 }
 
 export function periodKeyFor(period: ChallengePeriod, now: Date): string {

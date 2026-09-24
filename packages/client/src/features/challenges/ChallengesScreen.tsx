@@ -1,15 +1,19 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   formatChips,
   levelUpReward,
   type ChallengePeriod,
   type ChallengeStatus,
 } from '@poker/shared';
-import { useApi, useMe, useStore } from '../../app/client';
+import { useApi, useMe, useNotices, useStore } from '../../app/client';
 import { useNow } from '../../app/hooks';
-import { Button, ChipAmount, ChipGlyph, EmptyState, GiftIcon, LevelBadge, Surface, cx, levelFraction } from '../../ui';
+import { Button, ChipAmount, ChipGlyph, EmptyState, GiftIcon, LevelBadge, Surface, Tabs, cx, levelFraction, tabPanelProps } from '../../ui';
 import { LoadError, Loading, Screen } from '../common/Screen';
 import { errorText, useAsync } from '../common/useAsync';
+import { standings } from './achievements';
+import { CabinetTab } from './CabinetTab';
+import { CareerTab } from './CareerTab';
+import { FeatsTab } from './FeatsTab';
 
 /** "2d 4h", "5h 12m", "12m 05s", "40s". */
 export function timeLeft(ms: number): string {
@@ -26,7 +30,106 @@ export function timeLeft(ms: number): string {
 
 const PERIOD_TITLE: Record<ChallengePeriod, string> = { daily: 'Daily challenges', weekly: 'Weekly challenges' };
 
-export function ChallengesScreen() {
+export type ChallengesTab = 'daily' | 'career' | 'feats' | 'cabinet';
+
+const TABS: readonly { id: ChallengesTab; label: string }[] = [
+  { id: 'daily', label: 'Daily & weekly' },
+  { id: 'career', label: 'Career' },
+  { id: 'feats', label: 'Feats' },
+  { id: 'cabinet', label: 'Trophy cabinet' },
+];
+
+export function ChallengesScreen({ initialTab = 'daily' }: { initialTab?: ChallengesTab } = {}) {
+  const me = useMe();
+  const [tab, setTab] = useState<ChallengesTab>(initialTab);
+  // Each half loads the first time one of its tabs opens and then stays mounted,
+  // so switching tabs doesn't refetch or flash a spinner.
+  const [dailyOpened, setDailyOpened] = useState(initialTab === 'daily');
+  const [achievementsOpened, setAchievementsOpened] = useState(initialTab !== 'daily');
+  // Claims on the daily tab pay chips and XP that career challenges count, so
+  // coming back from it fetches achievements again (in the background).
+  const [achievementsKey, setAchievementsKey] = useState(0);
+  const pick = (id: ChallengesTab) => {
+    if (id === 'daily') setDailyOpened(true);
+    else {
+      setAchievementsOpened(true);
+      if (tab === 'daily' && achievementsOpened) setAchievementsKey((k) => k + 1);
+    }
+    setTab(id);
+  };
+  return (
+    <Screen
+      id="challenges-heading"
+      title="Challenges"
+      intro="Play hands to fill these up. Daily and weekly rewards wait for you to claim them; career challenges and feats pay the moment you unlock them."
+    >
+      <Tabs<ChallengesTab>
+        idBase="challenges"
+        label="Challenge types"
+        value={tab}
+        onChange={pick}
+        tabs={TABS.map((t) => ({ ...t, badge: t.id === 'daily' ? me.unclaimedChallenges : undefined }))}
+      />
+      <div {...tabPanelProps('challenges', tab)} className="flex flex-col gap-5 outline-none short:gap-3">
+        {dailyOpened && (
+          <div hidden={tab !== 'daily'} className="contents">
+            <DailyAndWeekly />
+          </div>
+        )}
+        {achievementsOpened && <AchievementPanels tab={tab} refreshKey={achievementsKey} />}
+      </div>
+    </Screen>
+  );
+}
+
+const PANEL_NAME: Record<Exclude<ChallengesTab, 'daily'>, string> = {
+  career: 'career challenges',
+  feats: 'feats',
+  cabinet: 'your trophy cabinet',
+};
+
+/**
+ * Career, feats and the trophy cabinet, from one `GET /api/achievements` (kept
+ * while you switch between them). Fetches again when `refreshKey` changes and
+ * when a new unlock notice arrives, keeping the old data on screen meanwhile.
+ */
+function AchievementPanels({ tab, refreshKey }: { tab: ChallengesTab; refreshKey: number }) {
+  const api = useApi();
+  const res = useAsync(() => api.achievements(), [api, refreshKey]);
+  const all = useMemo(() => standings(res.data), [res.data]);
+  // An unlock notice means new tiers: fetch again, once per notice (dismissing a
+  // newer toast brings an older one back to the end of the list).
+  const unlockIds = useNotices().filter((n) => n.emblem).map((n) => n.id).join(' ');
+  const seen = useRef<Set<string> | null>(null);
+  const { reload } = res;
+  useEffect(() => {
+    const ids = unlockIds ? unlockIds.split(' ') : [];
+    if (!seen.current) {
+      seen.current = new Set(ids);
+      return;
+    }
+    const fresh = ids.filter((id) => !seen.current!.has(id));
+    fresh.forEach((id) => seen.current!.add(id));
+    if (fresh.length > 0) reload();
+  }, [unlockIds, reload]);
+
+  if (tab === 'daily') return null;
+  if (!res.data) {
+    const what = PANEL_NAME[tab];
+    return res.loading ? <Loading label={`Loading ${what}`} /> : <LoadError what={what} error={res.error ?? ''} onRetry={res.reload} />;
+  }
+  if (tab === 'career') return <CareerTab all={all} />;
+  if (tab === 'feats') return <FeatsTab all={all} />;
+  return (
+    <CabinetTab
+      all={all}
+      showcase={res.data.showcase}
+      onShowcaseSaved={(ids) => res.setData((prev) => (prev ? { ...prev, showcase: ids } : prev))}
+    />
+  );
+}
+
+function DailyAndWeekly() {
   const api = useApi();
   const list = useAsync(() => api.challenges(), [api]);
 
@@ -44,7 +147,7 @@ export function ChallengesScreen() {
     list.setData((prev) => prev?.map((x) => (x.id === c.id && x.periodKey === c.periodKey ? { ...x, claimed: true } : x)));
 
   return (
-    <Screen id="challenges-heading" title="Challenges" intro="Play hands to fill these up, then claim chips and XP.">
+    <>
       <div className="grid gap-3 @2xl:grid-cols-2">
         <DailyBonus />
         <LevelProgress />
@@ -62,7 +165,7 @@ export function ChallengesScreen() {
           return <PeriodGroup key={period} period={period} items={items} onClaimed={markClaimed} />;
         })
       )}
-    </Screen>
+    </>
   );
 }
 
@@ -107,8 +210,8 @@ function ChallengeRow({ c, onClaimed }: { c: ChallengeStatus; onClaimed(c: Chall
       const r = await api.claimChallenge(c.periodKey, c.id);
       if (r.ok) {
         onClaimed(c);
-        const ups = r.levelUps.map((u) => `You reached level ${u.level}: +${formatChips(u.reward)} chips.`).join(' ');
-        store.notify({ tone: 'good', title: `Claimed: ${c.title}`, body: `+${formatChips(r.chips)} chips and ${formatChips(r.xp)} XP.${ups ? ` ${ups}` : ''}` });
+        // A level-up arrives as its own server notice, so it isn't repeated here.
+        store.notify({ tone: 'good', title: `Claimed: ${c.title}`, body: `+${formatChips(r.chips)} chips and ${formatChips(r.xp)} XP.` });
       } else {
         store.notify({ tone: 'bad', title: "Couldn't claim that challenge", body: r.error });
       }

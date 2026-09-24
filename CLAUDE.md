@@ -28,15 +28,19 @@ render what they're sent and send intents.
 ```
 packages/
   shared/   @poker/shared: wire types + socket contract (events.ts), table rules
-            and validation, hand evaluator, shop catalog, levels/challenges, format
+            and validation, hand evaluator, shop catalog, levels/challenges,
+            metric registry (metrics.ts), career challenges/feats (achievements.ts), format
   server/
-    src/index.ts        boot: DB + migrations, lease, recovery, listen, graceful shutdown
+    src/index.ts        boot: DB + migrations, lease, recovery, achievements backfill
+                        (once), listen, graceful shutdown
     src/app.ts          Express + Socket.io app factory (createApp), serves client/dist
     src/auth.ts         session JWTs, mock-auth gate      src/discord.ts  Discord HTTP calls
     src/engine/         pure poker rules (hand.ts, pots.ts, deck.ts)
     src/rooms/          InstanceRoom + RoomManager, TableRoom, Serial queue + RateLimiter
-    src/services/       bank, leases, recorder, hand-facts, stats-repo, rewards, shop,
-                        chat, profiles, players, recompute (CLI)
+    src/services/       bank, leases, recorder, hand-facts, xp, achievements (career
+                        challenges, feats, titles, showcase), achievements-backfill
+                        (boot backfill + CLI), stats-repo, rewards, shop, chat,
+                        profiles, players, recompute (CLI)
     src/socket/realtime.ts   socket auth + every event handler
     src/http/api.ts          REST routes
     src/db/             schema.ts, client.ts (Postgres or PGlite), migrate-cli.ts
@@ -70,12 +74,13 @@ packages/
 |---|---|
 | `npm run dev` | Build `shared`, then watch shared + server (:3001) + client (:5173) |
 | `npm run build` | Type-check and build shared, server, client |
-| `npm test` | Server (type-checks tests, then Vitest incl. e2e on PGlite) and client (Vitest + RTL) |
-| `npm test -w @poker/shared` | Shared package tests (the root `npm test` leaves these out) |
+| `npm test` | Shared (Vitest), server (type-checks tests, then Vitest incl. e2e on PGlite) and client (Vitest + RTL) |
+| `npm test -w @poker/shared` | Shared package tests alone |
 | `npm run sounds:generate -w @poker/client` | Re-synthesize the sound clips (deterministic; prints loudness per clip) |
 | `npm run db:migrate` | Apply migrations to `DATABASE_URL` by hand (boot does this too) |
 | `npm run db:generate -w @poker/server` | Generate a migration from `schema.ts` |
 | `npm run stats:recompute` | Rebuild `player_stats` from the `player_hand_stats` facts |
+| `npm run achievements:recompute -w @poker/server` | Rebuild achievement progress from facts + current state and pay unpaid tiers (boot runs it once, guarded by `app_meta`) |
 | `TEST_DATABASE_URL=... npm run test:pg -w @poker/server` | DB-backed tests against real Postgres, files run serially |
 
 Schema changes go through migrations (`db:generate`, then make the SQL
@@ -88,7 +93,9 @@ idempotent). There is no `db:push`.
   clients are validated field by field (`pickRules`, `num`, `validateRules`).
 - **Engine is pure.** `engine/` has no I/O, timers or DB; randomness is injected
   (`RandomInt`). The chip-conservation property test must stay green.
-- **Chips move only through `Bank`** (`services/bank.ts`). A chip lives in exactly
+- **Chips move only through `Bank`** (`services/bank.ts`); achievement unlocks
+  credit through `creditIn` with key `achievement:<player>:<id>:<tier>`, paid
+  only by the insert that creates the unlock row. A chip lives in exactly
   one place: `players.chip_balance` or an open `table_seats` row (escrow). Every
   movement is one transaction with a `chip_transactions` row whose
   `idempotency_key` is unique. CHECK constraints keep balances, stacks and item

@@ -3,6 +3,8 @@ export * from './hand-eval.js';
 export * from './table.js';
 export * from './shop.js';
 export * from './progression.js';
+export * from './metrics.js';
+export * from './achievements.js';
 export * from './social.js';
 export * from './events.js';
 export * from './format.js';

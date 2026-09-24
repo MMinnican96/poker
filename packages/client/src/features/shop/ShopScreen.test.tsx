@@ -14,7 +14,7 @@ describe('ShopScreen', () => {
     const purchase = vi
       .fn()
       .mockRejectedValueOnce(new ApiError(0, "Couldn't reach the server."))
-      .mockResolvedValueOnce({ ok: true, balance: 5_000, quantity: 1 });
+      .mockResolvedValueOnce({ ok: true, balance: 5_000, quantity: 1, levelUps: [] });
     renderWithClient(<><ShopScreen /><Toaster /></>, { api: { purchase } });
 
     await userEvent.click(within(card('Oxblood')).getByRole('button', { name: 'Buy' }));
@@ -34,7 +34,7 @@ describe('ShopScreen', () => {
   });
 
   it('moves focus to the new dialog main button after a purchase', async () => {
-    const purchase = vi.fn(async () => ({ ok: true as const, balance: 5_000, quantity: 1 }));
+    const purchase = vi.fn(async () => ({ ok: true as const, balance: 5_000, quantity: 1, levelUps: [] }));
     renderWithClient(<><ShopScreen /><Toaster /></>, { api: { purchase } });
     await userEvent.click(within(card('Oxblood')).getByRole('button', { name: 'Buy' }));
     await userEvent.click(screen.getByRole('button', { name: 'Buy for 5,000' }));
@@ -43,7 +43,7 @@ describe('ShopScreen', () => {
   });
 
   it('uses a fresh nonce for the next purchase after a success', async () => {
-    const purchase = vi.fn(async () => ({ ok: true as const, balance: 9_500, quantity: 5 }));
+    const purchase = vi.fn(async () => ({ ok: true as const, balance: 9_500, quantity: 5, levelUps: [] }));
     renderWithClient(<ShopScreen />, { api: { purchase } });
     await userEvent.click(screen.getByRole('tab', { name: 'Throwables' }));
     for (let i = 0; i < 2; i++) {
@@ -66,6 +66,14 @@ describe('ShopScreen', () => {
     expect(within(card('Oxblood')).getByText('Equipped')).toBeInTheDocument();
     expect(within(card('Back room green')).getByRole('button', { name: 'Equip' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^Default felt: Oxblood/ })).toBeInTheDocument();
+  });
+
+  it('shows an earned achievement title in the loadout, and no shop title as equipped', async () => {
+    renderWithClient(<ShopScreen />, { me: makeMe({ owned: { 'title-nit': 1 }, loadout: { ...DEFAULT_LOADOUT, title: 'ach:grinder:3' } }) });
+    expect(screen.getByRole('button', { name: 'Title: Regular. Browse titles.' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('tab', { name: 'Titles' }));
+    expect(within(card('Nit')).queryByText('Equipped')).not.toBeInTheDocument();
+    expect(within(card('Nit')).getByRole('button', { name: /Equip/ })).toBeInTheDocument();
   });
 
   it('explains why an item cannot be bought', () => {

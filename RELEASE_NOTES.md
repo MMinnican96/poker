@@ -23,9 +23,32 @@
   the lobby header. Your settings are kept on this device.
 - **Timer ticks.** A clock ticks through the last 5 seconds of your turn,
   whatever the table's turn length. You can turn it off in sound settings.
+- **Career challenges.** 26 permanent challenges, each with five tiers from
+  bronze to diamond: hands played, pots won, players busted, three-bets,
+  check-raises, flushes, showdowns won with a pocket pair, and more. Each tier
+  pays chips and XP the moment you reach it, and tiers III and V unlock a
+  title.
+- **Feats.** 19 one-off challenges for rare moments at the table, with bigger
+  rewards: win with a royal flush, win 10 hands in a row, bust two players in
+  one hand, win an all-in you were behind in after the turn. Three are secret
+  until you get them.
+- **Titles and emblems.** Every career challenge and feat has an emblem, and
+  earned titles join the ones from the shop. Wear one from the new Trophy
+  cabinet tab under Challenges.
+- **Trophy cabinet.** Pick up to five emblems for the shelf on your profile
+  card, or let it show your best ones. Anyone can open your profile card and
+  see every emblem you've unlocked.
+- **Past hands count.** When this version first starts, it credits career
+  challenges and feats for hands already played. Challenges that need new hand
+  details (three-bets, check-raises, knockouts, doubling up) count from now on.
 
 ### Changed
 
+- **More daily and weekly challenges.** The pool grows to 20 daily and 12
+  weekly challenges, with 4 daily and 3 weekly at a time, and no two from the
+  same family on the same day.
+- Profile card badges are replaced by the trophy cabinet. Every old badge has
+  a matching emblem.
 - Under a player's name at showdown you now see just the hand type ("Two
   pair"); the full hand ("Two pair, jacks and eights") is still on the felt
   with the result.

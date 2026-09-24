@@ -1,5 +1,5 @@
 import { eq, sql } from 'drizzle-orm';
-import { DEFAULT_RULES, type Notice, type TableLeft, type TableRules, type TableView } from '@poker/shared';
+import { DEFAULT_RULES, type ActivityEvent, type Notice, type TableLeft, type TableRules, type TableView } from '@poker/shared';
 import type { Db } from '../db/client.js';
 import { chipTransactions, players, tableSeats } from '../db/schema.js';
 import { createServices, type Services } from '../services/index.js';
@@ -20,6 +20,7 @@ export class Harness {
   readonly notices: { playerId: string; notice: Omit<Notice, 'id'> }[] = [];
   readonly left: ({ playerId: string } & TableLeft)[] = [];
   readonly fx: unknown[] = [];
+  readonly activity: Omit<ActivityEvent, 'id' | 'at'>[] = [];
   closed = false;
   table!: TableRoom;
   services: Services;
@@ -39,7 +40,7 @@ export class Harness {
       changed: () => undefined,
       balanceChanged: () => undefined,
       notice: (playerId, notice) => h.notices.push({ playerId, notice }),
-      activity: () => undefined,
+      activity: (e) => h.activity.push(e),
       closed: () => { h.closed = true; },
     };
     const host = toPublic((await getPlayerRow(db, ids[0]))!);
@@ -78,7 +79,19 @@ export class Harness {
     return this.services.bank.balance(this.ids[i]);
   }
 
-  /** Bankrolls + escrow of this harness's players, minus chips minted by level-ups. */
+  /**
+   * Bankroll minus chips minted by level-ups and achievement unlocks, read in
+   * one statement so a recording committing meanwhile can't skew it.
+   */
+  async bankroll(i: number): Promise<number> {
+    const [row] = await this.db.select({
+      b: sql<number>`${players.chipBalance} - coalesce((select sum(amount) from ${chipTransactions}
+        where ${chipTransactions.playerId} = ${players.discordUserId} and ${chipTransactions.type} in ('level-up', 'achievement')), 0)`,
+    }).from(players).where(eq(players.discordUserId, this.ids[i]));
+    return Number(row.b);
+  }
+
+  /** Bankrolls + escrow of this harness's players, minus chips minted by level-ups and achievements. */
   async chipsInPlay(): Promise<number> {
     let total = 0;
     for (const id of this.ids) {
@@ -86,7 +99,7 @@ export class Harness {
       const [e] = await this.db.select({ s: sql<number>`coalesce(sum(stack),0)::int` }).from(tableSeats)
         .where(sql`${tableSeats.playerId} = ${id} and ${tableSeats.status} = 'open'`);
       const [m] = await this.db.select({ s: sql<number>`coalesce(sum(amount),0)::int` }).from(chipTransactions)
-        .where(sql`${chipTransactions.playerId} = ${id} and ${chipTransactions.type} = 'level-up'`);
+        .where(sql`${chipTransactions.playerId} = ${id} and ${chipTransactions.type} in ('level-up', 'achievement')`);
       total += p.b + Number(e.s) - Number(m.s);
     }
     return total;

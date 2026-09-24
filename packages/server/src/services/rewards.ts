@@ -6,13 +6,15 @@ import {
   getChallenge,
   periodEndsAt,
   periodKeyFor,
+  type AchievementUnlock,
   type ChallengePeriod,
   type ChallengeStatus,
 } from '@poker/shared';
-import type { Db } from '../db/client.js';
+import type { Db, DbOrTx } from '../db/client.js';
 import { playerChallenges, players } from '../db/schema.js';
 import { creditIn, lockBalance } from './bank.js';
-import { grantXp, type LevelUp } from './recorder.js';
+import { recordEvent } from './achievements.js';
+import { grantXp, type LevelUp } from './xp.js';
 
 export type RewardResult<T = object> = ({ ok: true } & T) | { ok: false; error: string };
 
@@ -40,7 +42,9 @@ export class RewardsService {
   }
 
   /** Claim today's bonus. Consecutive days grow the streak; a missed day resets it. */
-  async claimDaily(playerId: string): Promise<RewardResult<{ amount: number; balance: number; streak: number }>> {
+  async claimDaily(playerId: string): Promise<RewardResult<{
+    amount: number; balance: number; streak: number; levelUps: LevelUp[]; unlocks: AchievementUnlock[];
+  }>> {
     const today = dayKey(this.clock());
     return this.db.transaction(async (tx) => {
       if ((await lockBalance(tx, playerId)) === null) return { ok: false, error: 'Unknown player.' };
@@ -51,7 +55,12 @@ export class RewardsService {
       const credit = await creditIn(tx, { playerId, amount: status.nextAmount, type: 'daily-bonus', key: `daily:${playerId}:${today}` });
       await tx.update(players).set({ lastDailyClaim: today, dailyStreak: status.streak })
         .where(eq(players.discordUserId, playerId));
-      return { ok: true, amount: status.nextAmount, balance: credit.balance, streak: status.streak };
+      const settled = await recordEvent(tx, playerId, 'daily-streak', status.streak);
+      const balance = settled.unlocks.length > 0 || settled.levelUps.length > 0 ? await balanceIn(tx, playerId) : credit.balance;
+      return {
+        ok: true, amount: status.nextAmount, balance, streak: status.streak,
+        levelUps: settled.levelUps, unlocks: settled.unlocks,
+      };
     });
   }
 
@@ -103,7 +112,7 @@ export class RewardsService {
 
   /** Claim a completed challenge's chips and XP (once). */
   async claimChallenge(playerId: string, periodKey: string, challengeId: string): Promise<RewardResult<{
-    chips: number; xp: number; balance: number; levelUps: LevelUp[];
+    chips: number; xp: number; balance: number; levelUps: LevelUp[]; unlocks: AchievementUnlock[];
   }>> {
     const def = getChallenge(challengeId);
     if (!def) return { ok: false, error: 'Unknown challenge.' };
@@ -121,10 +130,18 @@ export class RewardsService {
         playerId, amount: def.reward.chips, type: 'challenge', key: `challenge:${playerId}:${periodKey}:${challengeId}`,
       });
       const levelUps = await grantXp(tx, playerId, def.reward.xp);
-      const [after] = await tx.select({ b: players.chipBalance }).from(players).where(eq(players.discordUserId, playerId));
-      return { ok: true, chips: def.reward.chips, xp: def.reward.xp, balance: after.b, levelUps };
+      const settled = await recordEvent(tx, playerId, 'challenges-claimed', 1);
+      return {
+        ok: true, chips: def.reward.chips, xp: def.reward.xp, balance: await balanceIn(tx, playerId),
+        levelUps: [...levelUps, ...settled.levelUps], unlocks: settled.unlocks,
+      };
     });
   }
+}
+
+async function balanceIn(tx: DbOrTx, playerId: string): Promise<number> {
+  const [row] = await tx.select({ b: players.chipBalance }).from(players).where(eq(players.discordUserId, playerId));
+  return row?.b ?? 0;
 }
 
 function dailyFrom(last: string | null, streak: number, today: string): DailyStatus {

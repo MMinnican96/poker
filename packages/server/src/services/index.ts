@@ -1,4 +1,5 @@
 import type { Db } from '../db/client.js';
+import { AchievementService } from './achievements.js';
 import { Bank } from './bank.js';
 import { ChatService } from './chat.js';
 import { ProfileService } from './profiles.js';
@@ -17,6 +18,7 @@ export interface Services {
   rewards: RewardsService;
   chat: ChatService;
   profiles: ProfileService;
+  achievements: AchievementService;
 }
 
 export interface ServiceOptions {
@@ -30,6 +32,7 @@ export function createServices(db: Db, clock: () => Date = () => new Date(), opt
   const rewards = new RewardsService(db, clock);
   const chat = new ChatService(db);
   const stats = new StatsRepository(db);
+  const achievements = new AchievementService(db);
   return {
     db,
     bank,
@@ -38,8 +41,9 @@ export function createServices(db: Db, clock: () => Date = () => new Date(), opt
     shop,
     rewards,
     chat,
-    profiles: new ProfileService(db, { bank, shop, rewards, chat, stats }),
+    profiles: new ProfileService(db, { bank, shop, rewards, chat, stats, achievements }),
+    achievements,
   };
 }
 
-export { Bank, ChatService, HandRecorder, ProfileService, RewardsService, ServerLease, ShopService, StatsRepository };
+export { AchievementService, Bank, ChatService, HandRecorder, ProfileService, RewardsService, ServerLease, ShopService, StatsRepository };

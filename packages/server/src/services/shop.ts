@@ -1,15 +1,19 @@
 import { and, eq, sql } from 'drizzle-orm';
 import {
   getItem,
+  getTitle,
   isPermanent,
   levelFromXp,
+  type AchievementUnlock,
   type Loadout,
   type LoadoutSlot,
   type ShopItem,
 } from '@poker/shared';
 import type { Db } from '../db/client.js';
 import { chipTransactions, playerItems, players } from '../db/schema.js';
+import { countOwnedItems, hasAchievementTitle, recordEvent } from './achievements.js';
 import { lockBalance, move } from './bank.js';
+import type { LevelUp } from './xp.js';
 import { loadoutOf } from './players.js';
 
 export type ShopResult<T = object> = ({ ok: true } & T) | { ok: false; error: string };
@@ -48,7 +52,9 @@ export class ShopService {
    * Buy an item. `nonce` is a client-generated id: retrying the same purchase
    * returns success without charging twice.
    */
-  async purchase(playerId: string, itemId: string, nonce: string): Promise<ShopResult<{ balance: number; quantity: number }>> {
+  async purchase(playerId: string, itemId: string, nonce: string): Promise<ShopResult<{
+    balance: number; quantity: number; levelUps: LevelUp[]; unlocks: AchievementUnlock[];
+  }>> {
     const item = getItem(itemId);
     if (!item) return { ok: false, error: 'That item is not in the shop.' };
     if (item.price === 0) return { ok: false, error: 'That item is free — it is already yours.' };
@@ -63,7 +69,7 @@ export class ShopService {
         .where(eq(chipTransactions.idempotencyKey, key));
       const [held] = await tx.select().from(playerItems)
         .where(and(eq(playerItems.playerId, playerId), eq(playerItems.itemId, itemId)));
-      if (already) return { ok: true, balance, quantity: held?.quantity ?? 0 };
+      if (already) return { ok: true, balance, quantity: held?.quantity ?? 0, levelUps: [], unlocks: [] };
 
       if (isPermanent(item) && (held?.quantity ?? 0) > 0) return { ok: false, error: 'You already own this.' };
       const [p] = await tx.select({ xp: players.xp }).from(players).where(eq(players.discordUserId, playerId));
@@ -80,14 +86,27 @@ export class ShopService {
           set: { quantity: isPermanent(item) ? 1 : sql`${playerItems.quantity} + ${grant}` },
         })
         .returning({ quantity: playerItems.quantity });
-      return { ok: true, balance: next, quantity: row.quantity };
+      const settled = await recordEvent(tx, playerId, 'items-owned', await countOwnedItems(tx, playerId));
+      const [after] = settled.unlocks.length > 0 || settled.levelUps.length > 0
+        ? await tx.select({ b: players.chipBalance }).from(players).where(eq(players.discordUserId, playerId))
+        : [{ b: next }];
+      return { ok: true, balance: after.b, quantity: row.quantity, levelUps: settled.levelUps, unlocks: settled.unlocks };
     });
   }
 
+  /**
+   * Equip an item. The title slot also takes titles earned from achievements
+   * (`ach:...`) once the player has reached the tier that unlocks them.
+   */
   async equip(playerId: string, slot: LoadoutSlot, itemId: string): Promise<ShopResult<{ loadout: Loadout }>> {
-    const item = getItem(itemId);
-    if (!item || SLOT_OF[item.category] !== slot) return { ok: false, error: "That item doesn't go in that slot." };
-    if (!(await this.owns(playerId, itemId))) return { ok: false, error: "You don't own that yet." };
+    const earned = slot === 'title' ? getTitle(itemId) : undefined;
+    if (earned?.source === 'achievement') {
+      if (!(await hasAchievementTitle(this.db, playerId, itemId))) return { ok: false, error: "You haven't earned that title yet." };
+    } else {
+      const item = getItem(itemId);
+      if (!item || SLOT_OF[item.category] !== slot) return { ok: false, error: "That item doesn't go in that slot." };
+      if (!(await this.owns(playerId, itemId))) return { ok: false, error: "You don't own that yet." };
+    }
     const [row] = await this.db.update(players)
       .set({ [SLOT_COLUMN[slot]]: itemId })
       .where(eq(players.discordUserId, playerId))

@@ -15,6 +15,12 @@ describe('ToastStack', () => {
     expect(stack.className).not.toMatch(/\bbottom-/);
   });
 
+  it('draws the art a caller supplies next to the text', () => {
+    render(<ToastStack notices={[notice, { ...notice, id: 'n2', title: 'Other' }]} onDismiss={() => {}} renderArt={(n) => (n.id === 'n1' ? <i data-testid="art" /> : null)} />);
+    expect(screen.getByTestId('art').closest('li')).toHaveTextContent('Take a seat');
+    expect(screen.getAllByTestId('art')).toHaveLength(1);
+  });
+
   it('dismisses itself after its time', () => {
     const onDismiss = vi.fn();
     render(<ToastStack notices={[notice]} onDismiss={onDismiss} />);

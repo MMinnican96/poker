@@ -7,7 +7,7 @@ export const STARTING_CHIPS = 10_000;
 
 export type LedgerType =
   | 'buy-in' | 'top-up' | 'cash-out' | 'recovery'
-  | 'daily-bonus' | 'level-up' | 'challenge' | 'purchase' | 'grant';
+  | 'daily-bonus' | 'level-up' | 'challenge' | 'achievement' | 'purchase' | 'grant';
 
 export type BankResult<T = object> = ({ ok: true } & T) | { ok: false; error: string };
 

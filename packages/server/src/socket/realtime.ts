@@ -1,13 +1,18 @@
+import { randomUUID } from 'node:crypto';
 import type { Server, Socket } from 'socket.io';
 import {
   DEFAULT_RULES,
   dmChannel,
   dmPartner,
+  formatChips,
   roomChannel,
+  type AchievementUnlock,
   type Ack,
   type AckFn,
+  type ActivityEvent,
   type ClientToServerEvents,
   type InterServerEvents,
+  type Notice,
   type ServerToClientEvents,
   type SocketData,
   type TableLeft,
@@ -16,8 +21,10 @@ import {
 import type { Auth } from '../auth.js';
 import type { Services } from '../services/index.js';
 import { getPlayerRow, toPublic } from '../services/players.js';
+import { unlockActivityText, unlockNotice } from '../services/achievements.js';
 import { RoomManager, type Outbox, type RoomDeps } from '../rooms/instance-room.js';
 import { RateLimiter } from '../rooms/serial.js';
+import type { LevelUp } from '../services/xp.js';
 import type { Result } from '../rooms/table-room.js';
 
 export type Io = Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;
@@ -52,6 +59,16 @@ export interface Realtime {
   rooms: RoomManager;
   /** Push a player's fresh profile/balance to their sockets and rooms. */
   refreshMe(playerId: string): void;
+  /** Send a notice (toast) to every socket of a player. */
+  notify(playerId: string, notice: Omit<Notice, 'id'>): void;
+  /** Post to the activity feed of every room the player is in. */
+  activity(playerId: string, event: Omit<ActivityEvent, 'id' | 'at'>): void;
+  /**
+   * Tell players about level-ups and achievement unlocks paid outside a hand
+   * (daily bonus, challenge claims, purchases): a notice each, and room
+   * activity for level-ups, feats and tier V, with the same copy as the table's.
+   */
+  announce(outcome: { levelUps?: readonly LevelUp[]; unlocks?: readonly AchievementUnlock[] }): Promise<void>;
   dispose(): void;
 }
 
@@ -270,9 +287,42 @@ export function attachRealtime(io: Io, opts: RealtimeOptions): Realtime {
     });
   });
 
+  function notify(playerId: string, notice: Omit<Notice, 'id'>): void {
+    io.to(userRoom(playerId)).emit('notice', { id: randomUUID(), ...notice });
+  }
+
+  function activity(playerId: string, event: Omit<ActivityEvent, 'id' | 'at'>): void {
+    for (const room of rooms.roomsWith(playerId)) room.pushActivity(event);
+  }
+
+  async function announce(outcome: { levelUps?: readonly LevelUp[]; unlocks?: readonly AchievementUnlock[] }): Promise<void> {
+    const names = new Map<string, string | null>();
+    const nameOf = async (playerId: string) => {
+      if (!names.has(playerId)) {
+        const row = await getPlayerRow(services.db, playerId).catch(() => null);
+        names.set(playerId, row?.displayName ?? null);
+      }
+      return names.get(playerId)!;
+    };
+    for (const up of outcome.levelUps ?? []) {
+      notify(up.playerId, { tone: 'good', title: `Level ${up.level}!`, body: `+${formatChips(up.reward)} chips` });
+      if (rooms.roomsWith(up.playerId).length === 0) continue;
+      activity(up.playerId, { kind: 'level-up', playerId: up.playerId, playerName: await nameOf(up.playerId), text: `reached level ${up.level}` });
+    }
+    for (const u of outcome.unlocks ?? []) {
+      notify(u.playerId, unlockNotice(u));
+      const text = unlockActivityText(u);
+      if (!text || rooms.roomsWith(u.playerId).length === 0) continue;
+      activity(u.playerId, { kind: 'achievement', playerId: u.playerId, playerName: await nameOf(u.playerId), text });
+    }
+  }
+
   return {
     rooms,
     refreshMe,
+    notify,
+    activity,
+    announce,
     dispose() {
       for (const t of refreshTimers.values()) clearTimeout(t);
       rooms.dispose();

@@ -1,18 +1,24 @@
-import type { ReactNode } from 'react';
+import { useId, useState, type ReactNode } from 'react';
 import {
   CATEGORY_NAME,
   formatChips,
   formatDuration,
   formatPercent,
   formatSigned,
-  type Badge,
+  RARITY_NAME,
+  achievementLabel,
+  getAchievement,
+  tierInfo,
   type ProfileCard,
+  type ProfileTrophies,
 } from '@poker/shared';
 import { ApiError } from '../../app/api';
 import { useApi, useLobby, useMe } from '../../app/client';
 import { useMediaQuery } from '../../app/hooks';
 import { useNav } from '../../app/nav';
 import { CardBackPattern, TitleTag } from '../../cosmetics';
+import { Emblem } from '../../cosmetics/Emblem';
+import { TrophyShelf } from '../../cosmetics/TrophyShelf';
 import { Avatar, Button, ChartIcon, ChatIcon, CloseIcon, IconButton, LevelBadge, Modal, RefreshIcon, Spinner, cx, levelFraction } from '../../ui';
 import { useAsync } from '../common/useAsync';
 import { FormTally, formSummary } from './FormTally';
@@ -200,16 +206,7 @@ function CardFace({ card, isMe, landscape, onClose }: { card: ProfileCard; isMe:
             )}
           </section>
 
-          <section className="mt-3" aria-labelledby="badges-heading">
-            <h4 id="badges-heading" className="font-display text-[15px] text-ink">Badges</h4>
-            {card.badges.length > 0 ? (
-              <ul className="mt-1.5 grid grid-cols-1 gap-2 @xs:grid-cols-2">
-                {card.badges.map((b) => <BadgeSeal key={b.id} badge={b} />)}
-              </ul>
-            ) : (
-              <p className="mt-1 text-sm text-ink-soft">No badges yet. They come from big pots, rare hands and time at the table.</p>
-            )}
-          </section>
+          <TrophySection trophies={card.trophies} landscape={landscape} />
         </div>
       </div>
     </div>
@@ -250,23 +247,64 @@ function Line({ label, children, wide }: { label: string; children: ReactNode; w
   );
 }
 
-/** A badge as a stamped brass seal with its name and what earned it. */
-function BadgeSeal({ badge }: { badge: Badge }) {
+const unlockedFmt = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+/** "Unlocked Sep 24, 2026" for a tooltip. */
+function unlockedOn(iso: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? 'Unlocked' : `Unlocked ${unlockedFmt.format(d)}`;
+}
+
+/** The trophy cabinet: the player's showcase on a walnut shelf, and everything they've unlocked. */
+function TrophySection({ trophies, landscape }: { trophies: ProfileTrophies; landscape: boolean }) {
+  const [all, setAll] = useState(false);
+  const listId = useId();
+  const tierOf = new Map(trophies.unlocked.map((u) => [u.id, u.tier]));
+  const shelf = trophies.showcase.filter((id) => getAchievement(id) && tierOf.has(id)).map((id) => ({ id, tier: tierOf.get(id)! }));
+  const unlocked = trophies.unlocked.filter((u) => getAchievement(u.id));
   return (
-    <li className="flex items-center gap-2">
-      <svg viewBox="0 0 32 32" className="size-8 shrink-0" aria-hidden="true">
-        {Array.from({ length: 12 }, (_, i) => {
-          const a = (i / 12) * Math.PI * 2;
-          return <circle key={i} cx={16 + 12.5 * Math.cos(a)} cy={16 + 12.5 * Math.sin(a)} r="3.6" className="fill-brass-dark" />;
-        })}
-        <circle cx="16" cy="16" r="12.5" className="fill-brass" />
-        <circle cx="16" cy="16" r="9" fill="none" className="stroke-ink/40" strokeWidth="1" strokeDasharray="1.6 1.6" />
-        <path d="m16 10.5 1.7 3.5 3.8.5-2.8 2.6.7 3.8-3.4-1.8-3.4 1.8.7-3.8-2.8-2.6 3.8-.5Z" className="fill-ink/70" />
-      </svg>
-      <span className="min-w-0 leading-tight">
-        <span className="block font-condensed text-[15px] font-bold text-ink">{badge.name}</span>
-        <span className="block text-[12px] text-ink-soft">{badge.description}</span>
-      </span>
-    </li>
+    <section className="mt-3" aria-labelledby="trophies-heading">
+      <div className="flex items-baseline justify-between gap-2">
+        <h4 id="trophies-heading" className="font-display text-[15px] text-ink">Trophy cabinet</h4>
+        {trophies.emblems > 0 && (
+          <p className="tabular font-condensed text-[14px] font-semibold text-ink-soft">{trophies.emblems} of {trophies.total} emblems</p>
+        )}
+      </div>
+      {unlocked.length === 0 ? (
+        <p className="mt-1 text-sm text-ink-soft">No emblems yet. They come from career challenges and feats.</p>
+      ) : (
+        <>
+          <TrophyShelf label="Showcase" items={shelf} size={landscape ? 46 : 44} className="mt-1.5" />
+          <button
+            type="button"
+            aria-expanded={all}
+            aria-controls={listId}
+            onClick={() => setAll((v) => !v)}
+            className="mt-1.5 inline-flex h-8 items-center rounded-md px-2 text-[13px] font-semibold text-ink ring-1 ring-inset ring-ink/30 hover:bg-ink/8"
+          >
+            {all ? 'Show fewer' : 'See all'}
+          </button>
+          {all && (
+            <ul id={listId} aria-label="Every unlocked emblem" className="mt-1.5 grid grid-cols-1 gap-x-3 gap-y-1.5 @[17.5rem]:grid-cols-2">
+              {unlocked.map((u) => {
+                const def = getAchievement(u.id)!;
+                return (
+                  <li key={u.id} className="flex min-w-0 items-center gap-2" title={unlockedOn(u.unlockedAt)}>
+                    <Emblem achievementId={u.id} tier={u.tier} size={32} decorative />
+                    <span className="min-w-0 leading-tight">
+                      <span className="block truncate font-condensed text-[15px] font-bold text-ink">{achievementLabel(def, u.tier)}</span>
+                      <span className="block text-[12px] text-ink-soft">
+                        {def.kind === 'feat' ? `${RARITY_NAME[def.rarity]} feat` : `${tierInfo(u.tier).name} · tier ${tierInfo(u.tier).roman}`}
+                        <span className="sr-only">. {unlockedOn(u.unlockedAt)}</span>
+                      </span>
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </>
+      )}
+    </section>
   );
 }

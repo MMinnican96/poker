@@ -1,8 +1,8 @@
-import { getItem } from '@poker/shared';
+import { getItem, getTitle } from '@poker/shared';
 import { cx } from '../ui/cx';
 
 export interface TitleTagProps {
-  /** Title text (from `Cosmetics.title`), or a title item id. Empty/null renders nothing. */
+  /** Title text (from `Cosmetics.title`), or a title id (shop `title-*` or earned `ach:*`). Empty/null renders nothing. */
   title: string | null | undefined;
   size?: 'sm' | 'md';
   /** dark (default) = brass on walnut; paper = ink on card stock. */
@@ -10,11 +10,13 @@ export interface TitleTagProps {
   className?: string;
 }
 
-/** Resolve a title item id to its text; plain text passes through. */
+/** Resolve a title id (shop or achievement) to its text; plain text passes through. */
 export function titleText(title: string | null | undefined): string | null {
   if (!title) return null;
-  const item = getItem(title);
-  if (item) return item.visual.kind === 'title' ? item.visual.text || null : null;
+  const known = getTitle(title);
+  if (known) return known.text || null;
+  // Another kind of catalog item is not a title.
+  if (getItem(title)) return null;
   return title;
 }
 
