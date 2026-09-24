@@ -22,7 +22,7 @@ assertDatabaseConfigured(process.env, isProduction());
 const handle = await openDatabase();
 console.log(handle.kind === 'postgres'
   ? '[server] using Postgres (DATABASE_URL)'
-  : `[server] DATABASE_URL not set — using embedded PGlite (${process.env.PGLITE_DATA_DIR ?? 'in memory'})`);
+  : `[server] DATABASE_URL not set — using embedded PGlite (${process.env.PGLITE_DATA_DIR || 'in memory'})`);
 
 // This process's lease: seats it opens carry it, and other processes' recovery
 // leaves them alone while it keeps heartbeating (e.g. during a rolling deploy).

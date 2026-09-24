@@ -76,7 +76,7 @@ packages/
 | `TEST_DATABASE_URL=... npm run test:pg -w @poker/server` | DB-backed tests against real Postgres, files run serially |
 
 Schema changes go through migrations (`db:generate`, then make the SQL
-idempotent). The leftover `db:push` script bypasses the migration journal.
+idempotent). There is no `db:push`.
 
 ## Invariants
 
@@ -95,10 +95,12 @@ idempotent). The leftover `db:push` script bypasses the migration journal.
   resolution and dealing all run through the table's `Serial`, and the queued
   step re-checks its preconditions. Keep new bank-touching table work in it.
 - **Leases and recovery.** Each process holds a `server_leases` row (heartbeat
-  15 s). Seats carry the lease that opened them. Recovery (boot + every 30 s)
-  refunds only seats whose lease is missing or stale (60 s) at their last
-  checkpoint. SIGTERM/SIGINT cashes every table out (15 s budget), then drops
-  the lease.
+  10 s, DB clock). Seats carry the lease that opened them. Recovery (boot +
+  every 30 s) refunds only seats whose lease is missing or stale (60 s) at their
+  last checkpoint. A process that loses its lease voids its tables without
+  cashing out (`table_left 'interrupted'`) and re-registers. SIGTERM/SIGINT
+  cashes every table out (15 s budget, 18 s hard exit), then drops the lease;
+  `railway.json` sets `drainingSeconds: 20` and starts `node` directly.
 - **Migrations run at boot** for both PGlite and Postgres. `0000_init.sql` and
   `0001_leases.sql` are hand-written to be idempotent (`IF NOT EXISTS`,
   `DO ... EXCEPTION WHEN duplicate_object`) so they also upgrade the

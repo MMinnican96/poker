@@ -211,6 +211,7 @@ closes.
 | `removed` | Away too long; your chips went back to your bankroll |
 | `shutdown` | The server is restarting; your chips are back in your bankroll |
 | `not-member` | Answer to `request_state` when you aren't at the table |
+| `interrupted` | This server lost its database lease; the hand was voided and your chips are refunded at the last completed hand |
 
 The client routes on `code` and shows `reason` as a toast, except for `left`
 (and a host who closed their own table sees "You closed the table.").
@@ -273,7 +274,8 @@ each boundary and by the idle sweep.
 ### Leases
 
 Each server process registers a `server_leases` row at boot and heartbeats it
-every 15 s. Every seat it opens carries its lease id.
+every 10 s (timestamps come from the database's `now()`, so app clocks don't
+matter). Every seat it opens carries its lease id.
 
 `recoverOpenSeats()` runs at boot and every 30 s. It refunds an open seat only
 when its lease is missing, stale (no heartbeat for 60 s) or null (seats from
@@ -284,6 +286,15 @@ safe: the new process leaves the old process's live seats alone.
 A refund returns the last checkpoint, so a hand interrupted by a crash is
 voided.
 
+**Losing the lease.** A process treats its lease as lost when a heartbeat
+updates no row (another process already recovered its seats), when the row is
+older than the 60 s stale limit, or after 30 s without a successful heartbeat.
+Then it never cashes those seats out itself: every table is voided and closed
+without cash-out, members get `table_left { code: 'interrupted' }`, new tables,
+seats and top-ups are refused ("The server is reconnecting to its database"),
+and once a fresh lease is registered new seats carry it. Recovery refunds the
+old seats, so no chip is ever paid twice (`rooms/lease-guard.ts`).
+
 ### Graceful shutdown
 
 On SIGTERM or SIGINT (`index.ts`):
@@ -292,15 +303,18 @@ On SIGTERM or SIGINT (`index.ts`):
 2. `rooms.shutdown()`: every table voids any hand in progress and cashes every
    seated player out at their pre-hand stack, telling members
    `table_left { code: 'shutdown' }` while sockets are still open. The budget is
-   `SHUTDOWN_CASHOUT_MS` (15 s).
+   `SHUTDOWN_CASHOUT_MS` (15 s). From here on, opening tables, taking seats and
+   top-ups are refused ("The server is restarting").
 3. Release the lease, so anything left open is recoverable at once by the next
    process.
 4. `app.close()`: the same cash-out (idempotent) within what's left of the
-   budget, then close sockets and HTTP. Close the DB and exit.
+   budget, then close sockets and HTTP. Close the DB and exit. A hard deadline
+   (18 s) forces the exit if anything hangs.
 
-Railway only waits for this if `RAILWAY_DEPLOYMENT_DRAINING_SECONDS` is set (see
-SETUP). Without it the process is killed and recovery refunds the seats once the
-lease goes stale.
+`railway.json` sets `drainingSeconds: 20` so Railway waits for this, and the
+start command runs `node` directly so SIGTERM reaches the process (an `npm run`
+wrapper can swallow it). If the process is killed anyway, recovery refunds its
+seats as soon as the lease is released or goes stale.
 
 ## Stats, XP, levels and challenges
 

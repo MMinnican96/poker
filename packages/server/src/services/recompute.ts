@@ -35,6 +35,10 @@ export async function recomputeAllPlayerStats(db: Db): Promise<{ players: number
 
 // CLI: `npm run stats:recompute`
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  if (!process.env.DATABASE_URL && !process.env.PGLITE_DATA_DIR) {
+    console.error('[stats] set DATABASE_URL (or PGLITE_DATA_DIR) — without one there is nothing to recompute');
+    process.exit(1);
+  }
   const handle = await openDatabase();
   recomputeAllPlayerStats(handle.db)
     .then((r) => console.log(`[stats] recomputed ${r.players} players from ${r.facts} facts`))

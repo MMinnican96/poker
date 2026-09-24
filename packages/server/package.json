@@ -11,7 +11,6 @@
     "test": "tsc -p tsconfig.test.json && vitest run",
     "test:watch": "vitest",
     "db:migrate": "tsx src/db/migrate-cli.ts",
-    "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "db:generate": "drizzle-kit generate",
     "stats:recompute": "tsx src/services/recompute.ts",

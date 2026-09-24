@@ -93,8 +93,8 @@ Changing the schema:
    `DO $$ ... EXCEPTION WHEN duplicate_object ...`), matching `0000` and `0001`.
 4. Restart the server or run `npm run db:migrate`.
 
-Keep schema changes on this path. The old `db:push` script syncs the schema
-directly and bypasses the migration journal.
+Keep schema changes on this path; there is no `db:push` any more (it bypassed
+the migration journal).
 
 Running the DB-backed tests against this Postgres instead of PGlite (they share
 one database, so files run one at a time):
@@ -181,9 +181,17 @@ The whole app is one always-on Railway service plus a Railway Postgres service
 in the same project. The server serves the built client, so client, REST and
 WebSocket share one origin behind the Discord proxy.
 
-`railway.json` pins the build: builder `RAILPACK`, `npm run build`,
-`npm run start`, healthcheck `/api/health` (120 s timeout), restart on failure
-(up to 10 times). The root `package.json` has the `start` script Railpack needs.
+`railway.json` pins the build: builder `RAILPACK`, `npm run build`, start
+command `node packages/server/dist/index.js` (run directly so SIGTERM reaches
+Node — don't wrap it in `npm run`), healthcheck `/api/health` (120 s timeout),
+restart on failure (up to 10 times), and `drainingSeconds: 20` so a deploy
+waits for graceful shutdown to cash tables out. The root `package.json` has a
+matching `start` script.
+
+In production the server refuses to boot without `DATABASE_URL` (unless
+`PGLITE_DATA_DIR` is set deliberately), so an unresolved reference can't
+silently start an empty in-memory database. Every statement has a 10 s
+timeout.
 
 ### 1. Project and database
 
@@ -203,7 +211,6 @@ WebSocket share one origin behind the Discord proxy.
 | `DISCORD_CLIENT_SECRET` | Client secret | |
 | `DISCORD_BOT_TOKEN` | Bot token | Nicknames, guild avatars, instance check |
 | `VITE_DISCORD_CLIENT_ID` | Same as `DISCORD_CLIENT_ID` | Inlined into the client **at build time**; changing it needs a redeploy |
-| `RAILWAY_DEPLOYMENT_DRAINING_SECONDS` | `20` (recommended) | Railway's default is 0 s between SIGTERM and SIGKILL. This gives graceful shutdown time to cash tables out (its budget is 15 s). |
 | `VERIFY_ACTIVITY_INSTANCE` | `1` (optional) | Refuse `join_room` unless Discord confirms the player is in that Activity instance. Off by default. |
 
 Leave these unset:
@@ -289,7 +296,8 @@ Root scripts (`npm run <name>`):
 | `db:migrate` | Apply migrations to `DATABASE_URL` |
 | `db:studio` | Drizzle Studio |
 | `stats:recompute` | Rebuild `player_stats` from `player_hand_stats` |
-| `db:push` | Legacy direct schema sync. Use migrations instead. |
+| `db:generate` | Generate a migration from `schema.ts` (then make it idempotent) |
+| `test:pg` | Server tests against `TEST_DATABASE_URL`, files run serially |
 
 Workspace scripts: `npm run db:generate -w @poker/server`,
 `npm run test:pg -w @poker/server`, `npm run typecheck -w @poker/server`,
@@ -315,7 +323,7 @@ against a throwaway in-memory PGlite unless `PGLITE_DATA_DIR` is set.
 | `join_room` refused with "You're not in this activity." | `VERIFY_ACTIVITY_INSTANCE=1` and Discord didn't list the player, or `DISCORD_BOT_TOKEN` is missing (the log shows `instance check failed`). |
 | Avatars show initials inside Discord | The avatar is a guild avatar or a default avatar, which the Activity CSP blocks. See [URL mappings](#2-url-mappings). |
 | Log: `refunded N chips from M seats left open by a stopped server` | Recovery after a crash or a shutdown that ran out of time. Expected; players got their last checkpoint back. |
-| Log: `tables did not finish cashing out in time` | Shutdown hit its 15 s budget. Recovery refunds the rest. Check `RAILWAY_DEPLOYMENT_DRAINING_SECONDS`. |
+| Log: `tables did not finish cashing out in time` | Shutdown hit its 15 s budget. Recovery refunds the rest. Check `drainingSeconds` in `railway.json`. |
 | Migration error on boot | Read the failing statement in the log. A new migration that isn't idempotent fails on databases that already have the object. |
 | Blank page at `/` on Railway, no `serving client from` log | The client build didn't land in `packages/client/dist`. Check the build log for `npm run build`. |
 | `EADDRINUSE :3001` | Another server is running. Stop it or set `PORT` (dev only). |
